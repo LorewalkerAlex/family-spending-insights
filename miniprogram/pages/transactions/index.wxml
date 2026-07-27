@@ -1,0 +1,48 @@
+<view class="page-shell">
+  <view class="top-row">
+    <view>
+      <view class="eyebrow">家庭账本</view>
+      <picker mode="selector" range="{{months}}" bindchange="onMonthChange">
+        <view class="month-picker">{{monthLabel}} <text class="chevron">⌄</text></view>
+      </picker>
+    </view>
+    <view class="count-pill">{{summary.transactionCount || 0}} 笔</view>
+  </view>
+
+  <view class="summary card">
+    <view class="summary-main">
+      <text class="summary-label">净支出</text>
+      <text class="summary-value">¥{{summary.netExpense || '0.00'}}</text>
+    </view>
+    <view class="summary-grid">
+      <view><text class="summary-small-label">支出</text><text class="summary-small-value">¥{{summary.expense || '0.00'}}</text></view>
+      <view><text class="summary-small-label">退款</text><text class="summary-small-value refund">¥{{summary.refund || '0.00'}}</text></view>
+      <view><text class="summary-small-label">待整理</text><text class="summary-small-value">{{summary.pendingCount || 0}} 笔</text></view>
+    </view>
+  </view>
+
+  <view class="search-row">
+    <view class="search-box"><text class="search-icon">⌕</text><input placeholder="搜索商户或分类" value="{{keyword}}" bindinput="onKeywordInput" confirm-type="search" bindconfirm="onSearch" /></view>
+  </view>
+
+  <scroll-view class="filter-strip" scroll-x enable-flex>
+    <view wx:for="{{filters}}" wx:key="key" class="filter-chip {{filter === item.key ? 'active' : ''}}" data-key="{{item.key}}" bindtap="onFilterTap">{{item.label}}</view>
+  </scroll-view>
+
+  <view wx:if="{{loading}}" class="empty-state">正在整理流水…</view>
+  <view wx:elif="{{!groups.length}}" class="empty-state">没有符合条件的流水</view>
+
+  <view wx:for="{{groups}}" wx:key="date" class="date-section">
+    <view class="date-label">{{item.label}}</view>
+    <view class="transaction-list card">
+      <view wx:for="{{item.items}}" wx:for-item="tx" wx:key="id" class="transaction-row" data-id="{{tx.id}}" bindtap="openDetail">
+        <view class="merchant-avatar">{{tx.avatar}}</view>
+        <view class="transaction-copy">
+          <view class="merchant-line"><text class="merchant-name">{{tx.merchant}}</text><text class="amount {{tx.direction}}">{{tx.amountText}}</text></view>
+          <view class="meta-line"><text>{{tx.account}}</text><text class="dot">·</text><text>{{tx.category}}</text></view>
+          <view wx:if="{{tx.enrichmentStatus !== 'mapping_applied'}}" class="pending-tag">待整理</view>
+        </view>
+      </view>
+    </view>
+  </view>
+</view>

@@ -1,0 +1,29 @@
+<view class="page-shell" wx:if="{{item}}">
+  <view class="hero card">
+    <view class="hero-date">{{item.transactionDate}}</view>
+    <view class="hero-merchant">{{item.merchant}}</view>
+    <view class="hero-amount {{item.direction}}">{{item.amountText}}</view>
+    <view class="status-row">
+      <text class="status-pill">{{item.matchStatus}}</text>
+      <text wx:if="{{item.matchScore}}" class="muted">匹配分 {{item.matchScore}}</text>
+    </view>
+  </view>
+
+  <view class="section-title">整理后的信息</view>
+  <view class="form-card card">
+    <view class="field"><text class="field-label">标准商户</text><input value="{{merchant}}" bindinput="onMerchantInput" /></view>
+    <view class="field"><text class="field-label">分类</text><picker range="{{categories}}" bindchange="onCategoryChange"><view class="picker-value">{{category}} <text>›</text></view></picker></view>
+    <view class="field"><text class="field-label">账户</text><text class="field-value">{{item.account}}</text></view>
+  </view>
+
+  <view class="section-title">银行原始信息</view>
+  <view class="raw-card card">
+    <view class="raw-row"><text>原始描述</text><text>{{item.originalDescription}}</text></view>
+    <view class="raw-row"><text>银行商户</text><text>{{item.sourceMerchant}}</text></view>
+    <view class="raw-row"><text>卡尾号</text><text>{{item.cardLast4}}</text></view>
+    <view class="raw-row"><text>来源文件</text><text>{{item.sourceFile}}</text></view>
+  </view>
+
+  <button class="save-button" bindtap="save">保存本地修改</button>
+  <view class="save-note">当前仅保存在开发工具的本地缓存；接入后端后将调用同一个服务接口。</view>
+</view>

@@ -1,0 +1,22 @@
+{
+  "pages": ["pages/transactions/index", "pages/review/index", "pages/detail/index"],
+  "window": {
+    "navigationBarTitleText": "家庭账本",
+    "navigationBarBackgroundColor": "#f7f7f5",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#f7f7f5",
+    "backgroundTextStyle": "dark"
+  },
+  "tabBar": {
+    "color": "#8a8a85",
+    "selectedColor": "#1f6f5f",
+    "backgroundColor": "#ffffff",
+    "borderStyle": "white",
+    "list": [
+      { "pagePath": "pages/transactions/index", "text": "流水" },
+      { "pagePath": "pages/review/index", "text": "待确认" }
+    ]
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

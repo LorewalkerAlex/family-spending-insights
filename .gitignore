@@ -1,0 +1,22 @@
+# 环境变量和凭据
+.env
+.env.*
+!.env.example
+
+# 真实账单及处理结果
+cmb_bill_output/
+mapping_output/
+
+# 从真实交易生成的小程序数据
+miniprogram/mock-data/billing.js
+
+# 私人图片
+/微信图片_*.jpg
+
+# Python 和 uv 缓存
+.uv-cache/
+__pycache__/
+*.pyc
+
+# docs
+docs/*
