@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from datetime import date
@@ -63,7 +66,6 @@ class FakeImap:
 
     def fetch(self, mail_id: bytes, query: str):
         self.fetch_calls.append((mail_id, query))
-
         payload = (
             self.headers.get(mail_id)
             if query == HEADER_QUERY
@@ -195,7 +197,6 @@ class Imap163Tests(unittest.TestCase):
 
     def test_saved_bytes_are_exact(self) -> None:
         raw_message = b"Subject: fake\r\nX-Test: \xff\r\n\r\nbody\x00\r\n"
-
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "message.eml"
 
@@ -206,7 +207,6 @@ class Imap163Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "message.eml"
             path.write_bytes(b"existing")
-
             self.assertFalse(save_raw_email(path, b"replacement"))
             self.assertEqual(path.read_bytes(), b"existing")
 
@@ -218,7 +218,6 @@ class Imap163Tests(unittest.TestCase):
             b"Message-ID: <unmatched@example.test>\r\n"
             b"\r\n"
         )
-
         with tempfile.TemporaryDirectory() as temp_dir:
             fake = FakeImap(
                 {b"1": header},
@@ -241,7 +240,6 @@ class Imap163Tests(unittest.TestCase):
             b"Message-ID: <old@example.test>\r\n"
             b"\r\n"
         )
-
         with tempfile.TemporaryDirectory() as temp_dir:
             fake = FakeImap(
                 {b"1": header},
@@ -279,7 +277,6 @@ class Imap163Tests(unittest.TestCase):
             b"\r\n"
         )
         raw_message = b"Subject: CMB statement\r\n\r\nfake body\r\n"
-
         with tempfile.TemporaryDirectory() as temp_dir:
             out_dir = Path(temp_dir)
             fake = FakeImap(
@@ -313,7 +310,6 @@ class Imap163Tests(unittest.TestCase):
             1,
         )
         self.assertNotIn((b"4", RAW_QUERY), fake.fetch_calls)
-
         select_call = next(
             call for call in fake.calls if call[0] == "select"
         )
@@ -341,7 +337,6 @@ class Imap163Tests(unittest.TestCase):
                 b'(\\HasNoChildren) "/" "&YttVRpT2iEw-"',
             ],
         )
-
         with tempfile.TemporaryDirectory() as temp_dir:
             summary = fetch_raw_emails(
                 self.make_config(
@@ -356,7 +351,6 @@ class Imap163Tests(unittest.TestCase):
             for call in fake.calls
             if call[0] == "select"
         ]
-
         self.assertEqual(summary.mailboxes, 2)
         self.assertEqual(
             selected,
@@ -369,7 +363,6 @@ class Imap163Tests(unittest.TestCase):
             "EMAIL_AUTH_CODE": "fake-auth-code",
             "KEYWORDS": "cmb",
         }
-
         for key in (
             "EMAIL_ADDR",
             "EMAIL_AUTH_CODE",
@@ -399,8 +392,99 @@ class Imap163Tests(unittest.TestCase):
         self.assertEqual(config.keywords, ("cmb", "招商银行"))
         self.assertEqual(
             config.out_dir,
-            Path("data/raw/emails/163/cmb"),
+            Path("data/emails/163/cmb"),
         )
+
+    def test_cmb_email_dir_is_used_when_set(self) -> None:
+        config = load_config(
+            {
+                "EMAIL_ADDR": "user@example.test",
+                "EMAIL_AUTH_CODE": "fake-auth-code",
+                "KEYWORDS": "cmb",
+                "CMB_EMAIL_DIR": "custom/cmb-emails",
+            }
+        )
+
+        self.assertEqual(config.out_dir, Path("custom/cmb-emails"))
+
+    def test_out_dir_is_used_when_cmb_email_dir_is_not_set(self) -> None:
+        config = load_config(
+            {
+                "EMAIL_ADDR": "user@example.test",
+                "EMAIL_AUTH_CODE": "fake-auth-code",
+                "KEYWORDS": "cmb",
+                "OUT_DIR": "legacy/emails",
+            }
+        )
+
+        self.assertEqual(config.out_dir, Path("legacy/emails"))
+
+    def test_cmb_email_dir_takes_priority_over_out_dir(self) -> None:
+        config = load_config(
+            {
+                "EMAIL_ADDR": "user@example.test",
+                "EMAIL_AUTH_CODE": "fake-auth-code",
+                "KEYWORDS": "cmb",
+                "CMB_EMAIL_DIR": "formal/emails",
+                "OUT_DIR": "legacy/emails",
+            }
+        )
+
+        self.assertEqual(config.out_dir, Path("formal/emails"))
+
+    def test_default_email_dir_is_used_when_no_directory_variable_is_set(
+        self,
+    ) -> None:
+        config = load_config(
+            {
+                "EMAIL_ADDR": "user@example.test",
+                "EMAIL_AUTH_CODE": "fake-auth-code",
+                "KEYWORDS": "cmb",
+            }
+        )
+
+        self.assertEqual(config.out_dir, Path("data/emails/163/cmb"))
+
+    def test_import_has_no_filesystem_or_configuration_side_effects(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        source_root = project_root / "src"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cwd = Path(temp_dir)
+            trap_cmb_dir = cwd / "trap-cmb-emails"
+            trap_out_dir = cwd / "trap-out-emails"
+            (cwd / ".env").write_text(
+                "CMB_EMAIL_DIR=dotenv-cmb-emails\n"
+                "OUT_DIR=dotenv-out-emails\n",
+                encoding="utf-8",
+            )
+
+            environ = os.environ.copy()
+            environ["PYTHONPATH"] = str(source_root)
+            environ["CMB_EMAIL_DIR"] = str(trap_cmb_dir)
+            environ["OUT_DIR"] = str(trap_out_dir)
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "import family_spending.ingestion.imap_163",
+                ],
+                cwd=cwd,
+                env=environ,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(completed.stdout, "")
+            self.assertEqual(completed.stderr, "")
+            self.assertFalse(trap_cmb_dir.exists())
+            self.assertFalse(trap_out_dir.exists())
+            self.assertFalse((cwd / "dotenv-cmb-emails").exists())
+            self.assertFalse((cwd / "dotenv-out-emails").exists())
+            self.assertFalse((cwd / "data").exists())
 
 
 if __name__ == "__main__":
