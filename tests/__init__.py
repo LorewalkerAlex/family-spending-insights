@@ -1,0 +1,1 @@
+"""Tests for the new family_spending package."""

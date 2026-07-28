@@ -18,5 +18,9 @@ miniprogram/mock-data/billing.js
 __pycache__/
 *.pyc
 
-# docs
+# local
 docs/*
+data/
+
+# tmp
+tmp/

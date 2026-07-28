@@ -5,6 +5,7 @@ requires-python = ">=3.14"
 dependencies = [
     "beautifulsoup4>=4.15.0",
     "imapclient>=3.1.0",
+    "loguru>=0.7.3",
     "lxml>=6.1.1",
     "onnxruntime>=1.27.0",
     "openpyxl>=3.1.5",

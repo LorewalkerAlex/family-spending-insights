@@ -1,0 +1,1 @@
+"""Family spending data pipeline."""
