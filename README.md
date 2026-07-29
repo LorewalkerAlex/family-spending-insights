@@ -1,332 +1,150 @@
 # Family Spending Insights
 
-Family Spending Insights 是一个面向家庭消费分析的个人项目。
+用于获取、整理和分析家庭共同消费数据的本地项目。
 
-项目的目标是自动获取消费数据，形成可靠的交易记录，逐步维护商户和消费语义，计算确定性统计，并最终生成容易阅读的月度消费报告。
-
-## 项目目标
-
-项目主要希望回答以下问题：
-
-* 钱花到了哪里；
-* 哪些消费相比过去增加或减少；
-* 哪些属于稳定的日常消费；
-* 哪些可能属于非日常或冲动消费；
-* 当月消费中有哪些值得关注的变化。
-
-整体方向为：
+当前主流程以招商银行信用卡电子账单为数据来源：
 
 ```text
-自动获取消费数据
-→ 形成可靠的交易数据
-→ 维护商户和消费语义
-→ 计算确定性统计
-→ 生成月度消费报告
+163 邮箱
+→ data/emails/*.eml
+→ data/transactions.csv
+→ Mapping / 分析 / 图表 / 报告
 ```
 
-程序负责数据提取、清洗和统计，AI 负责基于确定性结果生成报告，不负责猜测或修改交易事实。
+当前已完成邮件获取和交易提取。截图 Mapping、消费分析和报告将在后续逐步实现。
 
-## 当前范围
-
-当前只优先支持用户正在真实使用的场景：
-
-* 一个 163 邮箱；
-* 邮箱目录：`招行信用卡`；
-* 邮件关键词：`招商银行信用卡电子账单`；
-* 招商银行信用卡电子账单；
-* 本地运行和本地数据存储。
-
-当前不计划建设：
-
-* 通用邮件处理框架；
-* 多银行插件系统；
-* 完整个人财务平台；
-* 家庭资产负债管理；
-* 数据仓库或微服务；
-* 复杂 Web 后端；
-* 通用记账应用。
-
-项目结构会随着真实需求逐步成长，不提前建立尚未需要的抽象和分层。
-
-## 当前数据链路
-
-当前仓库中已经实现并通过真实数据验证的链路是：
-
-```text
-163 IMAP
-→ 保存原始 .eml
-→ 解析招商银行账单 HTML
-→ statement CSV
-→ cleaned transaction CSV
-```
-
-对应目录默认为：
-
-```text
-data/emails/163/cmb
-data/statements/cmb
-data/transactions/cmb
-```
-
-当前已经确认，未来稳定主链路将简化为：
-
-```text
-163 IMAP
-→ 原始 .eml
-→ transaction CSV
-```
-
-`statement CSV` 是重构探索过程中建立的中间产物，当前代码仍然保留，但不再视为未来必须长期维护的数据资产。
-
-原始 `.eml` 是可重新处理的来源数据，交易 CSV 是后续商户语义、消费统计和报告生成的基础数据。
-
-## 数据与隐私
-
-本项目处理真实邮箱和消费账单，所有真实数据默认只保存在本地。
-
-不要提交以下内容：
-
-* `.env`；
-* 邮箱地址和授权码；
-* 原始 `.eml`；
-* 真实账单 CSV；
-* 消费截图；
-* Mapping 和分析结果；
-* 由真实交易生成的小程序数据。
-
-相关目录和文件已经通过 `.gitignore` 排除，包括：
+## 数据目录
 
 ```text
 data/
-cmb_bill_output/
-mapping_output/
-tmp/
+├── emails/
+│   └── *.eml
+├── screenshots/
+├── transactions.csv
+└── reports/
 ```
 
-`.env.example` 只保留配置项和非敏感默认值，可以提交到仓库。
+* `emails/`：从 163 邮箱保存的原始 RFC822 邮件，不可变。
+* `screenshots/`：记账 App 截图，供后续 Mapping 使用。
+* `transactions.csv`：从全部原始邮件重新生成的统一交易数据。
+* `reports/`：后续生成的统计、图表和 AI 报告。
 
-## 项目结构
+`data/` 不提交到 Git。
 
-当前主要目录和文件如下：
+## 环境准备
 
-```text
-src/family_spending/
-├── ingestion/
-│   ├── imap_163.py
-│   └── cmb_statement.py
-└── cleaning/
-    └── cmb_transactions.py
-
-tests/
-├── test_imap_163.py
-├── test_cmb_statement.py
-└── test_cmb_transactions.py
-
-scripts/
-miniprogram/
-
-family-consumption-data-architecture-design.md
-IMPLEMENTATION_PLAN.md
-MINIPROGRAM_LOCAL.md
-```
-
-其中：
-
-* `src/family_spending/`：当前重构探索实现；
-* `tests/`：对应的自动化测试；
-* 根目录旧 Python 脚本：早期账单提取、OCR 和 Mapping 原型；
-* `scripts/`：辅助脚本；
-* `miniprogram/`：早期微信小程序交互原型；
-* `family-consumption-data-architecture-design.md`：项目整体数据架构方向；
-* `IMPLEMENTATION_PLAN.md`：旧 OCR Mapping 原型的实施计划；
-* `MINIPROGRAM_LOCAL.md`：小程序本地 Mock 使用说明。
-
-当前目录结构不是最终架构，后续会在确认真实需求后逐步简化。
-
-## 本地配置
-
-项目要求：
-
-```text
-Python >= 3.14
-uv
-```
-
-在项目根目录同步环境：
+安装项目依赖：
 
 ```powershell
 uv sync
 ```
 
-复制配置模板：
+复制环境变量示例：
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-然后在 `.env` 中填写：
+在 `.env` 中填写 163 邮箱账号和授权码：
 
 ```dotenv
 EMAIL_ADDR=
 EMAIL_AUTH_CODE=
 ```
 
-当前默认配置为：
+邮箱目录、账单主题、查询起始日期和数据路径等非隐私配置统一定义在：
 
-```dotenv
-IMAP_HOST=imap.163.com
-IMAP_PORT=993
-
-SINCE=01-Sep-2025
-MAILBOXES=招行信用卡
-KEYWORDS=招商银行信用卡电子账单
-
-CMB_EMAIL_DIR=data/emails/163/cmb
-CMB_STATEMENT_DIR=data/statements/cmb
-CMB_TRANSACTION_DIR=data/transactions/cmb
+```text
+src/family_spending/settings.py
 ```
 
-`EMAIL_AUTH_CODE` 应填写 163 邮箱生成的客户端授权码，而不是邮箱登录密码。
-
-## 运行方式
-
-以下命令均从项目根目录运行。
-
-### 下载原始账单邮件
+## 获取原始邮件
 
 ```powershell
-uv run python src/family_spending/ingestion/imap_163.py
+$env:PYTHONPATH="src"; uv run python -m family_spending.ingestion.imap_163
 ```
 
 程序会：
 
 * 登录 163 IMAP；
-* 在选择邮箱目录前发送 IMAP `ID`；
-* 扫描配置的邮箱目录；
-* 筛选指定日期和关键词的邮件；
-* 将完整原始邮件保存为 `.eml`；
-* 跳过已经保存的邮件。
+* 进入招商银行信用卡邮件目录；
+* 查找招商银行信用卡电子账单；
+* 将完整原始邮件保存到 `data/emails/`；
+* 跳过已经存在的邮件，不重复下载完整内容。
 
-默认输出：
+原始 `.eml` 是后续所有交易数据的可追溯来源。
 
-```text
-data/emails/163/cmb
-```
-
-### 生成 statement CSV
+## 重建交易数据
 
 ```powershell
-uv run python src/family_spending/ingestion/cmb_statement.py
+$env:PYTHONPATH="src"; uv run python -m family_spending.ingestion.cmb_email_transactions
 ```
 
-程序会从 `.eml` 中解析招商银行账单 HTML，并生成当前探索链路使用的 statement CSV。
-
-默认输出：
+程序会读取 `data/emails/*.eml`，解析所有招商银行账单，并重新生成：
 
 ```text
-data/statements/cmb
+data/transactions.csv
 ```
 
-这一层是当前过渡实现，后续计划合并进直接生成交易数据的处理流程。
+处理规则：
 
-### 生成 cleaned transaction CSV
+* 所有邮件必须成功解析，任意一封失败都会停止；
+* 解析全部成功后才会原子替换现有 CSV；
+* 信用卡还款记录不会作为消费交易写入；
+* 金额保留银行账单中的原始正负方向；
+* 银行描述保持原文，不自动拆分支付渠道或商户；
+* 外观完全相同的交易不会被自动去重；
+* 输出按交易日期和来源位置稳定排序。
+
+## 交易字段
+
+`transactions.csv` 包含以下字段：
+
+* `transaction_id`：根据来源邮件和邮件内位置生成的稳定唯一标识。
+* `transaction_date`：交易发生日期。
+* `amount`：账单金额，保留正负号。
+* `description`：招商银行账单中的原始交易描述。
+* `source_email`：来源 `.eml` 文件名。
+* `source_index`：交易在来源邮件中的顺序，从 1 开始。
+
+`source_email` 和 `source_index` 用于回溯原始邮件，也用于区分业务字段完全相同的真实交易。
+
+## 运行测试
+
+运行当前邮件获取和交易提取测试：
 
 ```powershell
-uv run python src/family_spending/cleaning/cmb_transactions.py
+$env:PYTHONPATH="src"; uv run python -m unittest `
+  tests.test_imap_163 `
+  tests.test_cmb_email_transactions `
+  -v
 ```
 
-程序会：
-
-* 使用邮件日期补全交易年份；
-* 保留 `Decimal` 金额；
-* 保留原始银行描述；
-* 生成稳定的 transaction ID；
-* 输出清洗后的交易 CSV。
-
-默认输出：
-
-```text
-data/transactions/cmb
-```
-
-清洗阶段不根据金额正负号推断消费语义，也不使用通用连字符规则拆分支付渠道或商户。
-
-## 测试
-
-在 PowerShell 中运行全部测试：
+运行仓库全部测试：
 
 ```powershell
-$env:PYTHONPATH="src"; uv run python -m unittest discover -s tests -v
+$env:PYTHONPATH="src"; uv run python -m unittest -v
 ```
 
-当前测试覆盖的主要业务事实包括：
-
-* 163 IMAP `ID` 调用顺序；
-* 中文邮箱目录编码；
-* 邮件筛选和幂等保存；
-* 原始 `.eml` 字节保存；
-* MIME、Quoted-Printable 和 charset 解码；
-* 招商银行账单交易表格解析；
-* `Decimal` 金额；
-* 跨年日期补全；
-* 稳定 transaction ID；
-* 银行原始描述保留。
-
-测试的目标是保护已经通过真实数据确认的业务事实，而不是永久保留当前实现中的所有结构和边缘处理。
-
-## Legacy 原型
-
-仓库根目录仍保留早期原型，包括：
-
-* 直接从 163 邮箱生成招商银行账单 CSV；
-* 从记账 App 长截图执行 OCR；
-* 将截图交易与银行账单匹配；
-* 生成人工维护的 Merchant Mapping；
-* 微信小程序本地 Mock。
-
-这些原型验证了部分业务思路和真实数据格式，但不再代表当前项目主线。
-
-相关文件暂时保留，用于参考：
+## 当前代码入口
 
 ```text
-extract_163_cmb_bills_raw_v3.py
-build_mapping.py
-IMPLEMENTATION_PLAN.md
-MINIPROGRAM_LOCAL.md
-miniprogram/
+src/family_spending/
+├── settings.py
+└── ingestion/
+    ├── imap_163.py
+    └── cmb_email_transactions.py
 ```
 
-后续只有经过重新确认仍有价值的业务事实和处理逻辑，才会进入新的稳定实现。
+* `imap_163.py`：从 163 邮箱保存原始账单邮件。
+* `cmb_email_transactions.py`：从原始邮件直接重建统一交易数据。
 
-## 当前重构状态
+根目录的早期脚本暂时保留作为历史实现对照，不属于当前主流程。
 
-`src/` 和 `tests/` 中的代码应视为：
+## 设计说明
+
+整体目标、数据边界和后续方向见：
 
 ```text
-已经验证业务事实的探索性实现
+family-consumption-data-architecture-design.md
 ```
-
-当前实现已经使用真实数据验证：
-
-* 163 IMAP 可以获取目标账单邮件；
-* 11 封真实 `.eml` 均可解析；
-* 共提取 977 行交易；
-* 新旧实现对应字段没有发现差异；
-* 一月账单中的十二月交易可以正确归入上一年；
-* 当前 transaction ID 方案在真实数据中没有冲突。
-
-这些结果证明核心业务链路可行，但不代表当前模块拆分、中间文件、配置结构和测试数量就是最终设计。
-
-本轮重构的方向是减少不必要的中间层、重复批处理框架和提前抽象，同时保留已经验证的业务事实。
-
-## 下一阶段
-
-下一阶段将按以下顺序推进：
-
-1. 将招商银行处理链路简化为 `.eml → transaction CSV`；
-2. 根据当前单一真实场景简化 163 IMAP 获取代码；
-3. 重新定义商户、支付渠道和消费语义的维护方式；
-4. 建立确定性的月度消费统计；
-5. 基于统计结果生成自动化月度消费报告。
-
-README 会随着功能和架构决策同步更新，不提前描述尚未实现的能力。

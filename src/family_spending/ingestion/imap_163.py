@@ -3,10 +3,8 @@ from __future__ import annotations
 import hashlib
 import imaplib
 import os
-import re
-import sys
 import tempfile
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
 from email import policy
@@ -15,66 +13,54 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv
 from imapclient import imap_utf7
 from loguru import logger
 
-HEADER_QUERY = "(BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE MESSAGE-ID)])"
+from family_spending.settings import (
+    IMAP_163,
+    EmailCredentials,
+    Imap163Settings,
+    load_email_credentials,
+)
+
+# PEEK keeps the user's mailbox read/unread state unchanged.
+HEADER_QUERY = "(BODY.PEEK[HEADER.FIELDS (SUBJECT DATE MESSAGE-ID)])"
 RAW_QUERY = "(BODY.PEEK[])"
 HASH_PREFIX_LENGTH = 24
 
 
 @dataclass(frozen=True)
-class Imap163Config:
-    """Keep runtime settings explicit so imports never access the mailbox."""
-
-    host: str
-    port: int
-    email_addr: str
-    auth_code: str
-    since: str
-    since_date: date
-    mailboxes: tuple[str, ...] | None
-    keywords: tuple[str, ...]
-    out_dir: Path
+class EmailHeader:
+    mail_date: date
+    message_id: str | None
 
 
-@dataclass
+@dataclass(frozen=True)
+class MatchedEmail:
+    mail_id: bytes
+    header: EmailHeader
+
+
+@dataclass(frozen=True)
 class FetchSummary:
-    """Keep only counters needed to verify one ingestion run."""
-
-    mailboxes: int = 0
-    candidates: int = 0
-    headers: int = 0
-    date_skipped: int = 0
-    keyword_skipped: int = 0
-    matched: int = 0
-    saved: int = 0
-    existing: int = 0
-    failed: int = 0
+    candidates: int
+    matched: int
+    saved: int
+    existing: int
 
 
 def parse_since_date(value: str) -> date:
-    """Reject ambiguous dates before server and local filters use them."""
-
+    """Reject an invalid date before opening a network connection."""
     try:
-        return datetime.strptime(value.strip(), "%d-%b-%Y").date()
+        return datetime.strptime(value, "%d-%b-%Y").date()
     except ValueError as exc:
         raise ValueError(
-            f"Invalid SINCE value {value!r}; expected DD-Mon-YYYY"
+            f"Invalid IMAP since value {value!r}; expected DD-Mon-YYYY"
         ) from exc
 
 
-def match_keywords(subject: str, sender: str, keywords: tuple[str, ...]) -> bool:
-    """Apply one local case-insensitive OR rule independent of IMAP quirks."""
-
-    text = f"{subject} {sender}".casefold()
-    return any(keyword.casefold() in text for keyword in keywords)
-
-
 def encode_mailbox_name(mailbox: str) -> str:
-    """Encode only non-ASCII folders because ASCII names are already valid."""
-
+    """Use Modified UTF-7 because IMAP mailbox names are not normal UTF-8."""
     try:
         mailbox.encode("ascii")
         return mailbox
@@ -83,10 +69,10 @@ def encode_mailbox_name(mailbox: str) -> str:
 
 
 def _normalize_message_id(message_id: str | None) -> str:
-    """Remove transport formatting so folder copies share one identity."""
-
     if not message_id:
         return ""
+
+    # Transport formatting is not part of the message identity.
     return "".join(message_id.split()).strip("<>")
 
 
@@ -95,27 +81,32 @@ def build_email_filename(
     message_id: str | None,
     raw_message: bytes | None = None,
 ) -> str:
-    """Prefer Message-ID so duplicates can be skipped before MIME download."""
-
     normalized_id = _normalize_message_id(message_id)
+
     if normalized_id:
+        # Message-ID lets reruns skip the full MIME download.
         identity = normalized_id.encode("utf-8")
     elif raw_message is not None:
+        # Raw bytes keep emails without Message-ID deterministic and unique.
         identity = raw_message
     else:
         raise ValueError("raw_message is required when Message-ID is missing")
+
     digest = hashlib.sha256(identity).hexdigest()[:HASH_PREFIX_LENGTH]
     return f"{mail_date.isoformat()}_{digest}.eml"
 
 
 def save_raw_email(path: Path, raw_message: bytes) -> bool:
-    """Use a temporary file so interruption cannot leave a partial email."""
-
+    """Save immutable source bytes without replacing an existing email."""
     path.parent.mkdir(parents=True, exist_ok=True)
+
     if path.exists():
         return False
+
     temp_path: Path | None = None
+
     try:
+        # Atomic replacement prevents interrupted writes from leaving partial .eml files.
         with tempfile.NamedTemporaryFile(
             mode="wb",
             dir=path.parent,
@@ -130,6 +121,7 @@ def save_raw_email(path: Path, raw_message: bytes) -> bool:
 
         if path.exists():
             return False
+
         os.replace(temp_path, path)
         temp_path = None
         return True
@@ -138,77 +130,22 @@ def save_raw_email(path: Path, raw_message: bytes) -> bool:
             temp_path.unlink(missing_ok=True)
 
 
-def load_config(environ: Mapping[str, str] | None = None) -> Imap163Config:
-    """Read .env only at the executable boundary to keep imports deterministic."""
-
-    if environ is None:
-        load_dotenv()
-        environ = os.environ
-    email_addr = environ.get("EMAIL_ADDR", "").strip()
-    auth_code = environ.get("EMAIL_AUTH_CODE", "").strip()
-    keywords = tuple(
-        value.strip()
-        for value in environ.get("KEYWORDS", "").split(",")
-        if value.strip()
-    )
-    if not email_addr:
-        raise ValueError("Missing required environment variable: EMAIL_ADDR")
-    if not auth_code:
-        raise ValueError("Missing required environment variable: EMAIL_AUTH_CODE")
-    if not keywords:
-        raise ValueError("Missing required environment variable: KEYWORDS")
-    port_text = environ.get("IMAP_PORT", "993").strip() or "993"
-    try:
-        port = int(port_text)
-    except ValueError as exc:
-        raise ValueError(f"Invalid IMAP_PORT value {port_text!r}") from exc
-
-    since = environ.get("SINCE", "01-Jan-2023").strip() or "01-Jan-2023"
-    mailbox_text = environ.get("MAILBOXES", "INBOX").strip() or "INBOX"
-    mailboxes = None
-    if mailbox_text.casefold() != "all":
-        mailboxes = tuple(
-            name.strip() for name in mailbox_text.split(",") if name.strip()
-        )
-
-    out_dir = (
-        environ.get("CMB_EMAIL_DIR", "").strip()
-        or environ.get("OUT_DIR", "").strip()
-        or "data/emails/163/cmb"
-    )
-    return Imap163Config(
-        host=environ.get("IMAP_HOST", "imap.163.com").strip() or "imap.163.com",
-        port=port,
-        email_addr=email_addr,
-        auth_code=auth_code,
-        since=since,
-        since_date=parse_since_date(since),
-        mailboxes=mailboxes
-        or (("INBOX",) if mailbox_text.casefold() != "all" else None),
-        keywords=keywords,
-        out_dir=Path(out_dir),
-    )
-
-
 def _fetch_bytes(mail: Any, mail_id: bytes, query: str) -> bytes:
-    """Fail closed so incomplete server responses are never persisted."""
-
     status, data = mail.fetch(mail_id, query)
+
     if status == "OK" and data:
         for item in data:
-            if (
-                isinstance(item, tuple)
-                and len(item) >= 2
-                and isinstance(item[1], bytes)
-            ):
+            if isinstance(item, tuple) and len(item) >= 2 and isinstance(item[1], bytes):
                 return item[1]
 
-    raise RuntimeError(f"fetch failed: status={status!r}, data={data!r}")
+    message_no = mail_id.decode("ascii", errors="replace")
+    raise RuntimeError(
+        f"Failed to fetch message {message_no}: status={status!r}, data={data!r}"
+    )
 
 
 def _send_imap_id(mail: Any) -> None:
-    """Send ID before folder selection because 163 requires this handshake."""
-
+    """Send the client handshake before selection because 163 requires it."""
     imaplib.Commands["ID"] = ("AUTH",)
     payload = (
         '("name" "family-spending-insights" '
@@ -221,270 +158,172 @@ def _send_imap_id(mail: Any) -> None:
         raise RuntimeError(f"IMAP ID command failed: {data!r}")
 
 
-def _parse_list_mailbox(raw_line: bytes) -> str:
-    """Read the final LIST token because flags and delimiters may vary."""
-
-    line = raw_line.decode("ascii").strip()
-    match = re.search(r'(?:(?:"((?:\\.|[^"\\])*)")|(\S+))\s*$', line)
-
-    if not match:
-        raise ValueError(f"Unable to parse mailbox LIST response: {line!r}")
-
-    mailbox = match.group(1) if match.group(1) is not None else match.group(2)
-    return re.sub(r"\\(.)", r"\1", mailbox)
-
-
-def _mailbox_targets(
-    mail: Any,
-    configured_mailboxes: tuple[str, ...] | None,
-) -> list[tuple[str, str]]:
-    """Call LIST only for ALL so configured runs remain predictable and cheap."""
-
-    if configured_mailboxes is not None:
-        return [(name, encode_mailbox_name(name)) for name in configured_mailboxes]
-
-    status, data = mail.list()
-    if status != "OK" or not data:
-        raise RuntimeError(f"IMAP LIST failed: {data!r}")
-
-    targets: list[tuple[str, str]] = []
-    for raw_line in data:
-        if not isinstance(raw_line, bytes) or not raw_line:
-            continue
-
-        encoded_name = _parse_list_mailbox(raw_line)
-
-        try:
-            display_name = imap_utf7.decode(encoded_name.encode("ascii"))
-        except Exception:
-            display_name = encoded_name
-
-        targets.append((display_name, encoded_name))
-
-    if not targets:
-        raise RuntimeError("IMAP LIST returned no mailbox names")
-
-    return list(dict.fromkeys(targets))
-
-
-def _select_mailbox(mail: Any, encoded_name: str) -> str:
-    """Try quoted and unquoted names because 163 handles folders inconsistently."""
-
+def _select_mailbox(mail: Any, mailbox: str) -> None:
+    encoded_mailbox = encode_mailbox_name(mailbox)
     last_data: Any = None
 
-    for candidate in dict.fromkeys((encoded_name, f'"{encoded_name}"')):
+    # 163 has returned different results for quoted and unquoted folder names.
+    for candidate in dict.fromkeys((encoded_mailbox, f'"{encoded_mailbox}"')):
         status, data = mail.select(candidate, readonly=True)
 
         if status == "OK":
-            return candidate
+            return
 
         last_data = data
 
-    raise RuntimeError(f"select failed: {last_data!r}")
+    raise RuntimeError(f"Failed to select mailbox {mailbox!r}: {last_data!r}")
 
 
-def _parse_header(raw_header: bytes) -> tuple[str, str, date | None, str | None]:
-    """Parse only routing fields because raw MIME bytes must remain untouched."""
+def _search_message_ids(mail: Any, since: str) -> list[bytes]:
+    # Server filtering reduces traffic; parsed dates are checked locally again.
+    status, data = mail.search(None, "SENTSINCE", since)
 
+    if status != "OK":
+        raise RuntimeError(f"IMAP search failed: {data!r}")
+
+    return data[0].split() if data and data[0] else []
+
+
+def _parse_matching_header(
+    mail_id: bytes,
+    raw_header: bytes,
+    subject_keyword: str,
+) -> EmailHeader | None:
     header = BytesHeaderParser(policy=policy.default).parsebytes(raw_header)
     subject = str(header.get("Subject", ""))
-    sender = str(header.get("From", ""))
-    message_id = str(header["Message-ID"]) if header.get("Message-ID") else None
+
+    # Local matching avoids inconsistent Chinese text search on IMAP servers.
+    if subject_keyword.casefold() not in subject.casefold():
+        return None
+
+    message_no = mail_id.decode("ascii", errors="replace")
+
     try:
         mail_date = parsedate_to_datetime(str(header.get("Date", ""))).date()
-    except (TypeError, ValueError, OverflowError):
-        mail_date = None
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"Invalid Date header in message {message_no}") from exc
 
-    return subject, sender, mail_date, message_id
+    message_id = str(header["Message-ID"]) if header.get("Message-ID") else None
+    return EmailHeader(mail_date=mail_date, message_id=message_id)
+
+
+def _find_matching_emails(
+    mail: Any,
+    mail_ids: list[bytes],
+    settings: Imap163Settings,
+    since_date: date,
+) -> list[MatchedEmail]:
+    matches: list[MatchedEmail] = []
+
+    for mail_id in mail_ids:
+        raw_header = _fetch_bytes(mail, mail_id, HEADER_QUERY)
+        header = _parse_matching_header(mail_id, raw_header, settings.subject_keyword)
+
+        if header is None or header.mail_date < since_date:
+            continue
+
+        matches.append(MatchedEmail(mail_id=mail_id, header=header))
+
+    return matches
 
 
 def fetch_raw_emails(
-    config: Imap163Config,
+    credentials: EmailCredentials,
+    settings: Imap163Settings = IMAP_163,
     *,
     imap_factory: Callable[[str, int], Any] = imaplib.IMAP4_SSL,
 ) -> FetchSummary:
-    """Fetch matching raw emails while logging only useful operational milestones."""
+    """Fetch the single verified 163/CMB flow and fail fast on errors."""
+    since_date = parse_since_date(settings.since)
 
-    summary = FetchSummary()
-    config.out_dir.mkdir(parents=True, exist_ok=True)
     logger.info(
-        "Configuration loaded: host={}, port={}, since={}, mailboxes={}, "
-        "keyword_count={}, out_dir={}",
-        config.host,
-        config.port,
-        config.since,
-        "ALL" if config.mailboxes is None else list(config.mailboxes),
-        len(config.keywords),
-        config.out_dir,
+        "Starting 163 email ingestion: mailbox={}, since={}, output={}",
+        settings.mailbox,
+        settings.since,
+        settings.output_dir,
     )
-    logger.info(
-        "Connecting to IMAP server: host={}, port={}",
-        config.host,
-        config.port,
-    )
-    mail = imap_factory(config.host, config.port)
+
+    mail = imap_factory(settings.host, settings.port)
     logged_in = False
 
     try:
-        status, data = mail.login(config.email_addr, config.auth_code)
-
+        status, data = mail.login(credentials.address, credentials.auth_code)
         if status != "OK":
             raise RuntimeError(f"IMAP login failed: {data!r}")
 
         logged_in = True
-        logger.info("IMAP login succeeded")
+        logger.info("IMAP login succeeded: host={}", settings.host)
 
         _send_imap_id(mail)
-        logger.info("IMAP ID command succeeded")
-        for display_name, encoded_name in _mailbox_targets(mail, config.mailboxes):
-            try:
-                selected_name = _select_mailbox(mail, encoded_name)
-                status, data = mail.search(None, "SENTSINCE", config.since)
 
-                if status != "OK":
-                    raise RuntimeError(f"search failed: {data!r}")
-                summary.mailboxes += 1
-            except Exception as exc:
-                summary.failed += 1
-                logger.exception(
-                    "Mailbox failed: name={}, error={}",
-                    display_name,
-                    exc,
+        _select_mailbox(mail, settings.mailbox)
+        logger.info("Mailbox selected: {}", settings.mailbox)
+
+        mail_ids = _search_message_ids(mail, settings.since)
+        logger.info("Search completed: candidates={}", len(mail_ids))
+
+        matches = _find_matching_emails(mail, mail_ids, settings, since_date)
+        logger.info("Target emails matched: {}", len(matches))
+
+        saved = 0
+        existing = 0
+
+        for index, matched_email in enumerate(matches, start=1):
+            header = matched_email.header
+            filename: str | None = None
+            output_path: Path | None = None
+
+            if _normalize_message_id(header.message_id):
+                filename = build_email_filename(header.mail_date, header.message_id)
+                output_path = settings.output_dir / filename
+
+                if output_path.exists():
+                    existing += 1
+                    continue
+
+            raw_message = _fetch_bytes(mail, matched_email.mail_id, RAW_QUERY)
+
+            if filename is None or output_path is None:
+                filename = build_email_filename(header.mail_date, None, raw_message)
+                output_path = settings.output_dir / filename
+
+            if save_raw_email(output_path, raw_message):
+                saved += 1
+                logger.info(
+                    "Email saved: progress={}/{}, bytes={}, file={}",
+                    index,
+                    len(matches),
+                    len(raw_message),
+                    filename,
                 )
-                continue
-
-            mail_ids = data[0].split() if data and data[0] else []
-            summary.candidates += len(mail_ids)
-            logger.info(
-                "Mailbox search completed: name={}, encoded={}, candidates={}",
-                display_name,
-                selected_name,
-                len(mail_ids),
-            )
-
-            for mail_id in mail_ids:
-                message_no = mail_id.decode("ascii", errors="replace")
-                try:
-                    # BODY.PEEK prevents reads from marking the message as read.
-                    raw_header = _fetch_bytes(mail, mail_id, HEADER_QUERY)
-                    summary.headers += 1
-
-                    subject, sender, mail_date, message_id = _parse_header(
-                        raw_header
-                    )
-                    # SENTSINCE narrows results, but the header remains authoritative.
-                    if mail_date is None or mail_date < config.since_date:
-                        summary.date_skipped += 1
-                        continue
-
-                    if not match_keywords(subject, sender, config.keywords):
-                        summary.keyword_skipped += 1
-                        continue
-                    summary.matched += 1
-                    filename = None
-                    output_path = None
-
-                    if _normalize_message_id(message_id):
-                        # Message-ID avoids downloading the same MIME data again.
-                        filename = build_email_filename(mail_date, message_id)
-                        output_path = config.out_dir / filename
-                        if output_path.exists():
-                            summary.existing += 1
-                            logger.info(
-                                "Raw email already exists: mailbox={}, file={}",
-                                display_name,
-                                filename,
-                            )
-                            continue
-
-                    raw_message = _fetch_bytes(mail, mail_id, RAW_QUERY)
-                    if filename is None or output_path is None:
-                        filename = build_email_filename(
-                            mail_date,
-                            None,
-                            raw_message,
-                        )
-                        output_path = config.out_dir / filename
-                    if save_raw_email(output_path, raw_message):
-                        summary.saved += 1
-                        logger.info(
-                            "Raw email saved: mailbox={}, message={}, "
-                            "bytes={}, file={}",
-                            display_name,
-                            message_no,
-                            len(raw_message),
-                            filename,
-                        )
-                    else:
-                        summary.existing += 1
-                        logger.info(
-                            "Raw email already exists: mailbox={}, file={}",
-                            display_name,
-                            filename,
-                        )
-                except Exception as exc:
-                    summary.failed += 1
-                    logger.exception(
-                        "Message failed: mailbox={}, message={}, error={}",
-                        display_name,
-                        message_no,
-                        exc,
-                    )
-            logger.info(
-                "Mailbox completed: name={}, candidates={}",
-                display_name,
-                len(mail_ids),
-            )
+            else:
+                existing += 1
     finally:
         if logged_in:
             try:
+                # Cleanup errors should not hide the original ingestion failure.
                 mail.logout()
-                logger.info("IMAP logout succeeded")
             except Exception as exc:
-                summary.failed += 1
-                logger.exception("IMAP logout failed: error={}", exc)
+                logger.warning("IMAP logout failed: {}", exc)
+
+    summary = FetchSummary(
+        candidates=len(mail_ids),
+        matched=len(matches),
+        saved=saved,
+        existing=existing,
+    )
+
     logger.info(
-        "Ingestion completed: mailboxes={}, candidates={}, headers={}, "
-        "date_skipped={}, keyword_skipped={}, matched={}, saved={}, "
-        "existing={}, failed={}",
-        summary.mailboxes,
-        summary.candidates,
-        summary.headers,
-        summary.date_skipped,
-        summary.keyword_skipped,
+        "163 email ingestion completed: matched={}, saved={}, existing={}",
         summary.matched,
         summary.saved,
         summary.existing,
-        summary.failed,
     )
-
     return summary
 
 
-def configure_logging() -> None:
-    """Write to stdout so PowerShell does not report normal logs as errors."""
-
-    logger.remove()
-    logger.add(
-        sys.stdout,
-        level="DEBUG",
-        format=(
-            "<green>{time:HH:mm:ss.SSS}</green> | "
-            "<level>{level: <8}</level> | "
-            "<level>{message}</level>"
-        ),
-        colorize=sys.stdout.isatty(),
-        backtrace=False,
-        diagnose=False,
-    )
-
-
 def main() -> None:
-    """Keep configuration loading and side effects at the executable boundary."""
-
-    configure_logging()
-    logger.info("Starting 163 raw email ingestion")
-    fetch_raw_emails(load_config())
+    fetch_raw_emails(load_email_credentials())
 
 
 if __name__ == "__main__":
