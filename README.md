@@ -11,7 +11,7 @@
 → Mapping / 分析 / 图表 / 报告
 ```
 
-当前已完成邮件获取和交易提取。截图 Mapping、消费分析和报告将在后续逐步实现。
+当前已完成邮件获取、统一交易提取、App 长截图 OCR 探索，以及历史 Merchant Mapping 的人工审核和正式配置落地。下一阶段将实现 Mapping loader、运行时解析、待分类与复核提醒；消费统计和报告仍将在后续逐步实现。
 
 ## 数据目录
 
@@ -20,16 +20,33 @@ data/
 ├── emails/
 │   └── *.eml
 ├── screenshots/
+├── mappings/
+│   ├── merchants.yaml
+│   ├── categories.yaml
+│   └── transaction_category_overrides.jsonl
 ├── transactions.csv
 └── reports/
 ```
 
 * `emails/`：从 163 邮箱保存的原始 RFC822 邮件，不可变。
-* `screenshots/`：记账 App 截图，供后续 Mapping 使用。
-* `transactions.csv`：从全部原始邮件重新生成的统一交易数据。
+* `screenshots/`：记账 App 截图，只用于历史 Mapping 初始化和识别验证。
+* `transactions.csv`：从全部原始邮件重新生成的统一交易事实数据。
+* `mappings/merchants.yaml`：人工审核确认的 `merchant_name → descriptions`。
+* `mappings/categories.yaml`：人工审核确认的 `category → merchant_names`。
+* `mappings/transaction_category_overrides.jsonl`：少量单笔交易的分类覆盖。
 * `reports/`：后续生成的统计、图表和 AI 报告。
 
-`data/` 不提交到 Git。
+`data/` 中的原始邮件、完整交易数据、截图、OCR 数据和临时分析结果默认只保存在本地，不提交到 Git。
+
+以下三份经过人工审核的正式 Mapping 配置会进入 Git：
+
+```text
+data/mappings/merchants.yaml
+data/mappings/categories.yaml
+data/mappings/transaction_category_overrides.jsonl
+```
+
+`待分类` 是运行时或界面状态，不是正式 category，也不写入 Mapping 配置。
 
 ## 环境准备
 
@@ -108,6 +125,39 @@ data/transactions.csv
 * `source_index`：交易在来源邮件中的顺序，从 1 开始。
 
 `source_email` 和 `source_index` 用于回溯原始邮件，也用于区分业务字段完全相同的真实交易。
+
+## Merchant Mapping
+
+正式 Mapping 与 `transactions.csv` 分开维护，不会把标准商户名或分类写回交易事实数据。
+
+当前配置包括：
+
+```text
+data/mappings/merchants.yaml
+data/mappings/categories.yaml
+data/mappings/transaction_category_overrides.jsonl
+```
+
+预期的运行时解析逻辑为：
+
+```text
+原始 description
+→ 查找标准 merchant_name
+→ 查找 merchant 默认 category
+→ 应用 transaction_id 分类覆盖
+```
+
+具体展示规则：
+
+* description 已映射时，显示标准 `merchant_name`；
+* description 未映射时，继续显示原始 description；
+* transaction_id 存在分类覆盖时，优先使用覆盖 category；
+* 否则使用 merchant 的默认 category；
+* 没有可用 category 时进入运行态 `待分类`。
+
+`其他支出` 是经过人工确认的正式 category，不是未匹配交易的回退分类。
+
+当前三份正式 Mapping 数据已经落地；Mapping loader、运行时接入、待分类处理和复核提醒尚未实现。
 
 ## 运行测试
 
