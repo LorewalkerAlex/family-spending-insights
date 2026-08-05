@@ -20,7 +20,16 @@ __pycache__/
 
 # local
 docs/*
-data/
+
+# 本地数据默认忽略
+data/*
+
+# 正式 Mapping 配置纳入 Git
+!data/mappings/
+data/mappings/*
+!data/mappings/merchants.yaml
+!data/mappings/categories.yaml
+!data/mappings/transaction_category_overrides.jsonl
 
 # tmp
 tmp/
