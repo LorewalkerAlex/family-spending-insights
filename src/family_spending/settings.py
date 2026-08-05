@@ -10,6 +10,10 @@ from dotenv import load_dotenv
 DATA_DIR = Path("data")
 EMAILS_DIR = DATA_DIR / "emails"
 SCREENSHOTS_DIR = DATA_DIR / "screenshots"
+MAPPINGS_DIR = DATA_DIR / "mappings"
+MERCHANTS_FILE = MAPPINGS_DIR / "merchants.yaml"
+CATEGORIES_FILE = MAPPINGS_DIR / "categories.yaml"
+TRANSACTION_CATEGORY_OVERRIDES_FILE = MAPPINGS_DIR / "transaction_category_overrides.jsonl"
 TRANSACTIONS_FILE = DATA_DIR / "transactions.csv"
 REPORTS_DIR = DATA_DIR / "reports"
 
@@ -52,7 +56,6 @@ def load_email_credentials(
 
     address = environ.get("EMAIL_ADDR", "").strip()
     auth_code = environ.get("EMAIL_AUTH_CODE", "").strip()
-
     if not address:
         raise ValueError("Missing required environment variable: EMAIL_ADDR")
     if not auth_code:

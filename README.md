@@ -11,7 +11,7 @@
 → Mapping / 分析 / 图表 / 报告
 ```
 
-当前已完成邮件获取、统一交易提取、App 长截图 OCR 探索，以及历史 Merchant Mapping 的人工审核和正式配置落地。下一阶段将实现 Mapping loader、运行时解析、待分类与复核提醒；消费统计和报告仍将在后续逐步实现。
+当前已完成邮件获取、统一交易提取、App 长截图 OCR 探索、历史 Merchant Mapping 的人工审核和正式配置落地，以及 Mapping loader、单条交易运行时解析和非阻断复核信号。批量解析接入、消费统计和报告仍将在后续逐步实现。
 
 ## 数据目录
 
@@ -128,7 +128,7 @@ data/transactions.csv
 
 ## Merchant Mapping
 
-正式 Mapping 与 `transactions.csv` 分开维护，不会把标准商户名或分类写回交易事实数据。
+正式 Mapping 与 `transactions.csv` 分开维护，不会把标准商户名、分类或复核状态写回交易事实数据。
 
 当前配置包括：
 
@@ -138,30 +138,58 @@ data/mappings/categories.yaml
 data/mappings/transaction_category_overrides.jsonl
 ```
 
-预期的运行时解析逻辑为：
+`family_spending.mapping.load_merchant_mappings()` 会读取并校验三份配置，建立以下只读索引：
 
 ```text
-原始 description
-→ 查找标准 merchant_name
-→ 查找 merchant 默认 category
-→ 应用 transaction_id 分类覆盖
+description → merchant_name
+merchant_name → default category
+transaction_id → override category
 ```
 
-具体展示规则：
+校验会明确拒绝重复 description、跨 category 重复 merchant、两份 YAML 的 merchant 集合不一致、空名称或空列表、重复 override、未知 override category，以及无法解析的 YAML 或 JSONL。错误信息会包含对应文件和值；YAML 重复 key 不会被静默覆盖。
 
-* description 已映射时，显示标准 `merchant_name`；
-* description 未映射时，继续显示原始 description；
-* transaction_id 存在分类覆盖时，优先使用覆盖 category；
-* 否则使用 merchant 的默认 category；
-* 没有可用 category 时进入运行态 `待分类`。
+单条交易通过 `family_spending.mapping.resolve_transaction()` 解析：
 
-`其他支出` 是经过人工确认的正式 category，不是未匹配交易的回退分类。
+```text
+description 匹配 merchant
+→ 得到 merchant 默认 category
+→ transaction_id 命中 override 时只覆盖最终 category
+```
 
-当前三份正式 Mapping 数据已经落地；Mapping loader、运行时接入、待分类处理和复核提醒尚未实现。
+运行时规则：
+
+* description 已映射时，`display_name` 使用标准 `merchant_name`；
+* description 未映射时，保留原始 description，最终 category 为运行态 `待分类`；
+* override 只能用于已经匹配 merchant 的交易；如果 ID 命中 override 但 description 无法匹配，会作为数据一致性错误明确失败；
+* override 只改变该笔交易的最终 category，不改变 merchant、merchant 默认 category 或原始交易；
+* 命中 override 的交易不产生复核信号；
+* 未命中 override 且默认 category 为 `其他支出` 时，产生 `other_expense_review`；
+* 未命中 override、默认 category 为 `综合购物` 且金额 `<= -1000` 时，产生 `high_value_general_shopping_review`；
+* 复核信号只存在于本次解析结果中，不持久化、不阻断处理，也不修改正式 Mapping。
+
+`ResolvedTransaction` 保留原始 `CmbTransaction`，并提供：
+
+```text
+merchant_name
+display_name
+default_category
+category
+category_source
+is_unmatched
+review_signals
+```
+
+当前实现是纯领域层，没有批量 CSV 输出或独立 CLI。后续统计或界面应在读取交易时动态调用该解析层。
 
 ## 运行测试
 
-运行当前邮件获取和交易提取测试：
+运行 Mapping loader、正式 Mapping 校验和运行时解析测试：
+
+```powershell
+$env:PYTHONPATH="src"; uv run python -m unittest tests.test_mapping -v
+```
+
+运行邮件获取和交易提取测试：
 
 ```powershell
 $env:PYTHONPATH="src"; uv run python -m unittest `
@@ -180,12 +208,14 @@ $env:PYTHONPATH="src"; uv run python -m unittest -v
 
 ```text
 src/family_spending/
+├── mapping.py
 ├── settings.py
 └── ingestion/
     ├── imap_163.py
     └── cmb_email_transactions.py
 ```
 
+* `mapping.py`：读取和校验正式 Mapping，并解析单条交易的 merchant、category 与复核信号。
 * `imap_163.py`：从 163 邮箱保存原始账单邮件。
 * `cmb_email_transactions.py`：从原始邮件直接重建统一交易数据。
 
