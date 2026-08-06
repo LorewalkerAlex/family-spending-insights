@@ -14,7 +14,7 @@
 → data/reports/spending_statistics.json
 ```
 
-当前已完成邮件获取、统一交易提取、App 长截图 OCR 探索、历史 Merchant Mapping 的人工审核和正式配置落地、单条及批量交易运行时解析，以及退款归并和消费统计派生文件生成。图表、前端展示和 AI 报告仍将在后续逐步实现。
+当前已完成邮件获取、统一交易提取、App 长截图 OCR 探索、历史 Merchant Mapping 的人工审核和正式配置落地、单条及批量交易运行时解析，以及退款归并、消费统计派生文件生成和本地 HTML Dashboard。图表和 AI 报告仍将在后续逐步实现。
 
 ## 数据目录
 
@@ -38,7 +38,7 @@ data/
 * `mappings/merchants.yaml`：人工审核确认的 `merchant_name → descriptions`。
 * `mappings/categories.yaml`：人工审核确认的 `category → merchant_names`。
 * `mappings/transaction_category_overrides.jsonl`：少量单笔交易的分类覆盖。
-* `reports/spending_statistics.json`：由后端全量重建、供后续前端读取的消费统计派生文件。
+* `reports/spending_statistics.json`：由后端全量重建、供本地 Dashboard 读取的消费统计派生文件。
 
 `data/` 中的原始邮件、完整交易数据、截图、OCR 数据、派生统计和临时分析结果默认只保存在本地，不提交到 Git。
 
@@ -393,6 +393,52 @@ data/reports/spending_statistics.json
 
 后续如果前端读取方式或 schema 发生变化，只需要调整统计领域层或序列化层，不需要修改退款与 Mapping 契约。
 
+## 本地消费统计 Dashboard
+
+`local_dashboard/` 是从当前正式统计契约出发独立实现的本地消费端。旧的 `miniprogram/`、Mock、导出脚本和其他可行性测试代码不构成目录、API、数据模型、UI 或兼容标准。
+
+先从项目根目录生成最新统计：
+
+```powershell
+$env:PYTHONPATH="src"; uv run python -m family_spending.statistics_generation
+```
+
+再从项目根目录启动 Python 标准库静态服务：
+
+```powershell
+uv run python -m http.server 8000
+```
+
+浏览器访问：
+
+```text
+http://localhost:8000/local_dashboard/
+```
+
+页面直接读取：
+
+```text
+/data/reports/spending_statistics.json
+```
+
+当前能力：
+
+* 展示累计净消费、净消费交易笔数和统计月份数；
+* 默认选择后端返回的第一个月份，并支持切换其他月份；
+* 按后端既有顺序展示月份 category 和 merchant/display 统计；
+* 待分类商户使用原始 `display_name`，同时显示 `待分类` 标记，金额不会被遗漏；
+* 支持 loading、全局空数据、月份列表空数据和明确错误状态；
+* 明确校验 `schema_version === 1`、必要字段、安全整数和待分类 merchant 语义；
+* 校验每个月及全局的金额、交易笔数和月份数量对账；
+* 校验失败时停止展示，不在前端重新聚合或修正后端结果；
+* “重新加载”会绕过浏览器缓存重新读取正式派生文件。
+
+Dashboard 不重新处理退款、不执行 Merchant Mapping、不重新排序、不写回任何数据，也不请求外部网络资源。真实 `spending_statistics.json` 继续由 `.gitignore` 保持在本地；测试只使用虚构数据。
+
+`local_dashboard/api.js` 公开 `getSummary()`、`getMonths()`、`getMonthStatistics(month)` 和 `reloadStatistics()`，并将数据加载、schema 校验、对账校验和 view model 转换与 DOM 渲染分离。以后迁移到微信小程序时可以参考这些职责和返回模型，但浏览器 `fetch`、DOM 和 CSS 代码不需要直接复制。
+
+当前 Dashboard 不包含图表、逐笔交易、退款明细、Mapping 编辑、复核处理、登录、云同步、远程 API 或前端写回。
+
 ## 运行测试
 
 运行 Mapping loader、正式 Mapping 校验和运行时解析测试：
@@ -427,7 +473,19 @@ $env:PYTHONPATH="src"; uv run python -m unittest `
   -q
 ```
 
-运行仓库全部测试（成功时只输出简短汇总）：
+运行本地 Dashboard 的 JavaScript service 测试：
+
+```powershell
+node --test local_dashboard/api.test.js
+```
+
+运行 Dashboard 静态契约测试：
+
+```powershell
+$env:PYTHONPATH="src"; uv run python -m unittest tests.test_local_dashboard -q
+```
+
+运行仓库全部 Python 测试（成功时只输出简短汇总）：
 
 ```powershell
 $env:PYTHONPATH="src"; uv run python -m unittest -q
@@ -438,6 +496,13 @@ $env:PYTHONPATH="src"; uv run python -m unittest -q
 ## 当前代码入口
 
 ```text
+local_dashboard/
+├── index.html
+├── api.js
+├── app.js
+├── styles.css
+└── api.test.js
+
 src/family_spending/
 ├── mapping.py
 ├── refund_reconciliation.py
@@ -451,6 +516,9 @@ src/family_spending/
     └── cmb_email_transactions.py
 ```
 
+* `local_dashboard/api.js`：读取并严格校验正式派生统计，提供独立于 DOM 的 service 和 view model。
+* `local_dashboard/app.js`：管理页面加载、月份切换、分类/商户视图以及空态和错误态。
+* `local_dashboard/styles.css`：提供无外部依赖、移动优先的本地 Dashboard 样式。
 * `mapping.py`：读取和校验正式 Mapping，并解析单条交易的 merchant、category 与复核信号。
 * `refund_reconciliation.py`：优先按原始 description，并以同 Merchant 30 天同额作为保守回退，将退款向前归并到历史消费。
 * `spending_statistics.py`：将净消费解析结果聚合为月份、category 和 merchant/display 领域对象。
@@ -460,7 +528,7 @@ src/family_spending/
 * `imap_163.py`：从 163 邮箱保存原始账单邮件。
 * `cmb_email_transactions.py`：从原始邮件重建统一交易数据，并按正式 CSV 契约读取交易。
 
-根目录的早期脚本暂时保留作为历史实现对照，不属于当前主流程。
+`miniprogram/`、根目录早期脚本、Mock 和导出工具仅作为历史 POC 保留，不属于当前主流程，也不构成新功能的设计标准或兼容约束。
 
 ## 设计说明
 

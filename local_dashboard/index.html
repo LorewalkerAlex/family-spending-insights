@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>家庭消费统计</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./api.js" defer></script>
+    <script src="./app.js" defer></script>
+  </head>
+  <body>
+    <main class="page-shell">
+      <header class="page-header">
+        <p class="eyebrow">Family Spending Insights</p>
+        <h1>家庭消费统计</h1>
+        <p class="page-header__description">
+          查看后端全量重建后的净消费汇总。页面只读取派生统计，不修改任何交易或 Mapping。
+        </p>
+      </header>
+
+      <p class="state-message" data-state="loading">正在读取消费统计…</p>
+
+      <section class="error-card" data-state="error" hidden aria-labelledby="error-title">
+        <p class="eyebrow">无法展示统计</p>
+        <h2 id="error-title" data-error-message>消费统计加载失败。</h2>
+        <p data-error-details>请检查统计文件后重新加载。</p>
+        <div class="recovery-command">
+          <p>请先在项目根目录运行：</p>
+          <code>$env:PYTHONPATH="src"; uv run python -m family_spending.statistics_generation</code>
+        </div>
+        <button class="primary-button" type="button" data-action="reload">重新加载</button>
+      </section>
+
+      <div data-state="dashboard" hidden>
+        <section class="summary-card" aria-labelledby="summary-title">
+          <div>
+            <p class="summary-card__label" id="summary-title">累计净消费</p>
+            <p class="summary-card__amount" data-summary="total-spending">¥0.00</p>
+          </div>
+          <dl class="summary-card__metrics">
+            <div>
+              <dt>净消费笔数</dt>
+              <dd data-summary="transaction-count">0</dd>
+            </div>
+            <div>
+              <dt>统计月份</dt>
+              <dd data-summary="month-count">0</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section class="empty-card" data-state="empty" hidden>
+          <h2>暂无月份统计</h2>
+          <p>统计文件结构有效，但当前没有可展示的月份数据。</p>
+        </section>
+
+        <div data-month-controls>
+          <section class="month-card" aria-labelledby="month-title">
+            <div class="month-card__selector">
+              <label for="month-select">统计月份</label>
+              <select id="month-select" data-month-select></select>
+            </div>
+            <div class="month-card__summary">
+              <div>
+                <p class="month-card__label" id="month-title" data-month-title>—</p>
+                <p class="month-card__amount" data-month="spending">¥0.00</p>
+              </div>
+              <p class="month-card__count" data-month="transactions">0 笔净消费</p>
+            </div>
+          </section>
+
+          <section class="breakdown-card" aria-labelledby="breakdown-title">
+            <div class="view-tabs" role="tablist" aria-label="统计维度">
+              <button
+                class="view-tab view-tab--active"
+                type="button"
+                role="tab"
+                aria-selected="true"
+                data-view="categories"
+              >
+                按分类
+              </button>
+              <button
+                class="view-tab"
+                type="button"
+                role="tab"
+                aria-selected="false"
+                tabindex="-1"
+                data-view="merchants"
+              >
+                按商户
+              </button>
+            </div>
+
+            <div class="breakdown-card__heading">
+              <h2 id="breakdown-title" data-list-title>分类支出</h2>
+              <p>保持后端统计结果的既有顺序。</p>
+            </div>
+
+            <ul class="statistics-list" data-statistics-list></ul>
+            <p class="list-empty" data-list-empty hidden></p>
+          </section>
+        </div>
+      </div>
+
+      <p class="visually-hidden" role="status" aria-live="polite" data-status></p>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,399 @@
+:root {
+  color-scheme: light;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  color: #17201b;
+  background: #f3f5f2;
+  font-synthesis: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  margin: 0;
+  background: #f3f5f2;
+}
+
+button,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.page-shell {
+  width: min(100%, 48rem);
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 2rem 1rem 4rem;
+}
+
+.page-header {
+  margin-bottom: 1.5rem;
+}
+
+.eyebrow {
+  margin: 0 0 0.4rem;
+  color: #557063;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+p {
+  margin-top: 0;
+}
+
+h1 {
+  margin-bottom: 0.65rem;
+  font-size: clamp(1.75rem, 8vw, 2.5rem);
+  line-height: 1.12;
+}
+
+h2 {
+  margin-bottom: 0.45rem;
+  font-size: 1.15rem;
+}
+
+.page-header__description,
+.error-card > p,
+.empty-card p,
+.breakdown-card__heading p {
+  color: #637068;
+  line-height: 1.65;
+}
+
+.page-header__description {
+  max-width: 42rem;
+  margin-bottom: 0;
+}
+
+.state-message,
+.error-card,
+.empty-card,
+.month-card,
+.breakdown-card {
+  border: 1px solid #dfe5e0;
+  border-radius: 1rem;
+  background: #ffffff;
+  box-shadow: 0 0.5rem 1.5rem rgb(29 48 37 / 0.05);
+}
+
+.state-message,
+.empty-card {
+  padding: 2rem 1.25rem;
+  text-align: center;
+}
+
+.state-message {
+  color: #526159;
+}
+
+.error-card {
+  padding: 1.5rem;
+}
+
+.error-card h2 {
+  color: #7b2f2f;
+}
+
+.recovery-command {
+  margin: 1.25rem 0;
+  padding: 1rem;
+  overflow-wrap: anywhere;
+  border-radius: 0.75rem;
+  background: #f5f7f5;
+}
+
+.recovery-command p {
+  margin-bottom: 0.45rem;
+  color: #526159;
+  font-size: 0.875rem;
+}
+
+.recovery-command code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 0.8rem;
+  line-height: 1.55;
+}
+
+.primary-button {
+  min-height: 2.75rem;
+  padding: 0.65rem 1rem;
+  border: 0;
+  border-radius: 0.75rem;
+  color: #ffffff;
+  background: #235c43;
+  font-weight: 700;
+}
+
+.primary-button:hover {
+  background: #194b35;
+}
+
+.primary-button:focus-visible,
+.view-tab:focus-visible,
+select:focus-visible {
+  outline: 3px solid #9ec7b1;
+  outline-offset: 2px;
+}
+
+.summary-card {
+  display: grid;
+  gap: 1.5rem;
+  margin-bottom: 1rem;
+  padding: 1.5rem;
+  border-radius: 1.15rem;
+  color: #ffffff;
+  background: #234f3b;
+  box-shadow: 0 0.75rem 2rem rgb(24 70 48 / 0.18);
+}
+
+.summary-card__label,
+.month-card__label {
+  margin-bottom: 0.4rem;
+  font-weight: 700;
+}
+
+.summary-card__label {
+  color: #cfe4d8;
+}
+
+.summary-card__amount,
+.month-card__amount {
+  margin-bottom: 0;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+
+.summary-card__amount {
+  font-size: clamp(2rem, 11vw, 3.5rem);
+}
+
+.summary-card__metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin: 0;
+}
+
+.summary-card__metrics div {
+  padding-top: 0.9rem;
+  border-top: 1px solid rgb(255 255 255 / 0.18);
+}
+
+.summary-card__metrics dt {
+  margin-bottom: 0.3rem;
+  color: #cfe4d8;
+  font-size: 0.8rem;
+}
+
+.summary-card__metrics dd {
+  margin: 0;
+  font-size: 1.35rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 750;
+}
+
+.empty-card,
+.month-card,
+.breakdown-card {
+  margin-top: 1rem;
+  padding: 1.25rem;
+}
+
+.month-card__selector {
+  display: grid;
+  gap: 0.45rem;
+  margin-bottom: 1.25rem;
+}
+
+.month-card__selector label {
+  color: #526159;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.month-card__selector select {
+  width: 100%;
+  min-height: 2.8rem;
+  padding: 0.55rem 2.4rem 0.55rem 0.75rem;
+  border: 1px solid #cbd5ce;
+  border-radius: 0.7rem;
+  color: #17201b;
+  background: #ffffff;
+}
+
+.month-card__summary {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.month-card__label {
+  color: #526159;
+}
+
+.month-card__amount {
+  font-size: clamp(1.8rem, 8vw, 2.6rem);
+}
+
+.month-card__count {
+  flex: 0 0 auto;
+  margin-bottom: 0.35rem;
+  color: #637068;
+  font-size: 0.85rem;
+}
+
+.view-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.4rem;
+  padding: 0.3rem;
+  border-radius: 0.8rem;
+  background: #eef2ef;
+}
+
+.view-tab {
+  min-height: 2.6rem;
+  border: 0;
+  border-radius: 0.6rem;
+  color: #536159;
+  background: transparent;
+  font-weight: 700;
+}
+
+.view-tab--active {
+  color: #1c4e36;
+  background: #ffffff;
+  box-shadow: 0 0.15rem 0.55rem rgb(39 64 50 / 0.12);
+}
+
+.breakdown-card__heading {
+  margin: 1.35rem 0 0.75rem;
+}
+
+.breakdown-card__heading p {
+  margin-bottom: 0;
+  font-size: 0.8rem;
+}
+
+.statistics-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.statistics-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 0;
+  border-top: 1px solid #edf0ed;
+}
+
+.statistics-item__identity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.statistics-item__name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 700;
+}
+
+.status-badge {
+  flex: 0 0 auto;
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+  color: #7a4d0b;
+  background: #fff1ce;
+  font-size: 0.7rem;
+  font-weight: 750;
+}
+
+.statistics-item__values {
+  display: grid;
+  flex: 0 0 auto;
+  justify-items: end;
+  gap: 0.2rem;
+}
+
+.statistics-item__amount {
+  font-variant-numeric: tabular-nums;
+}
+
+.statistics-item__count {
+  color: #6b776f;
+  font-size: 0.78rem;
+}
+
+.list-empty {
+  margin: 0;
+  padding: 1.5rem 0 0.5rem;
+  color: #637068;
+  text-align: center;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (min-width: 42rem) {
+  .page-shell {
+    padding: 3rem 1.5rem 5rem;
+  }
+
+  .summary-card {
+    grid-template-columns: minmax(0, 1.6fr) minmax(15rem, 1fr);
+    align-items: end;
+    padding: 2rem;
+  }
+
+  .summary-card__metrics div {
+    padding-top: 0;
+    padding-left: 1rem;
+    border-top: 0;
+    border-left: 1px solid rgb(255 255 255 / 0.18);
+  }
+
+  .month-card,
+  .breakdown-card,
+  .error-card,
+  .empty-card {
+    padding: 1.5rem;
+  }
+
+  .month-card__selector {
+    grid-template-columns: auto minmax(12rem, 16rem);
+    align-items: center;
+    justify-content: space-between;
+  }
+}
