@@ -16,6 +16,7 @@ CATEGORIES_FILE = MAPPINGS_DIR / "categories.yaml"
 TRANSACTION_CATEGORY_OVERRIDES_FILE = MAPPINGS_DIR / "transaction_category_overrides.jsonl"
 TRANSACTIONS_FILE = DATA_DIR / "transactions.csv"
 REPORTS_DIR = DATA_DIR / "reports"
+SPENDING_STATISTICS_FILE = REPORTS_DIR / "spending_statistics.json"
 
 
 @dataclass(frozen=True)
@@ -53,7 +54,6 @@ def load_email_credentials(
     if environ is None:
         load_dotenv()
         environ = os.environ
-
     address = environ.get("EMAIL_ADDR", "").strip()
     auth_code = environ.get("EMAIL_AUTH_CODE", "").strip()
     if not address:

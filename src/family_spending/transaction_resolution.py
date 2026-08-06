@@ -56,22 +56,27 @@ def resolve_transactions(
     transactions: tuple[CmbTransaction, ...],
     mappings: MerchantMappings,
 ) -> TransactionResolutionBatch:
-    resolved_transactions = tuple(resolve_transaction(transaction, mappings) for transaction in transactions)
-    unclassified = tuple(item for item in resolved_transactions if item.is_unmatched)
-
-    category_source_counter = Counter(item.category_source for item in resolved_transactions)
+    resolved_transactions = tuple(
+        resolve_transaction(transaction, mappings) for transaction in transactions
+    )
+    unclassified = tuple(
+        item for item in resolved_transactions if item.is_unmatched
+    )
+    category_source_counter = Counter(
+        item.category_source for item in resolved_transactions
+    )
     category_source_counts = MappingProxyType(
         {source: category_source_counter[source] for source in CATEGORY_SOURCES}
     )
-
-    reviews: dict[str, list[ResolvedTransaction]] = {signal: [] for signal in REVIEW_SIGNALS}
+    reviews: dict[str, list[ResolvedTransaction]] = {
+        signal: [] for signal in REVIEW_SIGNALS
+    }
     for item in resolved_transactions:
         for signal in item.review_signals:
             reviews.setdefault(signal, []).append(item)
     reviews_by_signal = MappingProxyType(
         {signal: tuple(items) for signal, items in reviews.items()}
     )
-
     return TransactionResolutionBatch(
         transactions=resolved_transactions,
         unclassified=unclassified,
@@ -80,23 +85,25 @@ def resolve_transactions(
     )
 
 
-def _validate_all_overrides_consumed(
-    batch: TransactionResolutionBatch,
+def validate_transaction_overrides(
+    transactions: tuple[CmbTransaction, ...],
     mappings: MerchantMappings,
 ) -> None:
-    consumed_override_ids = {
-        item.transaction.transaction_id
-        for item in batch.transactions
-        if item.category_source == "transaction_override"
+    """Validate official overrides against the complete raw transaction set."""
+    transactions_by_id = {
+        transaction.transaction_id: transaction for transaction in transactions
     }
     missing_override_ids = sorted(
-        set(mappings.transaction_category_overrides) - consumed_override_ids
+        set(mappings.transaction_category_overrides) - set(transactions_by_id)
     )
     if missing_override_ids:
         raise TransactionResolutionError(
             f"Official overrides in {mappings.overrides_path} do not match transactions: "
             f"missing transaction_id values {missing_override_ids!r}"
         )
+
+    for transaction_id in sorted(mappings.transaction_category_overrides):
+        resolve_transaction(transactions_by_id[transaction_id], mappings)
 
 
 def resolve_transactions_from_files(
@@ -106,10 +113,13 @@ def resolve_transactions_from_files(
     overrides_path: Path = TRANSACTION_CATEGORY_OVERRIDES_FILE,
 ) -> TransactionResolutionBatch:
     transactions = read_transactions_csv(transactions_path)
-    mappings = load_merchant_mappings(merchants_path, categories_path, overrides_path)
-    batch = resolve_transactions(transactions, mappings)
-    _validate_all_overrides_consumed(batch, mappings)
-    return batch
+    mappings = load_merchant_mappings(
+        merchants_path,
+        categories_path,
+        overrides_path,
+    )
+    validate_transaction_overrides(transactions, mappings)
+    return resolve_transactions(transactions, mappings)
 
 
 def _format_transaction(item: ResolvedTransaction) -> str:
@@ -124,7 +134,9 @@ def _format_transaction(item: ResolvedTransaction) -> str:
     )
 
 
-def format_transaction_resolution_report(batch: TransactionResolutionBatch) -> str:
+def format_transaction_resolution_report(
+    batch: TransactionResolutionBatch,
+) -> str:
     lines = [
         f"Transactions: {len(batch.transactions)}",
         f"Merchant defaults: {batch.category_source_counts['merchant_default']}",
@@ -135,10 +147,11 @@ def format_transaction_resolution_report(batch: TransactionResolutionBatch) -> s
     ]
     for signal, items in batch.reviews_by_signal.items():
         lines.append(f"- {signal}: {len(items)}")
-
     if batch.unclassified:
         lines.extend(("", "Unclassified transactions:"))
-        lines.extend(f"- {_format_transaction(item)}" for item in batch.unclassified)
+        lines.extend(
+            f"- {_format_transaction(item)}" for item in batch.unclassified
+        )
 
     for signal, items in batch.reviews_by_signal.items():
         if not items:
