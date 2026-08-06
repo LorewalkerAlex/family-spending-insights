@@ -1,8 +1,0 @@
-{
-  "description": "Mail billing local mock mini program",
-  "compileType": "miniprogram",
-  "miniprogramRoot": "./",
-  "appid": "touristappid",
-  "projectname": "mail-billing-ledger",
-  "setting": { "es6": true, "postcss": true, "minified": true, "urlCheck": false }
-}

@@ -3,12 +3,9 @@
 .env.*
 !.env.example
 
-# 真实账单及处理结果
+# 历史本地私有产物
 cmb_bill_output/
 mapping_output/
-
-# 从真实交易生成的小程序数据
-miniprogram/mock-data/billing.js
 
 # 私人图片
 /微信图片_*.jpg
@@ -18,7 +15,7 @@ miniprogram/mock-data/billing.js
 __pycache__/
 *.pyc
 
-# local
+# 本地文档
 docs/*
 
 # 本地数据默认忽略
@@ -31,5 +28,5 @@ data/mappings/*
 !data/mappings/categories.yaml
 !data/mappings/transaction_category_overrides.jsonl
 
-# tmp
+# 临时文件
 tmp/

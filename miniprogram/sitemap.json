@@ -1,1 +1,0 @@
-{ "desc": "local mock development", "rules": [{ "action": "allow", "page": "*" }] }
