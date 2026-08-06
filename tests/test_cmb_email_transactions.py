@@ -13,10 +13,14 @@ from loguru import logger
 from family_spending.ingestion.cmb_email_transactions import (
     CSV_FIELDS,
     CmbEmailTransactionError,
+    CmbTransaction,
+    CmbTransactionCsvError,
     build_transaction_id,
     complete_mmdd,
     parse_cmb_email,
+    read_transactions_csv,
     rebuild_transactions,
+    write_transactions_csv,
 )
 
 
@@ -44,8 +48,26 @@ def make_email(
 
     for html in html_parts:
         message.add_alternative(html, subtype="html", charset="utf-8")
-
     return message.as_bytes()
+
+
+def make_transaction(
+    *,
+    transaction_id: str = "cmb_test",
+    transaction_date: date = date(2025, 8, 11),
+    amount: str = "-7.81",
+    description: str = "支付宝-测试商户",
+    source_email: str = "statement.eml",
+    source_index: int = 1,
+) -> CmbTransaction:
+    return CmbTransaction(
+        transaction_id=transaction_id,
+        transaction_date=transaction_date,
+        amount=Decimal(amount),
+        description=description,
+        source_email=source_email,
+        source_index=source_index,
+    )
 
 
 class CmbEmailTransactionsTests(unittest.TestCase):
@@ -63,7 +85,6 @@ class CmbEmailTransactionsTests(unittest.TestCase):
 
         self.assertEqual(parsed.skipped_repayments, 1)
         self.assertEqual(len(parsed.transactions), 1)
-
         transaction = parsed.transactions[0]
         self.assertEqual(transaction.transaction_date, date(2025, 8, 11))
         self.assertEqual(transaction.amount, Decimal("-7.81"))
@@ -77,7 +98,6 @@ class CmbEmailTransactionsTests(unittest.TestCase):
     def test_duplicate_looking_rows_keep_distinct_ids(self) -> None:
         row = transaction_row("0811", "0812", "支付宝-相同商户", "¥ 2.00")
         parsed = parse_cmb_email(make_email([row + row]), "statement.eml")
-
         self.assertEqual(len(parsed.transactions), 2)
         self.assertNotEqual(parsed.transactions[0].transaction_id, parsed.transactions[1].transaction_id)
         self.assertEqual(parsed.transactions[0].source_index, 1)
@@ -89,7 +109,6 @@ class CmbEmailTransactionsTests(unittest.TestCase):
 
     def test_unexpected_date_less_row_fails(self) -> None:
         unexpected = table(["", "", "0827", "未知调整", "¥ -100.00", "4529", "", "-100.00"])
-
         with self.assertRaisesRegex(CmbEmailTransactionError, "Unexpected date-less row"):
             parse_cmb_email(make_email([unexpected]), "statement.eml")
 
@@ -108,7 +127,6 @@ class CmbEmailTransactionsTests(unittest.TestCase):
     def test_multiple_transaction_html_parts_fail(self) -> None:
         first = transaction_row("0811", "0812", "支付宝-测试商户", "¥ 1.00")
         second = transaction_row("0812", "0813", "支付宝-另一商户", "¥ 2.00")
-
         with self.assertRaisesRegex(CmbEmailTransactionError, "Multiple CMB transaction HTML parts"):
             parse_cmb_email(make_email([first, second]), "statement.eml")
 
@@ -118,7 +136,6 @@ class CmbEmailTransactionsTests(unittest.TestCase):
             email_dir = root / "emails"
             output_path = root / "transactions.csv"
             email_dir.mkdir()
-
             later = transaction_row("0908", "0909", "支付宝-后发生", "¥ 20.00")
             earlier = repayment_row() + transaction_row("0811", "0812", "支付宝-先发生", "¥ -7.81")
             (email_dir / "b.eml").write_bytes(make_email([later]))
@@ -128,7 +145,6 @@ class CmbEmailTransactionsTests(unittest.TestCase):
 
             with output_path.open("r", encoding="utf-8-sig", newline="") as handle:
                 rows = list(csv.DictReader(handle))
-
         self.assertEqual(summary.emails, 2)
         self.assertEqual(summary.transactions, 2)
         self.assertEqual(summary.skipped_repayments, 1)
@@ -146,7 +162,6 @@ class CmbEmailTransactionsTests(unittest.TestCase):
             output_path = root / "transactions.csv"
             email_dir.mkdir()
             output_path.write_text("existing\n", encoding="utf-8")
-
             good = transaction_row("0811", "0812", "支付宝-测试商户", "¥ 1.00")
             bad = transaction_row("0811", "0812", "支付宝-错误金额", "bad")
             (email_dir / "a.eml").write_bytes(make_email([good]))
@@ -158,5 +173,94 @@ class CmbEmailTransactionsTests(unittest.TestCase):
             self.assertEqual(output_path.read_text(encoding="utf-8"), "existing\n")
 
 
-if __name__ == "__main__":
-    unittest.main()
+class CmbTransactionCsvTests(unittest.TestCase):
+    def test_round_trip_reads_utf8_bom_and_preserves_order(self) -> None:
+        transactions = (
+            make_transaction(transaction_id="cmb_first"),
+            make_transaction(
+                transaction_id="cmb_second",
+                transaction_date=date(2025, 9, 8),
+                amount="20.00",
+                description="支付宝-另一商户",
+                source_email="second.eml",
+                source_index=2,
+            ),
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "transactions.csv"
+            write_transactions_csv(transactions, path)
+
+            self.assertTrue(path.read_bytes().startswith(b"\xef\xbb\xbf"))
+            self.assertEqual(read_transactions_csv(path), transactions)
+
+    def test_invalid_header_reports_expected_and_actual_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "transactions.csv"
+            path.write_text("transaction_id,amount\ncmb_test,-1.00\n", encoding="utf-8-sig")
+
+            with self.assertRaisesRegex(CmbTransactionCsvError, r"header.*transaction_date"):
+                read_transactions_csv(path)
+
+    def test_invalid_row_fields_report_path_line_and_field(self) -> None:
+        invalid_values = {
+            "transaction_date": "not-a-date",
+            "amount": "NaN",
+            "source_index": "0",
+            "description": "",
+        }
+        for field, value in invalid_values.items():
+            with self.subTest(field=field):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    path = Path(temp_dir) / "transactions.csv"
+                    row = {
+                        "transaction_id": "cmb_test",
+                        "transaction_date": "2025-08-11",
+                        "amount": "-7.81",
+                        "description": "支付宝-测试商户",
+                        "source_email": "statement.eml",
+                        "source_index": "1",
+                    }
+                    row[field] = value
+                    with path.open("w", encoding="utf-8-sig", newline="") as handle:
+                        writer = csv.DictWriter(handle, fieldnames=CSV_FIELDS)
+                        writer.writeheader()
+                        writer.writerow(row)
+
+                    with self.assertRaisesRegex(
+                        CmbTransactionCsvError,
+                        rf"transactions\.csv.*line 2.*{field}",
+                    ):
+                        read_transactions_csv(path)
+
+    def test_extra_row_values_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "transactions.csv"
+            path.write_text(
+                ",".join(CSV_FIELDS) + "\n"
+                "cmb_test,2025-08-11,-7.81,支付宝-测试商户,statement.eml,1,extra\n",
+                encoding="utf-8-sig",
+            )
+
+            with self.assertRaisesRegex(CmbTransactionCsvError, r"line 2.*extra"):
+                read_transactions_csv(path)
+
+    def test_duplicate_transaction_id_reports_both_lines(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "transactions.csv"
+            transactions = (
+                make_transaction(transaction_id="cmb_duplicate"),
+                make_transaction(transaction_id="cmb_duplicate", source_index=2),
+            )
+            write_transactions_csv(transactions, path)
+
+            with self.assertRaisesRegex(
+                CmbTransactionCsvError,
+                r"cmb_duplicate.*line 3.*line 2",
+            ):
+                read_transactions_csv(path)
+
+    def test_missing_file_reports_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "missing.csv"
+            with self.assertRaisesRegex(CmbTransactionCsvError, r"missing\.csv"):
+                read_transactions_csv(path)

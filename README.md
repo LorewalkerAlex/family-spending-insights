@@ -8,10 +8,11 @@
 163 邮箱
 → data/emails/*.eml
 → data/transactions.csv
-→ Mapping / 分析 / 图表 / 报告
+→ Merchant Mapping 动态解析
+→ 分析 / 图表 / 报告
 ```
 
-当前已完成邮件获取、统一交易提取、App 长截图 OCR 探索、历史 Merchant Mapping 的人工审核和正式配置落地，以及 Mapping loader、单条交易运行时解析和非阻断复核信号。批量解析接入、消费统计和报告仍将在后续逐步实现。
+当前已完成邮件获取、统一交易提取、App 长截图 OCR 探索、历史 Merchant Mapping 的人工审核和正式配置落地、单条交易运行时解析，以及完整交易 CSV 的只读批量解析和问题项检查。消费统计、图表和报告仍将在后续逐步实现。
 
 ## 数据目录
 
@@ -126,6 +127,16 @@ data/transactions.csv
 
 `source_email` 和 `source_index` 用于回溯原始邮件，也用于区分业务字段完全相同的真实交易。
 
+`family_spending.ingestion.cmb_email_transactions.read_transactions_csv()` 会按同一 CSV 契约读取交易，并明确拒绝：
+
+* header 与正式字段不一致；
+* 缺失、空白或多余字段；
+* 无效日期、非有限金额或非正整数 `source_index`；
+* 重复 `transaction_id`；
+* 无法读取或解码的 CSV。
+
+错误信息会包含文件路径、行号和相关字段。
+
 ## Merchant Mapping
 
 正式 Mapping 与 `transactions.csv` 分开维护，不会把标准商户名、分类或复核状态写回交易事实数据。
@@ -179,7 +190,64 @@ is_unmatched
 review_signals
 ```
 
-当前实现是纯领域层，没有批量 CSV 输出或独立 CLI。后续统计或界面应在读取交易时动态调用该解析层。
+## 批量交易解析
+
+运行只读检查：
+
+```powershell
+$env:PYTHONPATH="src"; uv run python -m family_spending.transaction_resolution
+```
+
+程序会：
+
+1. 严格读取完整的 `data/transactions.csv`；
+2. 一次加载三份正式 Mapping；
+3. 对每条交易调用现有单条 resolver；
+4. 确认所有正式 transaction override 都匹配到当前完整交易数据；
+5. 输出解析来源汇总、待分类交易和复核项。
+
+汇总包括：
+
+```text
+Transactions
+Merchant defaults
+Transaction overrides
+Unclassified
+other_expense_review
+high_value_general_shopping_review
+```
+
+待分类和复核项会显示 `transaction_id`、日期、金额、原始 description、标准显示名和最终 category。正常交易不会逐笔打印。
+
+该入口完全只读：
+
+* 不重写 `transactions.csv`；
+* 不修改正式 Mapping；
+* 不记录提醒处理状态；
+* 不生成报告文件；
+* 不自动修复任何数据。
+
+交易 CSV、Mapping 或 override 与完整交易数据不一致时，命令会明确失败，不输出看似成功的部分汇总。
+
+应用层公开入口：
+
+```text
+read_transactions_csv()
+resolve_transactions()
+resolve_transactions_from_files()
+format_transaction_resolution_report()
+```
+
+`TransactionResolutionBatch` 提供：
+
+```text
+transactions
+unclassified
+reviews_by_signal
+category_source_counts
+```
+
+全部结果保持交易 CSV 的原始顺序，供后续统计或界面直接复用。
 
 ## 运行测试
 
@@ -189,13 +257,19 @@ review_signals
 $env:PYTHONPATH="src"; uv run python -m unittest tests.test_mapping -v
 ```
 
-运行邮件获取和交易提取测试：
+运行邮件获取、交易提取和 CSV reader 测试：
 
 ```powershell
 $env:PYTHONPATH="src"; uv run python -m unittest `
   tests.test_imap_163 `
   tests.test_cmb_email_transactions `
   -v
+```
+
+运行批量交易解析应用层测试：
+
+```powershell
+$env:PYTHONPATH="src"; uv run python -m unittest tests.test_transaction_resolution -v
 ```
 
 运行仓库全部测试：
@@ -210,14 +284,16 @@ $env:PYTHONPATH="src"; uv run python -m unittest -v
 src/family_spending/
 ├── mapping.py
 ├── settings.py
+├── transaction_resolution.py
 └── ingestion/
     ├── imap_163.py
     └── cmb_email_transactions.py
 ```
 
 * `mapping.py`：读取和校验正式 Mapping，并解析单条交易的 merchant、category 与复核信号。
+* `transaction_resolution.py`：批量解析完整交易数据、校验 override 一致性并输出只读检查结果。
 * `imap_163.py`：从 163 邮箱保存原始账单邮件。
-* `cmb_email_transactions.py`：从原始邮件直接重建统一交易数据。
+* `cmb_email_transactions.py`：从原始邮件重建统一交易数据，并按正式 CSV 契约读取交易。
 
 根目录的早期脚本暂时保留作为历史实现对照，不属于当前主流程。
 
