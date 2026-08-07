@@ -1,440 +1,625 @@
-# 家庭消费数据系统架构设计说明
+# 家庭财务数据系统架构设计说明
 
 ## 1. 文档目的
 
-本文定义 Family Spending Insights 当前已经落地的系统边界、数据资产、派生关系、重建规则、隐私边界和展示端职责。
+本文用于定义 Family Spending Insights 从当前家庭消费分析工具向可扩展家庭财务平台演进时的核心数据模型、数据边界和 High-Level Architecture。
 
-本文不承担运行手册职责。具体命令、目录入口和测试方式以 `README.md` 为准。
+本文关注：
 
-## 2. 当前目标与范围
+- 外部数据如何进入系统；
+- 不同来源的数据如何形成统一的 Transaction；
+- Transaction 与 Merchant、Category、Note 等 Enrichment 如何分离；
+- 数据从一个阶段修改后如何驱动下游更新；
+- 分析、Projection 与客户端如何消费正式数据；
+- 存储实现如何与上层数据模型解耦。
 
-当前系统以招商银行信用卡电子账单为单一事实来源，目标是形成一套：
+本文不讨论具体数据库表、API 协议、类与函数设计、并发控制、部署方式、任务调度技术、缓存策略或具体 UI。
 
-- 本地优先；
-- 可追溯；
-- 可重复全量重建；
-- Mapping 独立维护；
-- 统计口径由后端统一定义；
-- 展示端只读消费派生结果；
-- 不泄露完整个人交易数据到公开仓库
+---
 
-的家庭消费数据系统。
+## 2. 当前阶段目标
 
-当前设计只处理消费事实、退款归并、Merchant Mapping、基础聚合和本地展示，不提前扩展到资产负债、多账户财务运营、远程服务或复杂实时架构。
+长期目标是形成一个家庭财务平台，可逐步支持：
 
-## 3. 核心设计原则
+- 家庭收入与支出管理；
+- PC Web 与微信小程序；
+- 手动补充非信用卡交易；
+- 周期性自动录入；
+- Merchant / Category / Note 等信息维护；
+- 消费统计、趋势和预测；
+- 后续可能出现的其他数据来源与客户端。
 
-### 3.1 原始事实与解释分离
+当前阶段保持轻量化：
 
-原始邮件和从邮件中重建的交易事实不能被 Merchant Mapping、退款归并、统计或展示端反向覆盖。
+- 核心 Financial Transaction 只建模 `income` 与 `expense`；
+- 暂不引入 Transfer、完整 Account、资产负债模型或完整银行账户接入；
+- 预测是基于现有正式数据执行的分析行为，不作为新的核心交易模型；
+- 招商银行信用卡 Email 是当前最高信任度的自动化交易来源；
+- Manual Source 是当前非信用卡交易的主要输入入口；
+- Scheduled Input 不是独立 Source，而是自动调用 Manual Source 的流程。
 
-Mapping、退款匹配、分类、统计和报告都是对原始事实的解释或派生产物。任何下游变化都不能改写原始邮件或伪装成新的银行事实。
+---
 
-### 3.2 独立维护的语义资产
+## 3. 总体数据 Pipeline
 
-Merchant Mapping 是独立于交易事实长期维护的数据资产：
+系统从代码执行角度是一条主动调用的下游 Pipeline：
 
 ```text
-description → merchant_name
-merchant_name → default category
-transaction_id → optional category override
+Source Action
+    ↓
+Adapter
+    ↓
+Source Record
+    ↓
+Reconciliation
+    ↓
+Transaction
+    ↓
+Enrichment / downstream views
+    ↓
+Analytics / Projection
+    ↓
+Application / API
+    ↓
+Clients
 ```
 
-Mapping 可以变化，但变化只影响重新解析和重新聚合的结果，不修改 `transactions.csv`。
+核心原则：
 
-### 3.3 派生结果必须可重建
+> 某一阶段的数据发生变化时，从该阶段开始执行其下游处理；上游数据不受影响。
 
-退款归并结果、语义化交易、统计汇总和展示数据都由上游事实与规则生成。它们可以保存在本地供读取，但必须能够从完整输入重新生成。
-
-当前数据量下，完整重建比增量状态更简单、更可靠，因此不引入退款缓存、数据库或局部更新协议。
-
-### 3.4 统计事实由后端确定
-
-退款、分类、金额方向、交易笔数、月份汇总和对账规则全部由后端实现。
-
-展示端不重新处理退款，不重新执行 Merchant Mapping，不重新排序，不修正后端结果，也不建立第二套统计口径。
-
-### 3.5 未分类不等于遗漏
-
-无法匹配 Merchant 的净消费仍必须进入：
-
-- 月份总消费；
-- 月份 × category；
-- 月份 × merchant/display；
-- 金额与交易笔数对账。
-
-`待分类` 只是运行时和界面标签，不是正式 category。原始 description 可以作为展示名，但不能被写回为已确认 merchant。
-
-### 3.6 隐私优先
-
-完整交易、邮件、截图、OCR 输出和派生统计只保存在本地。公开仓库只跟踪经过人工审核、且不包含完整交易明细的正式 Mapping 配置。
-
-## 4. 当前系统链路
+例如：
 
 ```text
-163 邮箱
-    ↓
-原始 RFC822 邮件
-    ↓
-交易事实全量重建
-    ↓
-transactions.csv
-    ↓
-针对原始完整交易校验 transaction override
-    ↓
-退款归并
-    ↓
-退款后的净消费交易
-    ↓
-Merchant Mapping 与分类解析
-    ↓
-月份 / category / merchant 聚合
-    ↓
-版本化统计 JSON
-    ↓
-本地只读 Dashboard
+Manual Input
+→ Manual Adapter
+→ Reconciliation
+→ Transaction
+→ downstream analytics / projection
 ```
 
-更具体的程序依赖为：
+如果修改的是 Enrichment：
 
 ```text
-read_transactions_csv()
-→ load_merchant_mappings()
-→ validate_transaction_overrides()
-→ reconcile_refunds()
-→ resolve_transactions()
-→ aggregate_spending()
-→ serialize_spending_statistics()
-→ write_spending_statistics_json()
+Enrichment Update
+→ downstream analytics / projection
 ```
 
-该顺序是当前正式契约。展示端或未来报告消费者只能从已经确定的派生结果向下扩展，不能绕过链路重新解释事实。
+不会因此重新修改 Transaction、Source Record 或已经确定的 Reconciliation 关系。
 
-## 5. 数据资产
+某个处理阶段可以在执行时读取其他当前状态作为辅助信息。例如 Reconciliation 可以读取当前 Merchant 信息作为匹配证据。这种读取不意味着被读取的数据变成该阶段的上游，也不意味着其变化会自动反向重跑已经完成的上游处理。
 
-### 5.1 不可变外部事实
+---
+
+## 4. Source
+
+### 4.1 定义
+
+Source 表示一种数据进入系统的来源及其自身的数据生命周期。
+
+每个 Source 自己负责：
+
+- 获取或接收原始数据；
+- 按自身规则解析或规范化；
+- 决定自己的数据如何重新生成或修改；
+- 将数据交给 Adapter / Source Record 阶段。
+
+不同 Source 不需要共享完全相同的原始数据生命周期。
+
+### 4.2 当前 Source
+
+当前正式考虑：
 
 ```text
-data/emails/*.eml
+CMB Email Source
+Manual Source
 ```
 
-原始邮件是可追溯来源。程序只负责获取和保存，不把下游语义写回邮件。
+未来可以根据真实需求增加 SMS、其他银行或其他来源。
 
-### 5.2 可重建交易事实
+### 4.3 Scheduled Input
+
+Scheduled Input 不是独立 Source。
+
+它是一个自动化流程：
 
 ```text
-data/transactions.csv
+Schedule / Rule
+    ↓
+调用 Manual Source
+    ↓
+Manual Source Record
+    ↓
+后续 Pipeline
 ```
 
-交易 CSV 从全部原始邮件全量重建，保留：
+因此 Scheduled Input 产生的数据与普通 Manual Input 使用相同的 Source Record、Reconciliation 和 Transaction 创建规则。
 
-- 稳定 transaction ID；
-- 交易日期；
-- 银行原始金额方向；
-- 银行原始 description；
-- 来源邮件；
-- 邮件内位置。
+---
 
-它回答“银行账单中发生了哪些记录”，不回答“实际商户是谁”或“属于什么分类”。
+## 5. Source Artifact
 
-### 5.3 独立维护的正式 Mapping
+Source Artifact 是可选的原始输入载体。
+
+例如：
 
 ```text
-data/mappings/merchants.yaml
-data/mappings/categories.yaml
-data/mappings/transaction_category_overrides.jsonl
+一封 CMB .eml
+= 一个 Source Artifact
 ```
 
-三份文件共同构成正式语义资产：
+一个 Source Artifact 可以产生多条 Source Record。
+
+Manual Source 不需要为了统一模型而强行制造一个独立 Artifact。
+
+Source Artifact 是否存在、如何保存，由具体 Source 决定。
+
+---
+
+## 6. Source Record
+
+### 6.1 定义
+
+Source Record 是某个 Source 经过 Adapter 规范化后，对一笔候选财务事实的来源级表达。
+
+它不是最终 Transaction，而是 Reconciliation 的输入。
+
+第一版公共语义保持最小：
 
 ```text
+SourceRecord
+- id
+- source_type
+- type
+- date
+- amount
+- currency
+- description?      optional
+- source-specific provenance
+```
+
+其中：
+
+- `id`：Source Record 自己的稳定身份；
+- `source_type`：来源类型；
+- `type`：`income | expense`；
+- `date`：来源记录表达的交易日期；
+- `amount`：带符号金额；
+- `currency`：币种；
+- `description`：来源提供的原始文本，可选；
+- source-specific provenance：仅该 Source 需要的追溯信息。
+
+不要求所有 Source 都伪造相同的来源定位字段。
+
+### 6.2 当前 CMB Email 契约映射
+
+当前 `CmbTransaction` / `transactions.csv` 已有字段：
+
+```text
+transaction_id
+transaction_date
+amount
 description
-→ merchant_name
-→ default category
-→ optional transaction category override
+source_email
+source_index
 ```
 
-当前没有正式辅助标签体系。一个 description 只能对应一个 merchant；一个 merchant 只能属于一个默认 category；override 只改变单笔最终 category。
-
-### 5.4 可重建统计派生文件
+进入新模型时：
 
 ```text
-data/reports/spending_statistics.json
+SourceRecord.id          ← transaction_id
+SourceRecord.source_type ← cmb_email
+SourceRecord.type        ← expense
+SourceRecord.date        ← transaction_date
+SourceRecord.amount      ← amount
+SourceRecord.currency    ← CNY
+SourceRecord.description ← description
+
+CMB-specific provenance:
+- source_email
+- source_index
 ```
 
-该文件只包含展示端需要的全局与月份聚合，不复制完整逐笔事实、邮件来源或退款分配历史。
+因此现有 CMB Email 数据可以无损进入新的 Source Record 模型。
 
-金额使用人民币最小单位“分”的整数表示，并通过 `schema_version` 管理消费端契约。
+当前 `transaction_id` 在新架构中更接近 CMB Source Record 的来源身份，不应直接假定为未来系统级 Transaction ID。
 
-## 6. 交易事实层
+---
 
-交易事实层负责：
+## 7. Transaction
 
-- 获取符合条件的原始邮件；
-- 保存完整邮件；
-- 解析全部账单；
-- 严格校验交易字段；
-- 在全部解析成功后原子替换交易 CSV；
-- 保持稳定 ID 和可追溯来源。
+### 7.1 定义
 
-该层不负责：
+Transaction 表示当前轻量模型中的真实家庭财务事实。
 
-- 标准化 merchant；
-- 分配 category；
-- 匹配退款；
-- 生成统计；
-- 生成展示数据。
-
-招商银行原始金额方向为：
+第一版只包含：
 
 ```text
-正数：消费
-负数：退款
-零：不参与消费统计
+Transaction
+- id
+- type        income | expense
+- date
+- amount
+- currency
 ```
 
-金额方向的语义转换只在退款归并边界发生。
+如果实现阶段确实需要最小生命周期状态，可以再增加必要字段，但不在当前 HLD 中提前定义。
 
-## 7. Merchant Mapping 层
+### 7.2 金额与退款语义
 
-Mapping 层为交易补充可理解、可统计的语义，但不修改原始交易。
-
-### 7.1 Merchant 解析
+当前统一规则：
 
 ```text
-原始 description → merchant_name
+type = expense, amount > 0
+→ 支出
+
+type = expense, amount < 0
+→ 退款 / reversal
+
+type = income, amount > 0
+→ 收入
 ```
 
-多个 description 可以归入同一个 merchant，但一个 description 不能同时归入多个 merchant。无法可靠确认时保持未匹配状态。
+退款不是 Income。
 
-### 7.2 默认分类
+信用卡还款不属于当前外部 Expense Transaction。
+
+### 7.3 Transaction 不包含的内容
+
+以下内容不属于 Transaction Core：
 
 ```text
-merchant_name → default category
+raw description
+source email
+source index
+merchant
+category
+note
+OCR confidence
+matching evidence
+source type
 ```
 
-每个正式 merchant 只有一个默认 category。category 是当前稳定统计维度，不存在正式的多个辅助标签。
+这些分别属于 Source、Reconciliation 或 Enrichment。
 
-### 7.3 单笔覆盖
+---
+
+## 8. Reconciliation
+
+### 8.1 定义
+
+Reconciliation 判断一个新的 Source Record 是否对应系统中已经存在的 Transaction。
+
+最终要建立的是：
 
 ```text
-transaction_id → override category
+Source Record
+    ↓
+Transaction
 ```
 
-单笔 override 只覆盖该笔交易的最终 category：
+多个 Source Record 可以对应同一个 Transaction。
 
-- 不替代 description 到 merchant 的匹配；
-- 不改变 merchant 默认 category；
-- 不改变原始 description；
-- 不改变其他交易。
-
-### 7.4 未匹配语义
-
-未匹配交易保持：
+例如：
 
 ```text
-merchant_name = null
-display_name = 原始 description
-category = 待分类
+Manual Source Record ─┐
+                      ├── Transaction
+CMB Source Record ─────┘
 ```
 
-`display_name` 仅用于让消费者看见交易主体，不是正式 Mapping。
+### 8.2 Reconciliation 是 Source-aware 的
 
-### 7.5 复核信号
+不同 Source 的处理规则不是对称的。
 
-部分默认分类会生成运行时复核信号。复核信号：
+#### CMB Email
 
-- 不阻断解析；
-- 不自动改分类；
-- 不写入正式 Mapping；
-- 不构成交易事实。
+信用卡数据是对应信用卡交易的权威来源。
 
-## 8. 退款归并层
+规则：
 
-退款归并发生在净消费 Mapping 与统计之前。
+- 合法的 CMB Source Record 最终必须有对应 Transaction；
+- 如果没有已有 Transaction，则创建 Transaction；
+- 如果匹配到仅由 Manual Source 产生的 Transaction，则关联到同一 Transaction，并以信用卡数据作为该信用卡交易核心事实的权威来源；
+- 同一 CMB Source Record 重跑必须保持幂等，不得重复产生 Transaction。
 
-当前顺序为：
+#### Manual Source
 
-1. 优先匹配历史同 description 的同额剩余消费；
-2. 若未命中，允许在已确认同 merchant 范围内匹配过去 30 个自然日的同额最近消费；
-3. 若仍未命中，按同 description 历史消费从近到远累计扣减；
-4. 无法匹配的剩余退款不进入消费统计，只进入运行摘要。
+Manual Source 在创建新 Transaction 前必须先检查是否已经存在对应交易。
 
-约束：
+匹配范围包括：
 
-- 退款只能向前匹配历史消费；
-- Merchant 回退只使用 merchant 身份；
-- category 和 transaction override 不参与退款判断；
-- Merchant 回退不允许不同金额累计；
-- 完全退款消费不进入后续净消费集合；
-- 部分退款仍保留原消费身份并计为一笔净消费；
-- 输出净消费使用下游既有契约的负数金额。
+- 已有信用卡 Transaction；
+- 历史 Manual Source 已经产生的 Transaction。
 
-Mapping 变化可能影响同 merchant 回退，因此每次统计生成都重新执行退款归并。
+只有不存在对应 Transaction 时，Manual Source 才创建新的 Transaction。
 
-## 9. 统计层
+### 8.3 匹配证据
 
-统计层只接收退款处理后的净消费解析结果，并将负数净消费转换为正数展示金额。
-
-当前正式统计维度：
-
-- 全局摘要；
-- 月份摘要；
-- 月份 × category；
-- 月份 × merchant/display。
-
-交易笔数规则：
-
-- 未退款消费计一笔；
-- 部分退款后的消费仍计一笔；
-- 完全退款消费不计入；
-- 无法匹配的剩余退款不计入；
-- 零金额交易不计入。
-
-每个月必须满足：
+第一版匹配主要使用：
 
 ```text
-月份总金额
-= category 汇总金额之和
-= merchant/display 汇总金额之和
+type
+amount
+date
+merchant
 ```
 
-交易笔数使用同样的对账约束。全局摘要也必须与月份集合一致。
+其中：
 
-统计文件必须：
+- `type` 必须语义兼容；
+- `amount` 是重要匹配信号；
+- `date` 允许合理时间差，而不是必须同一天；
+- `merchant` 是辅助身份信号。
 
-- 使用版本化 schema；
-- 使用整数分；
-- 保持确定性排序与字段顺序；
-- 不静默四舍五入超过两位小数的金额；
-- 使用原子替换；
-- 不包含不必要的逐笔隐私数据。
+Category 完全不参与 Transaction identity matching。
 
-## 10. 展示与其他消费者
+Reconciliation 应尽量保留可解释的匹配证据，而不是只保留一个不可解释的综合 confidence 数值。
 
-当前正式展示端是本地 HTML Dashboard。
+### 8.4 Source identity 与 Transaction matching
 
-展示端职责：
-
-- 加载版本化统计 JSON；
-- 校验 schema 和必要字段；
-- 校验金额与交易笔数对账；
-- 展示全局和月份汇总；
-- 展示 category 和 merchant/display；
-- 明确展示待分类状态；
-- 提供 loading、空数据、错误和重新加载状态。
-
-展示端不得：
-
-- 读取原始邮件重新解析；
-- 重新处理退款；
-- 执行 Merchant Mapping；
-- 对后端结果重新排序或聚合；
-- 自动修复不一致数据；
-- 写回交易、Mapping 或统计文件。
-
-未来图表、AI 报告或其他客户端应优先消费同一后端派生契约。确定性数值由程序计算，AI 只解释已经生成的结构化结果，不把主观判断写回事实或 Mapping。
-
-## 11. Rebuild 支持工具边界
-
-仓库保留本次 Rebuild 期间形成的截图切行、OCR 和候选匹配检查脚本。这些工具用于建立和验证 Merchant Mapping 的历史过程，也是后续重新检查证据时可复用的支持能力。
-
-它们与正式主链路的边界是：
-
-- 可以读取本地截图、OCR 输出和交易数据；
-- 可以生成本地候选和审核材料；
-- 不被正式统计生成自动调用；
-- 不直接成为正式 Mapping；
-- 只有人工确认后的结果才能进入三份正式 Mapping 文件；
-- 相关本地产物继续由 `.gitignore` 保护。
-
-这些文件在 Rebuild 开始后新增，不属于历史遗留清理范围。是否在未来收敛应作为独立决策，而不是因为当前运行时未调用就自动删除。
-
-## 12. 重建规则
-
-### 12.1 邮件或交易解析逻辑变化
+两者是不同问题：
 
 ```text
-重新获取或保留现有原始邮件
-→ 重建 transactions.csv
-→ 校验 override
-→ 重新归并退款
-→ 重新解析 Mapping
-→ 重建统计 JSON
-→ 展示端重新加载
+Source identity
+= 判断是不是同一条来源记录
+
+Transaction matching
+= 判断两条不同来源记录是不是同一笔真实交易
 ```
 
-### 12.2 Merchant Mapping 变化
+CMB 的 `source_email + source_index` 等 provenance 可以用于稳定来源身份。
+
+跨来源匹配才需要金额、日期、Merchant 等证据。
+
+---
+
+## 9. Enrichment
+
+### 9.1 定义
+
+Enrichment 保存对 Transaction 的解释、补充和用户维护状态。
+
+当前核心包括：
 
 ```text
-原始邮件保持不变
-transactions.csv 保持不变
-→ 重新校验 override
-→ 重新归并退款
-→ 重新解析净消费
-→ 重建统计 JSON
+Merchant
+Category
+Note
 ```
 
-Mapping 变化可能影响同 merchant 退款回退，因此不能只替换展示名称。
+以及支持这些状态建立或维护的 Mapping / Default / Override 等规则。
 
-### 12.3 退款或统计规则变化
+### 9.2 与 Transaction 分离
+
+Transaction 与 Enrichment 是不同的数据。
+
+系统不需要长期保存一个已经拼接好的 `EnrichedTransaction` 权威对象。
+
+需要完整视图时：
 
 ```text
-原始邮件和 transactions.csv 保持不变
-→ 从对应规则边界重新全量生成下游派生结果
+Transaction
+    +
+current Enrichment
+    ↓
+query / analysis-time view
 ```
 
-### 12.4 Dashboard 纯展示变化
+Transaction 确定以后，不因为 Merchant、Category 或 Note 的修改而变化。
 
-如果后端 schema 和统计事实不变，只需修改展示端。展示端不能借 UI 变化改变后端统计口径。
+### 9.3 Enrichment 修改
 
-## 13. Git 与隐私边界
+Enrichment 是重要的可维护状态。
 
-公开仓库可以跟踪：
+PC Web、微信小程序和未来客户端应通过统一 Application / API 修改：
 
-- 源码；
-- 测试；
-- 文档；
-- 本地 Dashboard 静态文件；
-- 三份正式 Mapping 配置。
+```text
+Merchant
+Category
+Note
+Mapping / Default / Override
+```
 
-公开仓库不得跟踪：
+客户端不直接修改底层存储。
 
-- 邮箱凭据；
-- 原始邮件；
-- 完整交易 CSV；
-- App 截图；
-- OCR 结果；
-- 候选匹配输出；
-- 派生统计 JSON；
-- 其他包含体系化个人消费明细的本地产物。
+Merchant 改变后，如果 Category 规则要求重新判断 Category，则从 Enrichment 这一阶段处理，并继续刷新依赖 Enrichment 的下游结果。
 
-删除历史执行代码时，不应自动删除用户磁盘上的历史私有数据；对应 ignore 规则可以继续保留，避免本地产物意外出现在 Git 状态中。
+### 9.4 Reconciliation 对 Enrichment 的使用
 
-## 14. 当前非目标
+Reconciliation 可以在执行时读取当前 Merchant 等 Enrichment 信息，作为匹配证据。
 
-当前不建设：
+这只是实时读取当前状态：
 
-- 多银行或多账单源接入；
-- 微信、支付宝独立账单接入；
-- 资产负债和家庭预算运营；
-- 数据库、微服务或事件驱动架构；
-- 实时或增量统计；
-- 远程 API、登录、云同步和多用户；
-- 正式微信小程序；
-- Mapping 编辑器或复核状态持久化；
-- 固定图表体系；
-- AI Prompt 或长期消费行为画像。
+- 不会让 Transaction 反向依赖 Enrichment；
+- 不会因为以后 Merchant 改变而自动修改已经确认的 Transaction；
+- 不会因为 Enrichment 改变而自动重新解释历史 Source Record 与 Transaction 的既有关系。
 
-## 15. 设计结论
+---
 
-当前系统采用：
+## 10. Analytics 与 Projection
 
-> 本地文件驱动、事实与语义分离、后端统一统计、依赖驱动全量重建的消费数据 Pipeline。
+Analytics 消费正式 Transaction 与当前 Enrichment 的组合视图。
 
-长期稳定资产是：
+可以产生：
 
-1. 可追溯的原始邮件和交易事实；
-2. 人工确认、独立维护的 Merchant Mapping。
+- 收入 / 支出统计；
+- 月度统计；
+- Category / Merchant 汇总；
+- 趋势；
+- 图表数据；
+- Forecast；
+- Dashboard projection；
+- AI 分析所需结构化输入。
 
-退款结果、语义化净消费、统计 JSON、Dashboard、未来图表和 AI 报告都是依赖这些资产生成的下游消费者。该边界保持当前实现简单、可验证且隐私可控，同时允许未来在不破坏事实层的情况下扩展消费方式。
+这些结果属于下游派生数据。
+
+它们可以缓存或持久化，但应能够从当前正式数据重新生成。
+
+Forecast 是分析行为，不是新的核心 Transaction 或预测交易事实。
+
+Analytics / Projection 不反向修改 Transaction、Source Record 或 Enrichment。
+
+---
+
+## 11. Application / API 与客户端
+
+PC Web、微信小程序以及未来 App 共用同一套后端 Application / API。
+
+Application / API 承接：
+
+- Manual Input；
+- Transaction 查询；
+- Reconciliation / Review 用例；
+- Merchant / Category / Note 等 Enrichment 修改；
+- Mapping / Default / Override 维护；
+- Analytics / Projection 查询。
+
+客户端负责交互与展示，不复制核心数据处理规则，也不直接操作底层存储。
+
+---
+
+## 12. 数据读写与存储边界
+
+HLD 不绑定具体持久化方案。
+
+上层可以通过统一的数据访问边界理解存储：
+
+```text
+Domain / Application
+        ↓
+Data Read / Data Store
+        ↓
+Concrete Storage
+```
+
+具体实现未来可以根据需要选择文件、SQLite、PostgreSQL 或其他方式。
+
+当前阶段只固定：
+
+- 上层业务模型不依赖具体存储介质；
+- 不同领域数据可以使用适合自己的具体存储实现；
+- Transaction、Source Record、Enrichment 等正式数据与 Analytics / Projection 派生数据在语义上保持区分。
+
+具体接口、事务能力、表结构和迁移方式属于 Technical Design。
+
+---
+
+## 13. Pipeline 更新原则
+
+整个系统使用单向、主动调用的 Pipeline。
+
+原则：
+
+```text
+某阶段发生变化
+→ 从该阶段开始调用所有必要的下游处理
+
+上游
+→ 不重新执行
+→ 不被下游反向修改
+```
+
+典型路径：
+
+### Manual Input
+
+```text
+Manual Input
+→ Manual Adapter
+→ Source Record
+→ Reconciliation
+→ Transaction create / match
+→ downstream processing
+→ Analytics / Projection
+```
+
+### CMB Email
+
+```text
+CMB Email
+→ CMB Adapter
+→ Source Record
+→ Reconciliation
+→ Transaction create / authoritative match
+→ downstream processing
+→ Analytics / Projection
+```
+
+### Enrichment Update
+
+```text
+Enrichment Update
+→ downstream processing
+→ Analytics / Projection
+```
+
+### Analytics Logic Update
+
+```text
+Analytics Update
+→ Projection refresh
+```
+
+不会触碰 Source、Reconciliation、Transaction 或 Enrichment。
+
+---
+
+## 14. 当前实现迁移约束
+
+当前系统已经有稳定运行的 CMB Email、Merchant Mapping、退款归并和消费统计链路，新架构应渐进迁移，不以重写现有能力为目标。
+
+需要特别保留的事实：
+
+1. 当前 CMB 交易字段必须无损进入 Source Record；
+2. 当前 Email 来源是信用卡交易的权威自动 Source；
+3. 当前正式 Merchant / Category 规则来自已经人工审核的数据；
+4. 当前 `transaction_category_overrides.jsonl` 使用现有 `transaction_id` 定位交易；
+5. 因为未来 Transaction ID 与当前 CMB Source Record ID 不再是同一个概念，迁移时必须确保已有 transaction-level override 仍能稳定对应正确 Transaction；
+6. 当前消费统计和 Dashboard 属于已验证的下游能力，应作为未来 Analytics / Projection 迁移时的重要兼容基线，而不是被无理由推翻。
+
+具体迁移步骤在 Technical Design / Migration Plan 中确定。
+
+---
+
+## 15. 当前非目标
+
+当前 HLD 不提前设计：
+
+- Transfer；
+- 完整 Account / Asset / Liability；
+- 全银行账户接入；
+- 微服务；
+- 事件总线；
+- 数据库表结构；
+- API 路由与协议；
+- 并发锁与事务机制；
+- Scheduler 技术实现；
+- 缓存策略；
+- 完整审计 / Event Sourcing；
+- 固定 Forecast 模型；
+- 固定 UI 结构。
+
+这些内容只有在真实需求进入实现阶段并影响当前边界时再设计。
+
+---
+
+## 16. 设计结论
+
+当前系统的基础架构可以概括为：
+
+> **以 Source 为入口、以 Source Record 统一来源数据、通过 Reconciliation 形成 Transaction、将 Enrichment 与 Transaction 分离维护，并通过主动调用的单向 Pipeline 驱动所有下游 Analytics / Projection。**
+
+其中：
+
+- CMB Email 是当前权威自动来源；
+- Manual Source 是非信用卡交易的主要人工入口；
+- Scheduled Input 只是自动调用 Manual Source；
+- Transaction 只表示核心收入 / 支出事实；
+- Enrichment 独立保存 Merchant、Category、Note 等状态；
+- Reconciliation 在需要时实时读取当前数据进行匹配；
+- 某一阶段修改后只继续执行下游，上游保持不变；
+- Application / API 为所有客户端提供统一的数据读取和修改入口；
+- 具体存储技术通过数据访问边界隔离，留到 Technical Design 决定。
+
+在这些边界确定后，下一阶段应进入 Technical Design 与 Migration Plan，基于当前仓库实际实现规划第一条完整纵向迁移切片。
