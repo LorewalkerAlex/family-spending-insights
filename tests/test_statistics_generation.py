@@ -63,8 +63,16 @@ class StatisticsGenerationTests(unittest.TestCase):
         self.categories_path = self.root / "categories.yaml"
         self.overrides_path = self.root / "transaction_category_overrides.jsonl"
         self.output_path = self.root / "reports" / "spending_statistics.json"
+        self.emails_dir = self.root / "emails"
+        self.emails_dir.mkdir()
         self.merchants_path.write_text(MERCHANTS, encoding="utf-8")
         self.categories_path.write_text(CATEGORIES, encoding="utf-8")
+        for index, statement_date in enumerate(
+            ("2025-12-10", "2026-01-10", "2026-02-10"),
+            start=1,
+        ):
+            digest = format(index, "024x")
+            (self.emails_dir / f"{statement_date}_{digest}.eml").write_bytes(b"test")
 
     def generate(self):
         return generate_spending_statistics(
@@ -73,6 +81,7 @@ class StatisticsGenerationTests(unittest.TestCase):
             self.categories_path,
             self.overrides_path,
             self.output_path,
+            self.emails_dir,
         )
 
     def test_full_pipeline_reconciles_refunds_maps_and_writes_statistics(self) -> None:
@@ -111,21 +120,31 @@ class StatisticsGenerationTests(unittest.TestCase):
             '{"transaction_id":"cmb_partial_override","category":"餐饮美食","note":"测试覆盖"}\n',
             encoding="utf-8",
         )
-
         summary = self.generate()
         payload = json.loads(self.output_path.read_text(encoding="utf-8"))
-
         self.assertEqual(summary.raw_transactions, 4)
         self.assertEqual(summary.refund_transactions, 1)
         self.assertEqual(summary.net_consumption_transactions, 3)
         self.assertEqual(summary.partially_refunded_transactions, 1)
         self.assertEqual(summary.unclassified_net_transactions, 1)
         self.assertEqual(summary.total_net_spending, Decimal("2050"))
-        self.assertEqual(payload["summary"]["total_spending_minor"], 205000)
+        self.assertEqual(summary.shown_months, 2)
+        self.assertEqual(summary.shown_net_spending, Decimal("2050"))
+        self.assertEqual(payload["schema_version"], 2)
+        self.assertEqual(
+            payload["summary"]["all_data"]["total_spending_minor"],
+            205000,
+        )
+        self.assertEqual(
+            payload["summary"]["shown_data"]["total_spending_minor"],
+            205000,
+        )
         self.assertEqual(
             tuple(month["month"] for month in payload["months"]),
             ("2026-01", "2025-12"),
         )
+        self.assertTrue(all(month["is_complete"] for month in payload["months"]))
+        self.assertTrue(all(month["show"] for month in payload["months"]))
         december = payload["months"][1]
         self.assertEqual(december["total_spending_minor"], 200000)
         self.assertEqual(december["categories"][0]["category"], "餐饮美食")
@@ -143,6 +162,30 @@ class StatisticsGenerationTests(unittest.TestCase):
         self.assertIsNone(unknown["merchant_name"])
         self.assertEqual(unknown["display_name"], "支付宝-未知商户")
 
+    def test_incomplete_month_stays_in_all_data_but_not_shown_data(self) -> None:
+        write_transactions_csv(
+            (
+                transaction(
+                    "cmb_march",
+                    "20",
+                    transaction_date=date(2026, 3, 2),
+                    description="支付宝-测试餐饮",
+                    source_index=1,
+                ),
+            ),
+            self.transactions_path,
+        )
+        self.overrides_path.write_text("", encoding="utf-8")
+        summary = self.generate()
+        payload = json.loads(self.output_path.read_text(encoding="utf-8"))
+        self.assertEqual(summary.months, 1)
+        self.assertEqual(summary.total_net_spending, Decimal("20"))
+        self.assertEqual(summary.shown_months, 0)
+        self.assertEqual(summary.shown_net_spending, Decimal("0"))
+        self.assertEqual(payload["summary"]["all_data"]["total_spending_minor"], 2000)
+        self.assertEqual(payload["summary"]["shown_data"]["total_spending_minor"], 0)
+        self.assertFalse(payload["months"][0]["is_complete"])
+        self.assertFalse(payload["months"][0]["show"])
 
     def test_pipeline_uses_same_merchant_refund_fallback(self) -> None:
         write_transactions_csv(
@@ -165,14 +208,13 @@ class StatisticsGenerationTests(unittest.TestCase):
             self.transactions_path,
         )
         self.overrides_path.write_text("", encoding="utf-8")
-
         summary = self.generate()
         payload = json.loads(self.output_path.read_text(encoding="utf-8"))
-
         self.assertEqual(summary.same_merchant_refund_matches, 1)
         self.assertEqual(summary.same_merchant_matched_amount, Decimal("100"))
         self.assertEqual(summary.net_consumption_transactions, 0)
         self.assertEqual(summary.unmatched_refund_count, 0)
+        self.assertEqual(summary.shown_months, 0)
         self.assertEqual(payload["months"], [])
         report = format_statistics_generation_report(summary)
         self.assertIn("Same-merchant refund matches: 1", report)
@@ -199,16 +241,15 @@ class StatisticsGenerationTests(unittest.TestCase):
             self.transactions_path,
         )
         self.overrides_path.write_text("", encoding="utf-8")
-
         summary = self.generate()
         payload = json.loads(self.output_path.read_text(encoding="utf-8"))
-
         self.assertEqual(summary.raw_transactions, 2)
         self.assertEqual(summary.zero_amount_transactions, 1)
         self.assertEqual(summary.net_consumption_transactions, 1)
         self.assertEqual(summary.total_net_spending, Decimal("20"))
-        self.assertEqual(payload["summary"]["transaction_count"], 1)
-        self.assertEqual(payload["summary"]["total_spending_minor"], 2000)
+        self.assertEqual(payload["summary"]["all_data"]["transaction_count"], 1)
+        self.assertEqual(payload["summary"]["shown_data"]["transaction_count"], 1)
+        self.assertEqual(payload["summary"]["shown_data"]["total_spending_minor"], 2000)
         self.assertIn(
             "Zero-amount transactions ignored: 1",
             format_statistics_generation_report(summary),
@@ -238,7 +279,6 @@ class StatisticsGenerationTests(unittest.TestCase):
             '{"transaction_id":"cmb_override","category":"餐饮美食"}\n',
             encoding="utf-8",
         )
-
         summary = self.generate()
         payload = json.loads(self.output_path.read_text(encoding="utf-8"))
         self.assertEqual(summary.fully_refunded_transactions, 1)
@@ -293,7 +333,7 @@ class StatisticsGenerationTests(unittest.TestCase):
             self.generate()
         self.assertFalse(self.output_path.exists())
 
-    def test_report_contains_aggregates_without_transaction_details(self) -> None:
+    def test_report_contains_all_and_shown_aggregates_without_transaction_details(self) -> None:
         write_transactions_csv(
             (
                 transaction(
@@ -310,6 +350,8 @@ class StatisticsGenerationTests(unittest.TestCase):
         report = format_statistics_generation_report(self.generate())
         self.assertIn("Raw transactions: 1", report)
         self.assertIn("Total net spending: 20", report)
+        self.assertIn("Shown months: 1", report)
+        self.assertIn("Shown net spending: 20", report)
         self.assertNotIn("cmb_food", report)
         self.assertNotIn("支付宝-测试餐饮", report)
 

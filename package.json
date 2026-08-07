@@ -1,0 +1,7 @@
+{
+  "name": "family-spending-insights-local-dashboard",
+  "private": true,
+  "dependencies": {
+    "chart.js": "4.5.1"
+  }
+}

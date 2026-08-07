@@ -6,7 +6,9 @@
     <meta name="color-scheme" content="light" />
     <title>家庭消费统计</title>
     <link rel="stylesheet" href="./styles.css" />
+    <script src="../node_modules/chart.js/dist/chart.umd.js" defer></script>
     <script src="./api.js" defer></script>
+    <script src="./charts.js" defer></script>
     <script src="./app.js" defer></script>
   </head>
   <body>
@@ -15,7 +17,7 @@
         <p class="eyebrow">Family Spending Insights</p>
         <h1>家庭消费统计</h1>
         <p class="page-header__description">
-          查看后端全量重建后的净消费汇总。页面只读取派生统计，不修改任何交易或 Mapping。
+          查看后端全量重建后的净消费汇总。当前页面只展示后端标记为可展示的自然月，且不修改任何交易或 Mapping。
         </p>
       </header>
 
@@ -35,7 +37,7 @@
       <div data-state="dashboard" hidden>
         <section class="summary-card" aria-labelledby="summary-title">
           <div>
-            <p class="summary-card__label" id="summary-title">累计净消费</p>
+            <p class="summary-card__label" id="summary-title">展示月份累计净消费</p>
             <p class="summary-card__amount" data-summary="total-spending">¥0.00</p>
           </div>
           <dl class="summary-card__metrics">
@@ -44,15 +46,15 @@
               <dd data-summary="transaction-count">0</dd>
             </div>
             <div>
-              <dt>统计月份</dt>
+              <dt>展示月份</dt>
               <dd data-summary="month-count">0</dd>
             </div>
           </dl>
         </section>
 
         <section class="empty-card" data-state="empty" hidden>
-          <h2>暂无月份统计</h2>
-          <p>统计文件结构有效，但当前没有可展示的月份数据。</p>
+          <h2>暂无可展示月份统计</h2>
+          <p>统计文件结构有效，但当前没有 <code>show=true</code> 的月份数据。</p>
         </section>
 
         <div data-month-controls>
@@ -67,6 +69,49 @@
                 <p class="month-card__amount" data-month="spending">¥0.00</p>
               </div>
               <p class="month-card__count" data-month="transactions">0 笔净消费</p>
+            </div>
+          </section>
+
+          <section class="charts-section" aria-labelledby="charts-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Chart POC</p>
+                <h2 id="charts-title">最近 12 个展示月份图表实验</h2>
+              </div>
+              <p>分类图例可点击隐藏或恢复系列；图表异常不会影响下方明细。</p>
+            </div>
+
+            <div class="chart-grid">
+              <article class="chart-card">
+                <h3>月度总消费折线图</h3>
+                <div class="chart-container"><canvas data-chart="totalLine"></canvas></div>
+                <p class="chart-error" data-chart-error="totalLine" hidden></p>
+              </article>
+              <article class="chart-card">
+                <h3>月度总消费柱状图</h3>
+                <div class="chart-container"><canvas data-chart="totalBar"></canvas></div>
+                <p class="chart-error" data-chart-error="totalBar" hidden></p>
+              </article>
+              <article class="chart-card chart-card--wide">
+                <h3>Category 堆叠柱状图</h3>
+                <div class="chart-container chart-container--legend"><canvas data-chart="categoryStackedBar"></canvas></div>
+                <p class="chart-error" data-chart-error="categoryStackedBar" hidden></p>
+              </article>
+              <article class="chart-card chart-card--wide">
+                <h3>Category 堆叠面积图</h3>
+                <div class="chart-container chart-container--legend"><canvas data-chart="categoryStackedArea"></canvas></div>
+                <p class="chart-error" data-chart-error="categoryStackedArea" hidden></p>
+              </article>
+              <article class="chart-card chart-card--wide">
+                <h3>Category 分组柱状图</h3>
+                <div class="chart-container chart-container--legend"><canvas data-chart="categoryGroupedBar"></canvas></div>
+                <p class="chart-error" data-chart-error="categoryGroupedBar" hidden></p>
+              </article>
+              <article class="chart-card">
+                <h3>当前月份 Category 环形图</h3>
+                <div class="chart-container chart-container--doughnut"><canvas data-chart="categoryDoughnut"></canvas></div>
+                <p class="chart-error" data-chart-error="categoryDoughnut" hidden></p>
+              </article>
             </div>
           </section>
 
@@ -92,7 +137,6 @@
                 按商户
               </button>
             </div>
-
             <div class="breakdown-card__heading">
               <h2 id="breakdown-title" data-list-title>分类支出</h2>
               <p>保持后端统计结果的既有顺序。</p>

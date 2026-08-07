@@ -13,8 +13,9 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function createApiModule() {
   "use strict";
 
-  const SUPPORTED_SCHEMA_VERSION = 1;
+  const SUPPORTED_SCHEMA_VERSION = 2;
   const DEFAULT_DATA_URL = "/data/reports/spending_statistics.json";
+  const TREND_MONTH_LIMIT = 12;
 
   class StatisticsDataError extends Error {
     constructor(code, message, options = {}) {
@@ -53,6 +54,19 @@
   function requireNonEmptyString(value, path) {
     if (typeof value !== "string" || value.trim() === "") {
       fail("invalid_data", `${path} 必须是非空字符串。`, path);
+    }
+    return value;
+  }
+
+  function requireMonthString(value, path) {
+    requireNonEmptyString(value, path);
+    const match = /^(\d{4})-(\d{2})$/.exec(value);
+    if (!match) {
+      fail("invalid_data", `${path} 必须使用 YYYY-MM 格式。`, path);
+    }
+    const monthNumber = Number(match[2]);
+    if (monthNumber < 1 || monthNumber > 12) {
+      fail("invalid_data", `${path} 必须是有效自然月。`, path);
     }
     return value;
   }
@@ -128,7 +142,6 @@
     if (merchantName !== null) {
       merchantName = requireNonEmptyString(merchantName, `${path}.merchant_name`);
     }
-
     if (isUnclassified && merchantName !== null) {
       fail(
         "invalid_data",
@@ -136,7 +149,6 @@
         `${path}.merchant_name`,
       );
     }
-
     if (!isUnclassified && merchantName === null) {
       fail(
         "invalid_data",
@@ -174,9 +186,10 @@
       (merchant, merchantIndex) =>
         validateMerchant(merchant, monthIndex, merchantIndex),
     );
-
     const normalized = {
-      month: requireNonEmptyString(month.month, `${path}.month`),
+      month: requireMonthString(month.month, `${path}.month`),
+      is_complete: requireBoolean(month.is_complete, `${path}.is_complete`),
+      show: requireBoolean(month.show, `${path}.show`),
       total_spending_minor: requireNonNegativeSafeInteger(
         month.total_spending_minor,
         `${path}.total_spending_minor`,
@@ -234,8 +247,49 @@
       `${path}.transaction_count`,
       "月份与商户笔数",
     );
-
     return Object.freeze(normalized);
+  }
+
+  function validateSummaryGroup(value, path) {
+    const summary = requireRecord(value, path);
+    return Object.freeze({
+      total_spending_minor: requireNonNegativeSafeInteger(
+        summary.total_spending_minor,
+        `${path}.total_spending_minor`,
+      ),
+      transaction_count: requireNonNegativeSafeInteger(
+        summary.transaction_count,
+        `${path}.transaction_count`,
+      ),
+      month_count: requireNonNegativeSafeInteger(
+        summary.month_count,
+        `${path}.month_count`,
+      ),
+    });
+  }
+
+  function reconcileSummary(summary, months, path, label) {
+    assertEqual(summary.month_count, months.length, `${path}.month_count`, `${label}月份数`);
+    assertEqual(
+      summary.total_spending_minor,
+      sumBy(
+        months,
+        (month) => month.total_spending_minor,
+        `${path}.months[*].total_spending_minor`,
+      ),
+      `${path}.total_spending_minor`,
+      `${label}金额`,
+    );
+    assertEqual(
+      summary.transaction_count,
+      sumBy(
+        months,
+        (month) => month.transaction_count,
+        `${path}.months[*].transaction_count`,
+      ),
+      `${path}.transaction_count`,
+      `${label}笔数`,
+    );
   }
 
   function validateStatisticsPayload(value) {
@@ -244,7 +298,6 @@
       payload.schema_version,
       "schema_version",
     );
-
     if (schemaVersion !== SUPPORTED_SCHEMA_VERSION) {
       fail(
         "unsupported_schema",
@@ -255,20 +308,9 @@
 
     const summary = requireRecord(payload.summary, "summary");
     const normalizedSummary = Object.freeze({
-      total_spending_minor: requireNonNegativeSafeInteger(
-        summary.total_spending_minor,
-        "summary.total_spending_minor",
-      ),
-      transaction_count: requireNonNegativeSafeInteger(
-        summary.transaction_count,
-        "summary.transaction_count",
-      ),
-      month_count: requireNonNegativeSafeInteger(
-        summary.month_count,
-        "summary.month_count",
-      ),
+      all_data: validateSummaryGroup(summary.all_data, "summary.all_data"),
+      shown_data: validateSummaryGroup(summary.shown_data, "summary.shown_data"),
     });
-
     const months = requireArray(payload.months, "months").map(validateMonth);
     const monthNames = new Set();
     months.forEach((month, index) => {
@@ -282,31 +324,12 @@
       monthNames.add(month.month);
     });
 
-    assertEqual(
-      normalizedSummary.month_count,
-      months.length,
-      "summary.month_count",
-      "全局月份数",
-    );
-    assertEqual(
-      normalizedSummary.total_spending_minor,
-      sumBy(
-        months,
-        (month) => month.total_spending_minor,
-        "months[*].total_spending_minor",
-      ),
-      "summary.total_spending_minor",
-      "全局金额",
-    );
-    assertEqual(
-      normalizedSummary.transaction_count,
-      sumBy(
-        months,
-        (month) => month.transaction_count,
-        "months[*].transaction_count",
-      ),
-      "summary.transaction_count",
-      "全局笔数",
+    reconcileSummary(normalizedSummary.all_data, months, "summary.all_data", "全部数据");
+    reconcileSummary(
+      normalizedSummary.shown_data,
+      months.filter((month) => month.show),
+      "summary.shown_data",
+      "展示数据",
     );
 
     return Object.freeze({
@@ -332,7 +355,7 @@
     if (monthNumber < 1 || monthNumber > 12) {
       return month;
     }
-    return `${match[1]} 年 ${monthNumber} 月`;
+    return `${match[1]} 年 ${match[2]} 月`;
   }
 
   function toSummaryViewModel(summary) {
@@ -348,6 +371,8 @@
     return Object.freeze({
       month: month.month,
       monthLabel: formatMonthLabel(month.month),
+      isComplete: month.is_complete,
+      show: month.show,
       totalSpendingMinor: month.total_spending_minor,
       totalSpendingText: formatMinorUnits(month.total_spending_minor),
       transactionCount: month.transaction_count,
@@ -378,6 +403,62 @@
     });
   }
 
+  function getShownMonths(payload) {
+    return payload.months
+      .filter((month) => month.show)
+      .slice()
+      .sort((left, right) => right.month.localeCompare(left.month));
+  }
+
+  function buildTrendStatistics(payload) {
+    const trendMonths = getShownMonths(payload)
+      .slice(0, TREND_MONTH_LIMIT)
+      .reverse();
+    const categories = new Map();
+
+    trendMonths.forEach((month) => {
+      month.categories.forEach((category) => {
+        if (!categories.has(category.category)) {
+          categories.set(category.category, {
+            category: category.category,
+            totalSpendingMinor: 0,
+          });
+        }
+        const current = categories.get(category.category);
+        current.totalSpendingMinor = addSafeInteger(
+          current.totalSpendingMinor,
+          category.spending_minor,
+          `trend.categories.${category.category}`,
+        );
+      });
+    });
+
+    const categorySeries = Array.from(categories.values())
+      .sort(
+        (left, right) =>
+          right.totalSpendingMinor - left.totalSpendingMinor ||
+          left.category.localeCompare(right.category, "zh-CN"),
+      )
+      .map((category) => {
+        const spendingByMonthMinor = trendMonths.map((month) => {
+          const matched = month.categories.find(
+            (item) => item.category === category.category,
+          );
+          return matched ? matched.spending_minor : 0;
+        });
+        return Object.freeze({
+          category: category.category,
+          totalSpendingMinor: category.totalSpendingMinor,
+          spendingByMonthMinor: Object.freeze(spendingByMonthMinor),
+        });
+      });
+
+    return Object.freeze({
+      months: Object.freeze(trendMonths.map(toMonthSummaryViewModel)),
+      categories: Object.freeze(categorySeries),
+    });
+  }
+
   function addCacheBuster(url, sequence) {
     const separator = url.includes("?") ? "&" : "?";
     return `${url}${separator}dashboard_reload=${Date.now()}-${sequence}`;
@@ -390,7 +471,6 @@
       (typeof globalThis !== "undefined" && typeof globalThis.fetch === "function"
         ? globalThis.fetch.bind(globalThis)
         : null);
-
     if (typeof fetchImpl !== "function") {
       throw new TypeError("createStatisticsService 需要可用的 fetch 实现。");
     }
@@ -402,7 +482,6 @@
       if (!forceReload && cachedPayloadPromise) {
         return cachedPayloadPromise;
       }
-
       const requestUrl = addCacheBuster(dataUrl, ++requestSequence);
       const promise = (async () => {
         let response;
@@ -419,7 +498,6 @@
             error,
           );
         }
-
         if (!response || typeof response.ok !== "boolean") {
           fail(
             "statistics_file_unavailable",
@@ -427,7 +505,6 @@
             dataUrl,
           );
         }
-
         if (!response.ok) {
           const status = Number.isInteger(response.status)
             ? `HTTP ${response.status}`
@@ -450,7 +527,6 @@
             error,
           );
         }
-
         return validateStatisticsPayload(payload);
       })();
 
@@ -465,24 +541,39 @@
       }
     }
 
+    function snapshotFromPayload(payload) {
+      return Object.freeze({
+        summary: toSummaryViewModel(payload.summary.shown_data),
+        months: Object.freeze(getShownMonths(payload).map(toMonthSummaryViewModel)),
+        trend: buildTrendStatistics(payload),
+      });
+    }
+
     async function getSummary() {
       const payload = await requestPayload(false);
-      return toSummaryViewModel(payload.summary);
+      return toSummaryViewModel(payload.summary.shown_data);
     }
 
     async function getMonths() {
       const payload = await requestPayload(false);
-      return Object.freeze(payload.months.map(toMonthSummaryViewModel));
+      return Object.freeze(getShownMonths(payload).map(toMonthSummaryViewModel));
+    }
+
+    async function getTrendStatistics() {
+      const payload = await requestPayload(false);
+      return buildTrendStatistics(payload);
     }
 
     async function getMonthStatistics(month) {
-      requireNonEmptyString(month, "month");
+      requireMonthString(month, "month");
       const payload = await requestPayload(false);
-      const selected = payload.months.find((item) => item.month === month);
+      const selected = payload.months.find(
+        (item) => item.show && item.month === month,
+      );
       if (!selected) {
         fail(
           "month_not_found",
-          `统计数据中不存在月份 ${month}。`,
+          `当前展示数据中不存在月份 ${month}。`,
           "month",
         );
       }
@@ -491,15 +582,13 @@
 
     async function reloadStatistics() {
       const payload = await requestPayload(true);
-      return Object.freeze({
-        summary: toSummaryViewModel(payload.summary),
-        months: Object.freeze(payload.months.map(toMonthSummaryViewModel)),
-      });
+      return snapshotFromPayload(payload);
     }
 
     return Object.freeze({
       getSummary,
       getMonths,
+      getTrendStatistics,
       getMonthStatistics,
       reloadStatistics,
     });
@@ -508,6 +597,7 @@
   return Object.freeze({
     DEFAULT_DATA_URL,
     SUPPORTED_SCHEMA_VERSION,
+    TREND_MONTH_LIMIT,
     StatisticsDataError,
     createStatisticsService,
     formatMinorUnits,

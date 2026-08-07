@@ -12,11 +12,12 @@
 → 退款归并
 → Merchant Mapping
 → 月份 / category / merchant 统计
+→ 根据账单文件名判断自然月完整性与展示策略
 → data/reports/spending_statistics.json
 → local_dashboard/
 ```
 
-项目当前已经实现邮件获取、交易事实重建、正式 Merchant Mapping、退款归并、消费统计派生文件和本地 HTML Dashboard。图表、趋势分析、AI 报告、远程 API 和正式微信小程序仍不在当前实现范围内。
+项目当前已经实现邮件获取、交易事实重建、正式 Merchant Mapping、退款归并、消费统计派生文件、本地 HTML Dashboard，以及用于比较多种展示形式的本地图表 POC。增长率/环比分析、AI 报告、远程 API 和正式微信小程序仍不在当前实现范围内。
 
 ## 数据与隐私边界
 
@@ -36,7 +37,7 @@ data/
 
 数据职责：
 
-- `emails/`：从 163 邮箱保存的原始 RFC822 邮件，是不可变事实来源。
+- `emails/`：从 163 邮箱保存的原始 RFC822 邮件，是不可变事实来源；稳定文件名中的账单日期也用于判断自然月数据是否完整。
 - `screenshots/`：历史 Merchant Mapping 建立和识别验证使用的本地截图。
 - `transactions.csv`：从全部原始邮件全量重建的交易事实数据。
 - `mappings/merchants.yaml`：人工确认的 `merchant_name → descriptions`。
@@ -62,6 +63,12 @@ data/mappings/transaction_category_overrides.jsonl
 
 ```powershell
 uv sync
+```
+
+本地 Dashboard 图表 POC 使用固定版本的 Chart.js，并通过项目根目录的 npm 依赖安装到本地；运行页面时不依赖 CDN：
+
+```powershell
+npm install
 ```
 
 复制环境变量示例：
@@ -97,7 +104,7 @@ $env:PYTHONPATH="src"; uv run python -m family_spending.ingestion.imap_163
 - 将完整原始邮件保存到 `data/emails/`；
 - 跳过已经存在的邮件，避免重复下载完整内容。
 
-原始 `.eml` 是后续所有交易数据的可追溯来源。
+原始 `.eml` 是后续所有交易数据的可追溯来源。账单文件名由邮件日期和内容哈希稳定生成；月份完整性只读取该稳定文件名中的日期，不解析 EML 正文账期。
 
 ## 重建交易事实
 
@@ -209,15 +216,17 @@ read_transactions_csv()
 → reconcile_refunds()
 → resolve_transactions() 针对退款后的净消费
 → aggregate_spending()
+→ load_month_coverage() 读取账单文件名覆盖
 → serialize_spending_statistics()
 → 原子替换 spending_statistics.json
 ```
 
 每次运行都从完整事实数据全量重建。当前数据规模不引入退款缓存、数据库或增量状态。
 
-第一版统计包含：
+统计包含：
 
-- 全局净消费金额、交易笔数和月份数；
+- 全部自然月的净消费金额、交易笔数和月份数；
+- 当前展示月份的净消费金额、交易笔数和月份数；
 - 月份汇总；
 - 月份 × category；
 - 月份 × merchant/display。
@@ -231,11 +240,40 @@ read_transactions_csv()
 - 待分类 merchant 使用原始 description 作为展示名，但不会成为正式 `merchant_name`；
 - 每月总金额和笔数必须分别等于 category 与 merchant/display 汇总之和。
 
-派生 JSON 使用人民币最小单位“分”的安全整数表示金额，并包含 `schema_version`。文件使用确定性字段顺序和原子替换，不包含逐笔来源邮件或退款分配历史。
+### 自然月完整性与展示策略
+
+信用卡账单约按每月 10 日切分，因此单份账单不能证明一个完整自然月。对于自然月 `M`，后端要求同时存在：
+
+```text
+M 月 10 日账单
+M+1 月 10 日账单
+```
+
+例如 `2026-06` 需要同时存在 `2026-06-10_<hash>.eml` 和 `2026-07-10_<hash>.eml`。
+
+每个月份包含两个独立布尔字段：
+
+- `is_complete`：由原始账单文件覆盖推导出的事实；
+- `show`：当前产品展示策略。
+
+当前策略是 `show = is_complete`，但公共契约不把两者合并，未来可以只改变展示策略而保留完整性事实。后端始终保留完整和不完整的全部月份，不在生成阶段删除月份。
+
+派生 JSON 使用 `schema_version = 2`。顶层 `summary` 分为：
+
+- `all_data`：全部月份汇总；
+- `shown_data`：仅 `show=true` 月份汇总。
+
+两种汇总均包含金额、交易笔数和月份数，Dashboard 使用 `shown_data`。金额继续使用人民币最小单位“分”的安全整数表示；文件保持确定性字段顺序和原子替换，不包含逐笔来源邮件或退款分配历史。
 
 ## 本地消费统计 Dashboard
 
-先生成最新统计：
+先安装一次本地图表依赖：
+
+```powershell
+npm install
+```
+
+再生成最新统计：
 
 ```powershell
 $env:PYTHONPATH="src"; uv run python -m family_spending.statistics_generation
@@ -261,16 +299,35 @@ Dashboard 直接读取：
 
 当前能力：
 
-- 展示累计净消费、净消费交易笔数和月份数；
-- 支持月份切换；
+- 总览使用 `summary.shown_data`，不会把 `show=false` 月份金额混入当前展示；
+- 月份选择器只列出 `show=true` 月份，并保留全部符合展示策略的月份；
 - 展示后端已经排序的 category 和 merchant/display 汇总；
 - 显示待分类项目且不遗漏金额；
 - 支持 loading、空数据、错误和重新加载状态；
-- 校验 `schema_version === 1`、字段类型、安全整数、待分类语义以及全局和月份对账；
-- 校验失败时停止展示，不在前端修正或重新聚合后端结果；
-- 不请求外部网络资源，不写回任何数据。
+- 严格校验 `schema_version === 2`、字段类型、安全整数、月份布尔字段、待分类语义，以及全部月份和展示月份两套汇总对账；
+- 校验失败时停止展示，不在前端修正或重新聚合后端事实；
+- 不写回任何数据。
 
-`local_dashboard/api.js` 负责加载、契约校验、对账和 view model；`local_dashboard/app.js` 负责 DOM 状态与交互。未来其他客户端可以参考 service 职责和返回模型，但不需要复用浏览器 DOM 或 CSS 实现。
+### 多图表 POC
+
+图表 POC 从同一份 Dashboard service view model 读取后端已经聚合好的月份/category 数据，不生成第二套统计事实。趋势图按月份正序展示最近 12 个 `show=true` 自然月；月份选择器本身不受 12 个月限制。
+
+当前同时保留六种候选展示供真实数据浏览器比较：
+
+- 月度总消费折线图；
+- 月度总消费柱状图；
+- Category 堆叠柱状图；
+- Category 堆叠面积图；
+- Category 分组柱状图；
+- 当前月份 Category 环形图。
+
+Category 趋势图补齐缺失月份时使用 0，仅作为已有月度 category 聚合的视图转换。图表金额仍保留“分”的整数值，在 tooltip 中统一格式化成人民币。
+
+Chart.js 固定在项目的 npm 依赖中，并由页面加载本地 `node_modules/chart.js/dist/chart.umd.js`；运行 Dashboard 时不使用 CDN，也不发起其他外部网络请求。Chart.js 内置图例交互用于隐藏/恢复 category 系列。
+
+每张图表独立创建和捕获失败。某一图表初始化或渲染失败时，只在该图表卡片显示错误，不影响总览、月份切换、category/merchant 表格或其他图表。
+
+`local_dashboard/api.js` 负责加载、schema 校验、金额/笔数对账和 view model；`local_dashboard/charts.js` 负责纯图表配置与图表实例生命周期；`local_dashboard/app.js` 负责 DOM 状态、月份交互以及将 service 数据交给图表层。未来其他客户端可以参考 service 职责和返回模型，但不需要复用浏览器 DOM、Chart.js 或 CSS 实现。
 
 ## Rebuild 支持工具
 
@@ -292,19 +349,19 @@ scripts/inspect_mapping_candidates.py
 完整 Python 测试：
 
 ```powershell
-$env:PYTHONPATH="src"; uv run python -m unittest -q
+$env:PYTHONPATH="src"; uv run --frozen python -m unittest -q
 ```
 
-Dashboard JavaScript service 测试：
+Dashboard JavaScript 测试：
 
 ```powershell
-node --test local_dashboard/api.test.js
+node --test local_dashboard/api.test.js local_dashboard/charts.test.js
 ```
 
 Python 编译检查：
 
 ```powershell
-uv run python -m compileall -q src tests
+uv run --frozen python -m compileall -q src tests
 ```
 
 需要定位失败时，再对对应模块使用 `-v`，避免正常验证输出全部测试名称。
@@ -312,12 +369,17 @@ uv run python -m compileall -q src tests
 ## 当前代码结构
 
 ```text
+package.json
+package-lock.json                  # npm install 后生成并应随依赖版本一起提交
+
 local_dashboard/
 ├── index.html
 ├── api.js
+├── charts.js
 ├── app.js
 ├── styles.css
-└── api.test.js
+├── api.test.js
+└── charts.test.js
 
 scripts/
 ├── inspect_app_row_ocr.py
@@ -327,6 +389,7 @@ scripts/
 
 src/family_spending/
 ├── mapping.py
+├── month_coverage.py
 ├── refund_reconciliation.py
 ├── settings.py
 ├── spending_statistics.py
@@ -342,6 +405,7 @@ tests/
 ├── test_imap_163.py
 ├── test_local_dashboard.py
 ├── test_mapping.py
+├── test_month_coverage.py
 ├── test_refund_reconciliation.py
 ├── test_spending_statistics.py
 ├── test_statistics_generation.py
@@ -353,7 +417,9 @@ tests/
 
 当前没有实现：
 
-- 图表、趋势、同比或环比分析；
+- 增长率、同比、环比或复杂变化原因分析；
+- “全部月份 / 仅完整月份”切换 UI；
+- 最终图表组合收敛；
 - AI 消费报告；
 - 逐笔交易或退款明细界面；
 - Mapping 编辑器和复核处理界面；

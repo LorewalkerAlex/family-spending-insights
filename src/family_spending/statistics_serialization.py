@@ -6,10 +6,11 @@ import tempfile
 from decimal import Decimal
 from pathlib import Path
 
+from family_spending.month_coverage import MonthCoverage
 from family_spending.settings import SPENDING_STATISTICS_FILE
 from family_spending.spending_statistics import SpendingStatistics
 
-STATISTICS_SCHEMA_VERSION = 1
+STATISTICS_SCHEMA_VERSION = 2
 MINOR_UNIT_SCALE = Decimal("100")
 ZERO = Decimal("0")
 
@@ -32,19 +33,79 @@ def _to_minor_units(value: Decimal) -> int:
     return int(integral_minor_units)
 
 
+def _summary_payload(
+    total_spending: Decimal,
+    transaction_count: int,
+    month_count: int,
+) -> dict[str, int]:
+    return {
+        "total_spending_minor": _to_minor_units(total_spending),
+        "transaction_count": transaction_count,
+        "month_count": month_count,
+    }
+
+
+def _index_month_coverage(
+    statistics: SpendingStatistics,
+    month_coverage: tuple[MonthCoverage, ...],
+) -> dict[str, MonthCoverage]:
+    coverage_by_month: dict[str, MonthCoverage] = {}
+    for coverage in month_coverage:
+        if coverage.month in coverage_by_month:
+            raise StatisticsSerializationError(
+                f"Duplicate month coverage for {coverage.month!r}"
+            )
+        coverage_by_month[coverage.month] = coverage
+
+    statistics_months = {month.month for month in statistics.months}
+    coverage_months = set(coverage_by_month)
+    if coverage_months != statistics_months:
+        missing = sorted(statistics_months - coverage_months)
+        extra = sorted(coverage_months - statistics_months)
+        raise StatisticsSerializationError(
+            "Month coverage does not match statistics months: "
+            f"missing={missing}, extra={extra}"
+        )
+    return coverage_by_month
+
+
 def serialize_spending_statistics(
     statistics: SpendingStatistics,
+    month_coverage: tuple[MonthCoverage, ...],
 ) -> dict[str, object]:
+    coverage_by_month = _index_month_coverage(statistics, month_coverage)
+    shown_months = tuple(
+        month
+        for month in statistics.months
+        if coverage_by_month[month.month].show
+    )
+    shown_total_spending = sum(
+        (month.total_spending for month in shown_months),
+        start=ZERO,
+    )
+    shown_transaction_count = sum(
+        month.transaction_count for month in shown_months
+    )
+
     return {
         "schema_version": STATISTICS_SCHEMA_VERSION,
         "summary": {
-            "total_spending_minor": _to_minor_units(statistics.total_spending),
-            "transaction_count": statistics.transaction_count,
-            "month_count": len(statistics.months),
+            "all_data": _summary_payload(
+                statistics.total_spending,
+                statistics.transaction_count,
+                len(statistics.months),
+            ),
+            "shown_data": _summary_payload(
+                shown_total_spending,
+                shown_transaction_count,
+                len(shown_months),
+            ),
         },
         "months": [
             {
                 "month": month.month,
+                "is_complete": coverage_by_month[month.month].is_complete,
+                "show": coverage_by_month[month.month].show,
                 "total_spending_minor": _to_minor_units(month.total_spending),
                 "transaction_count": month.transaction_count,
                 "categories": [

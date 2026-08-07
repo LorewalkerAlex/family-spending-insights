@@ -13,12 +13,17 @@ from family_spending.mapping import (
     MappingResolutionError,
     load_merchant_mappings,
 )
+from family_spending.month_coverage import (
+    MonthCoverageError,
+    load_month_coverage,
+)
 from family_spending.refund_reconciliation import (
     RefundReconciliationError,
     reconcile_refunds,
 )
 from family_spending.settings import (
     CATEGORIES_FILE,
+    EMAILS_DIR,
     MERCHANTS_FILE,
     SPENDING_STATISTICS_FILE,
     TRANSACTION_CATEGORY_OVERRIDES_FILE,
@@ -55,6 +60,8 @@ class StatisticsGenerationSummary:
     unclassified_net_transactions: int
     months: int
     total_net_spending: Decimal
+    shown_months: int
+    shown_net_spending: Decimal
     output_path: Path
 
 
@@ -64,6 +71,7 @@ def generate_spending_statistics(
     categories_path: Path = CATEGORIES_FILE,
     overrides_path: Path = TRANSACTION_CATEGORY_OVERRIDES_FILE,
     output_path: Path = SPENDING_STATISTICS_FILE,
+    emails_dir: Path = EMAILS_DIR,
 ) -> StatisticsGenerationSummary:
     """Rebuild all derived spending statistics from the complete fact data."""
     raw_transactions = read_transactions_csv(transactions_path)
@@ -73,7 +81,6 @@ def generate_spending_statistics(
         overrides_path,
     )
     validate_transaction_overrides(raw_transactions, mappings)
-
     reconciliation = reconcile_refunds(
         raw_transactions,
         mappings.description_to_merchant,
@@ -83,8 +90,23 @@ def generate_spending_statistics(
         mappings,
     )
     statistics = aggregate_spending(resolution.transactions)
-    payload = serialize_spending_statistics(statistics)
+    month_coverage = load_month_coverage(
+        tuple(month.month for month in statistics.months),
+        emails_dir,
+    )
+    payload = serialize_spending_statistics(statistics, month_coverage)
     write_spending_statistics_json(payload, output_path)
+
+    shown_month_names = {
+        coverage.month for coverage in month_coverage if coverage.show
+    }
+    shown_months = tuple(
+        month for month in statistics.months if month.month in shown_month_names
+    )
+    shown_net_spending = sum(
+        (month.total_spending for month in shown_months),
+        start=Decimal("0"),
+    )
 
     return StatisticsGenerationSummary(
         raw_transactions=len(raw_transactions),
@@ -104,6 +126,8 @@ def generate_spending_statistics(
         unclassified_net_transactions=len(resolution.unclassified),
         months=len(statistics.months),
         total_net_spending=statistics.total_spending,
+        shown_months=len(shown_months),
+        shown_net_spending=shown_net_spending,
         output_path=output_path,
     )
 
@@ -132,6 +156,8 @@ def format_statistics_generation_report(
             f"Unclassified net transactions: {summary.unclassified_net_transactions}",
             f"Months: {summary.months}",
             f"Total net spending: {format(summary.total_net_spending, 'f')}",
+            f"Shown months: {summary.shown_months}",
+            f"Shown net spending: {format(summary.shown_net_spending, 'f')}",
             f"Output: {summary.output_path}",
         )
     )
@@ -144,6 +170,7 @@ def main() -> None:
         CmbTransactionCsvError,
         MappingDataError,
         MappingResolutionError,
+        MonthCoverageError,
         RefundReconciliationError,
         SpendingStatisticsError,
         StatisticsSerializationError,

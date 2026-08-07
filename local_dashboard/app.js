@@ -6,14 +6,17 @@
     throw new Error("SpendingDashboardApi 未加载。");
   }
 
+  const chartsApi = globalThis.SpendingDashboardCharts || null;
   const service = api.createStatisticsService();
   const state = {
     summary: null,
     months: [],
+    trend: null,
     selectedMonth: null,
     selectedView: "categories",
     monthStatistics: null,
   };
+  let chartRegistry = null;
 
   const elements = {
     loading: document.querySelector("[data-state='loading']"),
@@ -35,6 +38,8 @@
     listTitle: document.querySelector("[data-list-title]"),
     list: document.querySelector("[data-statistics-list]"),
     listEmpty: document.querySelector("[data-list-empty]"),
+    chartCanvases: Array.from(document.querySelectorAll("[data-chart]")),
+    chartErrors: Array.from(document.querySelectorAll("[data-chart-error]")),
     status: document.querySelector("[data-status]"),
   };
 
@@ -61,7 +66,6 @@
         details: error instanceof Error ? error.message : String(error),
       };
     }
-
     const detailsByCode = {
       statistics_file_unavailable:
         "统计文件可能尚未生成，或本地静态服务没有从项目根目录启动。",
@@ -71,9 +75,8 @@
       invalid_data: "统计文件缺少必要字段或包含无效值。",
       reconciliation_error:
         "后端汇总金额或交易笔数不一致，页面已停止展示，避免显示看似正常的错误结果。",
-      month_not_found: "所选月份已不在最新统计文件中，请重新加载。",
+      month_not_found: "所选月份已不在最新展示数据中，请重新加载。",
     };
-
     return {
       message: error.message,
       details: detailsByCode[error.code] || "请检查统计文件后重新加载。",
@@ -118,7 +121,6 @@
     nameElement.className = "statistics-item__name";
     nameElement.textContent = name;
     identity.append(nameElement);
-
     if (badgeText) {
       const badge = document.createElement("span");
       badge.className = "status-badge";
@@ -132,7 +134,6 @@
     const amount = document.createElement("strong");
     amount.className = "statistics-item__amount";
     amount.textContent = spendingText;
-
     const count = document.createElement("span");
     count.className = "statistics-item__count";
     count.textContent = `${transactionCount} 笔`;
@@ -159,7 +160,6 @@
 
     elements.listTitle.textContent = isCategoryView ? "分类支出" : "商户支出";
     elements.list.replaceChildren();
-
     items.forEach((item) => {
       if (isCategoryView) {
         elements.list.append(
@@ -190,6 +190,80 @@
     setHidden(elements.list, isEmpty);
   }
 
+  function setChartError(key, message) {
+    const error = elements.chartErrors.find(
+      (element) => element.dataset.chartError === key,
+    );
+    if (error) {
+      error.textContent = message;
+      setHidden(error, false);
+    }
+    const canvas = elements.chartCanvases.find(
+      (element) => element.dataset.chart === key,
+    );
+    if (canvas) {
+      setHidden(canvas, true);
+    }
+  }
+
+  function clearChartError(key) {
+    const error = elements.chartErrors.find(
+      (element) => element.dataset.chartError === key,
+    );
+    if (error) {
+      error.textContent = "";
+      setHidden(error, true);
+    }
+    const canvas = elements.chartCanvases.find(
+      (element) => element.dataset.chart === key,
+    );
+    if (canvas) {
+      setHidden(canvas, false);
+    }
+  }
+
+  function renderCharts() {
+    const chartKeys = elements.chartCanvases.map((canvas) => canvas.dataset.chart);
+    if (!chartsApi) {
+      chartKeys.forEach((key) => setChartError(key, "图表模块未加载，表格统计仍可正常使用。"));
+      return;
+    }
+    if (typeof globalThis.Chart !== "function") {
+      chartKeys.forEach((key) => setChartError(key, "Chart.js 未加载，表格统计仍可正常使用。"));
+      return;
+    }
+
+    try {
+      if (!chartRegistry) {
+        chartRegistry = chartsApi.createChartRegistry(globalThis.Chart);
+      }
+      const configs = chartsApi.buildChartConfigs(
+        state.trend,
+        state.monthStatistics,
+        api.formatMinorUnits,
+      );
+      elements.chartCanvases.forEach((canvas) => {
+        const key = canvas.dataset.chart;
+        clearChartError(key);
+        try {
+          chartRegistry.render(key, canvas, configs[key]);
+        } catch (error) {
+          setChartError(
+            key,
+            error instanceof Error ? error.message : "图表渲染失败。",
+          );
+        }
+      });
+    } catch (error) {
+      chartKeys.forEach((key) =>
+        setChartError(
+          key,
+          error instanceof Error ? error.message : "图表渲染失败。",
+        ),
+      );
+    }
+  }
+
   function renderMonthStatistics() {
     const month = state.monthStatistics;
     elements.monthTitle.textContent = month.monthLabel;
@@ -197,6 +271,7 @@
     elements.monthTransactions.textContent = `${month.transactionCount} 笔净消费`;
     renderTabs();
     renderStatisticsList();
+    renderCharts();
   }
 
   function renderDashboard() {
@@ -208,12 +283,14 @@
     if (hasMonths) {
       renderMonthOptions();
       renderMonthStatistics();
+    } else if (chartRegistry) {
+      chartRegistry.destroyAll();
     }
 
     setHidden(elements.loading, true);
     setHidden(elements.error, true);
     setHidden(elements.dashboard, false);
-    announce(hasMonths ? "消费统计加载完成。" : "统计文件中暂无月份数据。");
+    announce(hasMonths ? "消费统计加载完成。" : "统计文件中暂无可展示月份数据。");
   }
 
   async function loadMonth(month) {
@@ -230,10 +307,11 @@
         : {
             summary: await service.getSummary(),
             months: await service.getMonths(),
+            trend: await service.getTrendStatistics(),
           };
-
       state.summary = snapshot.summary;
       state.months = snapshot.months;
+      state.trend = snapshot.trend;
 
       if (state.months.length === 0) {
         state.selectedMonth = null;
@@ -247,7 +325,6 @@
           : state.months[0].month;
         await loadMonth(nextMonth);
       }
-
       renderDashboard();
     } catch (error) {
       renderError(error);
