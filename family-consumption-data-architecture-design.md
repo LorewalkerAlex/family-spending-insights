@@ -565,20 +565,20 @@ Analytics Update
 
 ---
 
-## 14. 当前实现迁移约束
+## 14. 当前实现落地状态与后续迁移约束
 
-当前系统已经有稳定运行的 CMB Email、Merchant Mapping、退款归并和消费统计链路，新架构应渐进迁移，不以重写现有能力为目标。
+第一条 CMB Email 纵向切片已经迁入本 HLD 定义的领域边界。当前实现仍保留原有 Email、CSV、正式 Mapping、退款规则、统计 schema v2 与 Dashboard 契约，但内部主链已经完成以下分离：
 
-需要特别保留的事实：
+1. 当前 `CmbTransaction` / `transactions.csv` 保持原有六字段来源契约，并无损进入 Source Record；
+2. CMB Source Record 的既有 `transaction_id` 作为来源身份保留，系统 Transaction 使用独立身份，并通过 Source Record → Transaction 关系连接；
+3. CMB Email 继续作为对应信用卡财务事实的 authoritative Source，同一 CMB Source Record 重跑保持幂等；
+4. Transaction Core 只保留当前 HLD 定义的财务事实，raw description 与 CMB provenance 继续留在 Source Record；
+5. 正式 Merchant / Category Mapping 作为当前 Enrichment 规则运行，不写回 Transaction Core；
+6. `transaction_category_overrides.jsonl` 暂时保留历史字段和数据不变，运行时通过 Source Record → Transaction 关系把既有 CMB ID 绑定到正确的系统 Transaction；
+7. 退款归并不再改写或伪造 Transaction 金额，而是生成独立的净消费派生结果；Merchant 可以继续作为退款匹配辅助证据，Category 与 transaction override 不参与身份判断；
+8. 消费统计与 Dashboard 继续作为下游 Analytics / Projection。相同正式数据下，迁移后的 schema v2 统计输出已与迁移前基线完成字节级一致性验证。
 
-1. 当前 CMB 交易字段必须无损进入 Source Record；
-2. 当前 Email 来源是信用卡交易的权威自动 Source；
-3. 当前正式 Merchant / Category 规则来自已经人工审核的数据；
-4. 当前 `transaction_category_overrides.jsonl` 使用现有 `transaction_id` 定位交易；
-5. 因为未来 Transaction ID 与当前 CMB Source Record ID 不再是同一个概念，迁移时必须确保已有 transaction-level override 仍能稳定对应正确 Transaction；
-6. 当前消费统计和 Dashboard 属于已验证的下游能力，应作为未来 Analytics / Projection 迁移时的重要兼容基线，而不是被无理由推翻。
-
-具体迁移步骤在 Technical Design / Migration Plan 中确定。
+当前只完成 CMB Source 的第一条主链实现。Manual Source、跨来源 Transaction matching、统一 Application / API 和后续存储实现仍应在进入对应纵向切片时，沿本 HLD 的相同边界继续扩展；不要为了未来能力重新把 Source、Transaction、Enrichment 或 Analytics 合并。
 
 ---
 
@@ -622,4 +622,4 @@ Analytics Update
 - Application / API 为所有客户端提供统一的数据读取和修改入口；
 - 具体存储技术通过数据访问边界隔离，留到 Technical Design 决定。
 
-在这些边界确定后，下一阶段应进入 Technical Design 与 Migration Plan，基于当前仓库实际实现规划第一条完整纵向迁移切片。
+第一条 CMB Email 纵向切片已经验证这些边界可以在现有代码上落地；后续 Source、Application / API 与客户端能力应继续沿相同领域边界按完整纵向切片推进。

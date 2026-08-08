@@ -8,19 +8,10 @@ from family_spending.ingestion.cmb_email_transactions import (
     CmbTransactionCsvError,
     read_transactions_csv,
 )
-from family_spending.mapping import (
-    MappingDataError,
-    MappingResolutionError,
-    load_merchant_mappings,
-)
-from family_spending.month_coverage import (
-    MonthCoverageError,
-    load_month_coverage,
-)
-from family_spending.refund_reconciliation import (
-    RefundReconciliationError,
-    reconcile_refunds,
-)
+from family_spending.mapping import MappingDataError, MappingResolutionError, load_merchant_mappings
+from family_spending.month_coverage import MonthCoverageError, load_month_coverage
+from family_spending.reconciliation import ReconciliationError
+from family_spending.refund_reconciliation import RefundReconciliationError, reconcile_refunds
 from family_spending.settings import (
     CATEGORIES_FILE,
     EMAILS_DIR,
@@ -29,10 +20,7 @@ from family_spending.settings import (
     TRANSACTION_CATEGORY_OVERRIDES_FILE,
     TRANSACTIONS_FILE,
 )
-from family_spending.spending_statistics import (
-    SpendingStatisticsError,
-    aggregate_spending,
-)
+from family_spending.spending_statistics import SpendingStatisticsError, aggregate_spending
 from family_spending.statistics_serialization import (
     StatisticsSerializationError,
     serialize_spending_statistics,
@@ -40,9 +28,9 @@ from family_spending.statistics_serialization import (
 )
 from family_spending.transaction_resolution import (
     TransactionResolutionError,
-    resolve_transactions,
-    validate_transaction_overrides,
+    build_cmb_domain_state,
 )
+from family_spending.transactions import TransactionDataError
 
 
 @dataclass(frozen=True)
@@ -73,23 +61,24 @@ def generate_spending_statistics(
     output_path: Path = SPENDING_STATISTICS_FILE,
     emails_dir: Path = EMAILS_DIR,
 ) -> StatisticsGenerationSummary:
-    """Rebuild all derived spending statistics from the complete fact data."""
+    """Rebuild from source facts so the migration changes structure without hidden state."""
     raw_transactions = read_transactions_csv(transactions_path)
     mappings = load_merchant_mappings(
         merchants_path,
         categories_path,
         overrides_path,
     )
-    validate_transaction_overrides(raw_transactions, mappings)
-    reconciliation = reconcile_refunds(
-        raw_transactions,
-        mappings.description_to_merchant,
+    state = build_cmb_domain_state(raw_transactions, mappings)
+    refund_result = reconcile_refunds(
+        state.reconciliation.transactions,
+        state.source_records_by_transaction_id,
+        state.enrichments_by_transaction_id,
     )
-    resolution = resolve_transactions(
-        reconciliation.net_transactions,
-        mappings,
+    statistics = aggregate_spending(
+        refund_result.net_consumption,
+        state.transactions_by_id,
+        state.enrichments_by_transaction_id,
     )
-    statistics = aggregate_spending(resolution.transactions)
     month_coverage = load_month_coverage(
         tuple(month.month for month in statistics.months),
         emails_dir,
@@ -107,23 +96,22 @@ def generate_spending_statistics(
         (month.total_spending for month in shown_months),
         start=Decimal("0"),
     )
-
+    unclassified_net_transactions = sum(
+        state.enrichments_by_transaction_id[item.transaction_id].is_unclassified
+        for item in refund_result.net_consumption
+    )
     return StatisticsGenerationSummary(
         raw_transactions=len(raw_transactions),
-        zero_amount_transactions=reconciliation.zero_amount_transactions,
-        refund_transactions=reconciliation.refund_transactions,
-        same_merchant_refund_matches=(
-            reconciliation.same_merchant_refund_matches
-        ),
-        same_merchant_matched_amount=(
-            reconciliation.same_merchant_matched_amount
-        ),
-        net_consumption_transactions=len(reconciliation.net_transactions),
-        fully_refunded_transactions=reconciliation.fully_refunded_transactions,
-        partially_refunded_transactions=reconciliation.partially_refunded_transactions,
-        unmatched_refund_count=reconciliation.unmatched_refund_count,
-        unmatched_refund_amount=reconciliation.unmatched_refund_amount,
-        unclassified_net_transactions=len(resolution.unclassified),
+        zero_amount_transactions=refund_result.zero_amount_transactions,
+        refund_transactions=refund_result.refund_transactions,
+        same_merchant_refund_matches=refund_result.same_merchant_refund_matches,
+        same_merchant_matched_amount=refund_result.same_merchant_matched_amount,
+        net_consumption_transactions=len(refund_result.net_consumption),
+        fully_refunded_transactions=refund_result.fully_refunded_transactions,
+        partially_refunded_transactions=refund_result.partially_refunded_transactions,
+        unmatched_refund_count=refund_result.unmatched_refund_count,
+        unmatched_refund_amount=refund_result.unmatched_refund_amount,
+        unclassified_net_transactions=unclassified_net_transactions,
         months=len(statistics.months),
         total_net_spending=statistics.total_spending,
         shown_months=len(shown_months),
@@ -135,19 +123,14 @@ def generate_spending_statistics(
 def format_statistics_generation_report(
     summary: StatisticsGenerationSummary,
 ) -> str:
+    """Expose the same reconciliation counters as before so real-data regression remains easy to compare manually."""
     return "\n".join(
         (
             f"Raw transactions: {summary.raw_transactions}",
             f"Zero-amount transactions ignored: {summary.zero_amount_transactions}",
             f"Refund transactions: {summary.refund_transactions}",
-            (
-                "Same-merchant refund matches: "
-                f"{summary.same_merchant_refund_matches}"
-            ),
-            (
-                "Same-merchant matched amount: "
-                f"{format(summary.same_merchant_matched_amount, 'f')}"
-            ),
+            f"Same-merchant refund matches: {summary.same_merchant_refund_matches}",
+            f"Same-merchant matched amount: {format(summary.same_merchant_matched_amount, 'f')}",
             f"Net consumption transactions: {summary.net_consumption_transactions}",
             f"Fully refunded transactions: {summary.fully_refunded_transactions}",
             f"Partially refunded transactions: {summary.partially_refunded_transactions}",
@@ -164,16 +147,19 @@ def format_statistics_generation_report(
 
 
 def main() -> None:
+    """Fail atomically so a successful rebuild always represents one coherent snapshot."""
     try:
         summary = generate_spending_statistics()
     except (
         CmbTransactionCsvError,
         MappingDataError,
         MappingResolutionError,
-        MonthCoverageError,
+        ReconciliationError,
         RefundReconciliationError,
         SpendingStatisticsError,
+        MonthCoverageError,
         StatisticsSerializationError,
+        TransactionDataError,
         TransactionResolutionError,
         OSError,
     ) as exc:

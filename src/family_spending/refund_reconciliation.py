@@ -1,30 +1,41 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from decimal import Decimal
+from typing import Any
 
-from family_spending.ingestion.cmb_email_transactions import CmbTransaction
+from family_spending.enrichment import TransactionEnrichment
+from family_spending.source_records import SourceRecord
+from family_spending.transactions import Transaction
 
 ZERO = Decimal("0")
 MERCHANT_REFUND_LOOKBACK_DAYS = 30
 
 
 class RefundReconciliationError(RuntimeError):
-    """Raised when raw transaction amounts cannot be reconciled safely."""
+    """Raised when expense Transactions cannot be netted without violating source or amount invariants."""
 
 
 @dataclass
 class _ConsumptionBalance:
     original_index: int
-    transaction: CmbTransaction
+    transaction: Transaction
+    description: str | None
+    merchant_name: str | None
     original_spending: Decimal
     remaining_spending: Decimal
 
 
 @dataclass(frozen=True)
+class NetConsumption:
+    transaction_id: str
+    spending: Decimal
+
+
+@dataclass(frozen=True)
 class RefundReconciliationResult:
-    net_transactions: tuple[CmbTransaction, ...]
+    net_consumption: tuple[NetConsumption, ...]
     zero_amount_transactions: int
     refund_transactions: int
     same_merchant_refund_matches: int
@@ -39,6 +50,7 @@ def _find_exact_balance(
     balances: list[_ConsumptionBalance],
     refund_amount: Decimal,
 ) -> _ConsumptionBalance | None:
+    """Prefer the latest exact remaining balance because it is the most conservative same-description match."""
     return next(
         (
             balance
@@ -52,13 +64,12 @@ def _find_exact_balance(
 
 def _find_same_merchant_balance(
     balances: list[_ConsumptionBalance],
-    refund: CmbTransaction,
+    refund: Transaction,
     refund_amount: Decimal,
 ) -> _ConsumptionBalance | None:
+    """Limit Merchant fallback to recent equal amounts so Merchant enrichment remains supporting evidence only."""
     for balance in reversed(balances):
-        age_days = (
-            refund.transaction_date - balance.transaction.transaction_date
-        ).days
+        age_days = (refund.transaction_date - balance.transaction.transaction_date).days
         if age_days > MERCHANT_REFUND_LOOKBACK_DAYS:
             break
         if (
@@ -70,23 +81,12 @@ def _find_same_merchant_balance(
 
 
 def reconcile_refunds(
-    transactions: tuple[CmbTransaction, ...],
-    description_to_merchant: Mapping[str, str] | None = None,
+    transactions: tuple[Transaction, ...],
+    source_records_by_transaction_id: Mapping[str, SourceRecord[Any]],
+    enrichments_by_transaction_id: Mapping[str, TransactionEnrichment],
 ) -> RefundReconciliationResult:
-    """Apply refunds to prior consumption using conservative matching rules.
-
-    Raw CMB amounts use positive values for consumption and negative values
-    for refunds. Matching first prefers an equal remaining balance under the
-    exact description. If none exists, an equal remaining balance under the
-    same confirmed merchant may be used when it occurred within the previous
-    30 calendar days. Only then may the refund accumulate across older balances
-    with the exact description. Transactions are processed chronologically,
-    using the original tuple position as the stable same-day tie-breaker.
-    Output transactions keep the original consumption identity and use
-    normalized negative net amounts.
-    """
-    merchant_lookup = description_to_merchant or {}
-    balances_by_description: dict[str, list[_ConsumptionBalance]] = {}
+    """Net refunds into a derived spending view while leaving authoritative Transaction amounts unchanged."""
+    balances_by_description: dict[str | None, list[_ConsumptionBalance]] = {}
     balances_by_merchant: dict[str, list[_ConsumptionBalance]] = {}
     all_balances: list[_ConsumptionBalance] = []
     zero_amount_transactions = 0
@@ -101,24 +101,39 @@ def reconcile_refunds(
         key=lambda item: (item[1].transaction_date, item[0]),
     )
     for original_index, transaction in ordered_transactions:
+        if transaction.transaction_type != "expense":
+            raise RefundReconciliationError(
+                f"Refund reconciliation currently accepts expense Transactions only: {transaction.id!r}"
+            )
+        try:
+            source_record = source_records_by_transaction_id[transaction.id]
+        except KeyError as exc:
+            raise RefundReconciliationError(
+                f"Transaction {transaction.id!r} has no authoritative Source Record"
+            ) from exc
+        try:
+            enrichment = enrichments_by_transaction_id[transaction.id]
+        except KeyError as exc:
+            raise RefundReconciliationError(
+                f"Transaction {transaction.id!r} has no current Enrichment"
+            ) from exc
+
         amount = transaction.amount
         if amount == ZERO:
             zero_amount_transactions += 1
             continue
 
-        description_balances = balances_by_description.setdefault(
-            transaction.description,
-            [],
-        )
-        merchant_name = merchant_lookup.get(transaction.description)
-
+        description = source_record.description
+        description_balances = balances_by_description.setdefault(description, [])
+        merchant_name = enrichment.merchant_name
         if amount > ZERO:
-            spending = amount
             balance = _ConsumptionBalance(
                 original_index=original_index,
                 transaction=transaction,
-                original_spending=spending,
-                remaining_spending=spending,
+                description=description,
+                merchant_name=merchant_name,
+                original_spending=amount,
+                remaining_spending=amount,
             )
             description_balances.append(balance)
             if merchant_name is not None:
@@ -128,11 +143,7 @@ def reconcile_refunds(
 
         refund_transactions += 1
         remaining_refund = -amount
-
-        exact_balance = _find_exact_balance(
-            description_balances,
-            remaining_refund,
-        )
+        exact_balance = _find_exact_balance(description_balances, remaining_refund)
         if exact_balance is not None:
             exact_balance.remaining_spending = ZERO
             remaining_refund = ZERO
@@ -144,7 +155,6 @@ def reconcile_refunds(
                     transaction,
                     remaining_refund,
                 )
-
             if same_merchant_balance is not None:
                 matched_amount = remaining_refund
                 same_merchant_balance.remaining_spending = ZERO
@@ -163,7 +173,6 @@ def reconcile_refunds(
                     remaining_refund -= refunded_amount
                     if remaining_refund == ZERO:
                         break
-
         if remaining_refund > ZERO:
             unmatched_refund_count += 1
             unmatched_refund_amount += remaining_refund
@@ -175,20 +184,16 @@ def reconcile_refunds(
         ZERO < balance.remaining_spending < balance.original_spending
         for balance in all_balances
     )
-
-    net_transactions: list[CmbTransaction] = []
-    for balance in sorted(all_balances, key=lambda item: item.original_index):
-        if balance.remaining_spending == ZERO:
-            continue
-        net_transactions.append(
-            replace(
-                balance.transaction,
-                amount=-balance.remaining_spending,
-            )
+    net_consumption = tuple(
+        NetConsumption(
+            transaction_id=balance.transaction.id,
+            spending=balance.remaining_spending,
         )
-
+        for balance in sorted(all_balances, key=lambda item: item.original_index)
+        if balance.remaining_spending > ZERO
+    )
     return RefundReconciliationResult(
-        net_transactions=tuple(net_transactions),
+        net_consumption=net_consumption,
         zero_amount_transactions=zero_amount_transactions,
         refund_transactions=refund_transactions,
         same_merchant_refund_matches=same_merchant_refund_matches,

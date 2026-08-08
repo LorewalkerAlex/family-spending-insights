@@ -2,22 +2,24 @@
 
 用于在本地获取、整理和分析家庭共同消费数据。
 
-当前正式主链路以招商银行信用卡电子账单为事实来源：
+当前正式主链路以招商银行信用卡电子账单为事实来源，并已迁入第一版统一领域骨架：
 
 ```text
 163 邮箱
 → data/emails/*.eml
 → data/transactions.csv
-→ 校验 transaction category override
-→ 退款归并
-→ Merchant Mapping
+→ CMB Adapter / Source Record
+→ CMB Reconciliation
+→ Transaction + Source Link
+→ Merchant / Category Enrichment
+→ 退款归并生成 Net Consumption
 → 月份 / category / merchant 统计
 → 根据账单文件名判断自然月完整性与展示策略
 → data/reports/spending_statistics.json
 → local_dashboard/
 ```
 
-项目当前已经实现邮件获取、交易事实重建、正式 Merchant Mapping、退款归并、消费统计派生文件、本地 HTML Dashboard，以及用于比较多种展示形式的本地图表 POC。增长率/环比分析、AI 报告、远程 API 和正式微信小程序仍不在当前实现范围内。
+项目当前已经实现邮件获取、CMB Source Record / Transaction 身份分离、正式 Merchant Mapping、退款归并、消费统计派生文件、本地 HTML Dashboard，以及用于比较多种展示形式的本地图表 POC。增长率/环比分析、AI 报告、远程 API、Manual Source 完整录入链路和正式微信小程序仍不在当前实现范围内。
 
 ## 数据与隐私边界
 
@@ -39,10 +41,10 @@ data/
 
 - `emails/`：从 163 邮箱保存的原始 RFC822 邮件，是不可变事实来源；稳定文件名中的账单日期也用于判断自然月数据是否完整。
 - `screenshots/`：历史 Merchant Mapping 建立和识别验证使用的本地截图。
-- `transactions.csv`：从全部原始邮件全量重建的交易事实数据。
+- `transactions.csv`：从全部原始邮件全量重建的 CMB 来源级事实数据；进入统一领域模型后对应 `SourceRecord`，不是系统级 Transaction 存储。
 - `mappings/merchants.yaml`：人工确认的 `merchant_name → descriptions`。
 - `mappings/categories.yaml`：人工确认的 `category → merchant_names`。
-- `mappings/transaction_category_overrides.jsonl`：少量单笔交易的分类覆盖。
+- `mappings/transaction_category_overrides.jsonl`：少量单笔交易的分类覆盖；文件中的 `transaction_id` 保留历史字段名，当前值仍是既有 CMB 来源 ID，运行时再绑定到系统 Transaction。
 - `reports/spending_statistics.json`：后端生成、供 Dashboard 只读消费的统计派生文件。
 
 除三份正式 Mapping 外，`data/` 中的原始邮件、截图、完整交易、OCR 结果和派生统计默认只保存在本地，不提交到 Git。
@@ -126,7 +128,7 @@ data/transactions.csv
 - 外观完全相同的交易不会被自动去重；
 - 输出按交易日期和来源位置稳定排序；
 - 原始金额方向为正数消费、负数退款；
-- `transaction_id` 由来源邮件和邮件内位置稳定生成。
+- `transaction_id` 由来源邮件和邮件内位置稳定生成；在统一领域模型中它作为 CMB `SourceRecord.id`，不再直接充当系统级 Transaction ID。
 
 CSV 字段为：
 
@@ -141,6 +143,22 @@ source_index
 
 `read_transactions_csv()` 会严格校验 header、字段完整性、日期、金额、`source_index`、重复 ID、编码和可读性，并在错误中包含路径、行号和相关字段。
 
+## CMB Source Record 与 Transaction
+
+`CmbTransaction` 继续承担 CMB Email / CSV 边界的数据契约；进入正式主链后，`CmbSourceAdapter` 会把它无损转换为 `SourceRecord`。`CmbReconciler` 再建立独立的系统 Transaction 与 Source Link。
+
+当前 Transaction Core 只保存：
+
+```text
+id
+type
+date
+amount
+currency
+```
+
+原始 description、`source_email`、`source_index`、Merchant 和 Category 都不复制进 Transaction Core。CMB 来源当前是对应信用卡财务事实的 authoritative Source；同一 CMB Source Record 重跑保持幂等。当前阶段尚未实现 Manual Source 的跨来源 Transaction matching。
+
 ## Merchant Mapping
 
 正式 Mapping 与交易事实分开维护，不会把标准商户、分类或复核状态写回 `transactions.csv`。
@@ -150,15 +168,18 @@ source_index
 ```text
 description → merchant_name
 merchant_name → default category
-transaction_id → override category
+legacy CMB source id → override category
 ```
+
+为兼容已经人工审核的 `transaction_category_overrides.jsonl`，文件格式暂不迁移。运行时先通过 Source Link 把旧 `transaction_id` 字段中的 CMB Source Record ID 绑定到当前系统 Transaction ID，再应用单笔 category override。
 
 运行顺序为：
 
 ```text
 description 匹配 merchant
 → 获得 merchant 默认 category
-→ transaction_id 命中 override 时只覆盖该笔最终 category
+→ legacy override 绑定到 system Transaction
+→ 命中 override 时只覆盖该笔最终 category
 ```
 
 主要规则：
@@ -170,17 +191,17 @@ description 匹配 merchant
 - 默认 category 为 `综合购物` 且净消费金额达到高额阈值时会产生非阻断复核信号；
 - 复核信号只存在于运行结果中，不写回正式配置。
 
-运行原始完整交易与 Mapping 的只读一致性检查：
+运行完整 CMB domain snapshot 的只读诊断与 Mapping / override 一致性检查：
 
 ```powershell
 $env:PYTHONPATH="src"; uv run python -m family_spending.transaction_resolution
 ```
 
-该入口不处理退款、不生成报告、不修改交易或 Mapping。
+该入口会构建与统计主链一致的 CMB domain snapshot，并执行退款净额计算，以便高额 `综合购物` 复核使用净消费金额；它不写 `spending_statistics.json`，也不修改交易或正式 Mapping。
 
 ## 退款归并
 
-正式统计在应用交易分类前调用 `reconcile_refunds()`。
+正式统计在 Source Record → Transaction → Enrichment 建立后调用 `reconcile_refunds()`。退款匹配会读取 authoritative Source Record 的 description，并可使用当前 Merchant identity 作为辅助证据；Category 和 transaction override 不参与退款身份判断。
 
 原始金额方向：
 
@@ -197,9 +218,9 @@ amount = 0：忽略并单独计数
 3. 若仍未命中，再按同 description 历史消费从近到远累计扣减；
 4. 无法匹配的剩余退款不进入统计，只记录数量和金额摘要。
 
-退款只能抵消历史消费，不能抵消未来交易。Merchant 回退只使用 `description → merchant_name` 身份，不使用 category 或 transaction override。
+退款只能抵消历史消费，不能抵消未来交易。Merchant 回退只使用当前 Merchant identity，不使用 Category 或 transaction override。
 
-部分退款保留原消费的 ID、日期、description 和来源；完全退款的消费不进入后续 Mapping、统计或交易笔数。退款归并后的净消费统一转换为下游既有契约使用的负数金额。
+退款归并不会改写 Transaction Core。原始消费保持正数、退款保持负数；下游得到独立的 `NetConsumption(transaction_id, spending)` 派生结果，其中 `spending` 为正的剩余净消费金额。部分退款仍引用原消费 Transaction；完全退款的 Transaction 和 Source Record 继续存在并参与正式 override 一致性校验，但不会产生 NetConsumption，也不进入消费统计笔数。
 
 ## 生成消费统计
 
@@ -212,9 +233,12 @@ $env:PYTHONPATH="src"; uv run python -m family_spending.statistics_generation
 ```text
 read_transactions_csv()
 → load_merchant_mappings()
-→ validate_transaction_overrides() 针对原始完整交易
-→ reconcile_refunds()
-→ resolve_transactions() 针对退款后的净消费
+→ build_cmb_domain_state()
+   → CMB Adapter / Source Record
+   → CMB Reconciliation / Transaction / Source Link
+   → legacy override 绑定
+   → Merchant / Category Enrichment
+→ reconcile_refunds() → NetConsumption
 → aggregate_spending()
 → load_month_coverage() 读取账单文件名覆盖
 → serialize_spending_statistics()
@@ -388,19 +412,25 @@ scripts/
 └── inspect_mapping_candidates.py
 
 src/family_spending/
-├── mapping.py
+├── source_records.py                 # SourceRecord + SourceAdapter 扩展契约
+├── transactions.py                   # Transaction Core + Source Link / 索引
+├── reconciliation.py                 # Reconciler 扩展契约 + CMB 实现
+├── enrichment.py                     # Enrichment 契约 + 金额相关复核规则
+├── mapping.py                        # 正式 Mapping loader + Mapping Enrichment resolver
 ├── month_coverage.py
-├── refund_reconciliation.py
+├── refund_reconciliation.py          # Transaction facts → NetConsumption 派生视图
 ├── settings.py
-├── spending_statistics.py
-├── statistics_generation.py
+├── spending_statistics.py            # AnalyticsProcessor + 消费统计
+├── statistics_generation.py          # 当前 CMB 主链 orchestrator
 ├── statistics_serialization.py
-├── transaction_resolution.py
+├── transaction_resolution.py         # 共享 CMB domain snapshot + 诊断 CLI
 └── ingestion/
     ├── imap_163.py
-    └── cmb_email_transactions.py
+    ├── cmb_email_transactions.py
+    └── cmb_source_adapter.py
 
 tests/
+├── test_cmb_domain.py
 ├── test_cmb_email_transactions.py
 ├── test_imap_163.py
 ├── test_local_dashboard.py
