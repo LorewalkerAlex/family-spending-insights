@@ -1,4 +1,4 @@
-# Family Spending Insights
+﻿# Family Spending Insights
 
 用于在本地获取、整理和分析家庭共同消费数据。
 
@@ -198,6 +198,73 @@ $env:PYTHONPATH="src"; uv run python -m family_spending.transaction_resolution
 ```
 
 该入口会构建与统计主链一致的 CMB domain snapshot，并执行退款净额计算，以便高额 `综合购物` 复核使用净消费金额；它不写 `spending_statistics.json`，也不修改交易或正式 Mapping。
+
+## Manual Source 与跨来源 Reconciliation
+
+当前已经实现第二个正式输入入口 Manual Source，用于补充非信用卡交易，或在信用卡账单到达前先记录交易。
+
+最小输入：
+
+~~~text
+必填：
+type
+date
+amount
+
+可选：
+merchant
+category
+note
+~~~
+
+本地命令行入口：
+
+~~~powershell
+$env:PYTHONPATH="src"
+uv run python -m family_spending.manual_input `
+    --type expense `
+    --date 2026-08-08 `
+    --amount 88.50 `
+    --merchant "示例商户" `
+    --category "餐饮美食" `
+    --note "示例"
+~~~
+
+Manual Input 会主动执行完整下游 Pipeline：
+
+~~~text
+Manual Input
+→ Manual Source Adapter
+→ Source Record
+→ Reconciliation
+→ Transaction
+→ Enrichment
+→ Refund / Net Consumption
+→ Spending Statistics
+→ schema v2 JSON
+~~~
+
+跨来源 Reconciliation 当前规则：
+
+- Manual Source 创建新 Transaction 前，会检查已有 CMB-backed 与 Manual-backed Transaction。
+- 找到唯一对应 Transaction 时复用现有 Transaction，不创建重复交易。
+- 无匹配时才创建新的 Transaction。
+- 多个候选且无法唯一判断时，拒绝该次 Manual Input。
+- Category 完全不参与 Transaction identity 判断。
+- Merchant 只作为辅助匹配证据。
+- CMB 后续到达并匹配 manual-only Transaction 时，复用同一个 Transaction identity，并由 CMB 成为该信用卡交易核心财务事实的 authoritative Source。
+- Manual 提供的 Merchant、Category、Note 等用户补充信息与 Transaction Core 分离，不会因为 CMB 成为 authoritative Source 而被作为 Transaction 财务事实覆盖。
+
+本地运行状态包括：
+
+~~~text
+data/manual_source_records.jsonl
+data/transaction_source_links.jsonl
+~~~
+
+这些都属于本地运行数据，不提交到 Git。
+
+当前 Spending Analytics 仍只统计 expense。Manual Source 可以录入 income，但 income 当前只保留为正式 Transaction，不进入现有消费统计。
 
 ## 退款归并
 

@@ -9,7 +9,9 @@ from typing import Any
 
 from family_spending.enrichment import (
     HIGH_VALUE_GENERAL_SHOPPING_REVIEW,
+    OTHER_EXPENSE_CATEGORY,
     OTHER_EXPENSE_REVIEW,
+    UNCLASSIFIED_CATEGORY,
     CategorySource,
     TransactionEnrichment,
     consumption_review_signals,
@@ -21,6 +23,7 @@ from family_spending.ingestion.cmb_email_transactions import (
     read_transactions_csv,
 )
 from family_spending.ingestion.cmb_source_adapter import CmbSourceAdapter
+from family_spending.manual_source import ManualSourceAdapter, ManualSourceEntry
 from family_spending.mapping import (
     MappingDataError,
     MappingEnrichmentResolver,
@@ -32,6 +35,8 @@ from family_spending.mapping import (
 )
 from family_spending.reconciliation import (
     CmbReconciler,
+    ManualReconciler,
+    ReconciliationContext,
     ReconciliationError,
     ReconciliationResult,
 )
@@ -50,13 +55,17 @@ from family_spending.source_records import SourceRecord
 from family_spending.transactions import (
     Transaction,
     TransactionDataError,
+    TransactionSourceLink,
     index_authoritative_source_records,
+    index_source_records,
     index_transactions,
+    rebuild_transactions_from_source_links,
 )
 
 CATEGORY_SOURCES: tuple[CategorySource, ...] = (
     "merchant_default",
     "transaction_override",
+    "manual_override",
     "unclassified",
 )
 REVIEW_SIGNALS = (
@@ -66,11 +75,21 @@ REVIEW_SIGNALS = (
 
 
 class TransactionResolutionError(RuntimeError):
-    """Raised when the complete CMB source, identity, and Enrichment snapshot is internally inconsistent."""
+    """Raised when the complete source, identity, and Enrichment snapshot is internally inconsistent."""
 
 
 @dataclass(frozen=True)
 class CmbDomainState:
+    source_records: tuple[SourceRecord[Any], ...]
+    reconciliation: ReconciliationResult
+    transactions_by_id: Mapping[str, Transaction]
+    source_records_by_transaction_id: Mapping[str, SourceRecord[Any]]
+    enrichments: tuple[TransactionEnrichment, ...]
+    enrichments_by_transaction_id: Mapping[str, TransactionEnrichment]
+
+
+@dataclass(frozen=True)
+class HouseholdDomainState:
     source_records: tuple[SourceRecord[Any], ...]
     reconciliation: ReconciliationResult
     transactions_by_id: Mapping[str, Transaction]
@@ -96,13 +115,231 @@ class TransactionResolutionBatch:
     net_consumption: tuple[NetConsumption, ...]
 
 
-def build_cmb_domain_state(
-    raw_transactions: tuple[CmbTransaction, ...],
+@dataclass(frozen=True)
+class _ManualEnrichmentInput:
+    merchant_name: str | None = None
+    category: str | None = None
+    note: str | None = None
+
+
+def _retain_current_link_groups(
+    links: tuple[TransactionSourceLink, ...],
+    source_records: tuple[SourceRecord[Any], ...],
+) -> tuple[TransactionSourceLink, ...]:
+    """Drop a stale Transaction relation as a unit when its authoritative source no longer exists.
+
+    Source data owns existence. If regeneration removes the authoritative source, keeping only
+    old supporting links would preserve a Transaction that the current upstream state no longer
+    justifies. Those remaining records will be reconciled again in this pipeline run.
+    """
+    current_source_ids = {record.id for record in source_records}
+    links_by_transaction: dict[str, list[TransactionSourceLink]] = {}
+    for link in links:
+        links_by_transaction.setdefault(link.transaction_id, []).append(link)
+
+    valid_transactions = {
+        transaction_id
+        for transaction_id, transaction_links in links_by_transaction.items()
+        if any(
+            link.role == "authoritative" and link.source_record_id in current_source_ids
+            for link in transaction_links
+        )
+    }
+    return tuple(
+        link
+        for link in links
+        if link.transaction_id in valid_transactions
+        and link.source_record_id in current_source_ids
+    )
+
+
+def _manual_enrichment_inputs(
+    entries: tuple[ManualSourceEntry, ...],
+    links: tuple[TransactionSourceLink, ...],
+) -> Mapping[str, _ManualEnrichmentInput]:
+    """Fold linked Manual inputs in entry order so later explicit user values refine earlier optional values."""
+    transaction_by_source = {link.source_record_id: link.transaction_id for link in links}
+    values: dict[str, _ManualEnrichmentInput] = {}
+    for entry in entries:
+        transaction_id = transaction_by_source.get(entry.id)
+        if transaction_id is None:
+            continue
+        previous = values.get(transaction_id, _ManualEnrichmentInput())
+        values[transaction_id] = _ManualEnrichmentInput(
+            merchant_name=(
+                entry.merchant_name
+                if entry.merchant_name is not None
+                else previous.merchant_name
+            ),
+            category=entry.category if entry.category is not None else previous.category,
+            note=entry.note if entry.note is not None else previous.note,
+        )
+    return MappingProxyType(values)
+
+
+def _merchant_hints(
+    transactions: tuple[Transaction, ...],
+    source_records: tuple[SourceRecord[Any], ...],
+    links: tuple[TransactionSourceLink, ...],
+    manual_entries: tuple[ManualSourceEntry, ...],
     mappings: MerchantMappings,
-) -> CmbDomainState:
-    """Build one domain snapshot so CLI and statistics share identity and Enrichment semantics."""
-    source_records = CmbSourceAdapter().adapt_all(raw_transactions)
-    reconciliation = CmbReconciler().reconcile(source_records)
+) -> Mapping[str, str | None]:
+    """Expose current Merchant only as Reconciliation evidence without resolving or copying Category."""
+    authoritative = index_authoritative_source_records(source_records, links)
+    manual_values = _manual_enrichment_inputs(manual_entries, links)
+    hints: dict[str, str | None] = {}
+    for transaction in transactions:
+        manual_value = manual_values.get(transaction.id)
+        if manual_value is not None and manual_value.merchant_name is not None:
+            hints[transaction.id] = manual_value.merchant_name
+            continue
+        source_record = authoritative[transaction.id]
+        hints[transaction.id] = (
+            mappings.description_to_merchant.get(source_record.description)
+            if source_record.description is not None
+            else None
+        )
+    return MappingProxyType(hints)
+
+
+def _record_merchant_hints(
+    source_records: tuple[SourceRecord[Any], ...],
+    manual_entries: tuple[ManualSourceEntry, ...],
+    mappings: MerchantMappings,
+) -> Mapping[str, str | None]:
+    """Resolve only the Merchant signal needed for candidate matching; Category remains outside identity decisions."""
+    manual_by_id = {entry.id: entry for entry in manual_entries}
+    hints: dict[str, str | None] = {}
+    for record in source_records:
+        manual = manual_by_id.get(record.id)
+        if manual is not None:
+            hints[record.id] = manual.merchant_name
+        elif record.description is not None:
+            hints[record.id] = mappings.description_to_merchant.get(record.description)
+        else:
+            hints[record.id] = None
+    return MappingProxyType(hints)
+
+
+def _apply_manual_enrichment(
+    base: TransactionEnrichment,
+    manual: _ManualEnrichmentInput | None,
+    mappings: MerchantMappings,
+) -> TransactionEnrichment:
+    """Overlay explicit Manual Enrichment while leaving Transaction Core and source authority untouched."""
+    if manual is None:
+        return base
+
+    merchant_name = manual.merchant_name if manual.merchant_name is not None else base.merchant_name
+    display_name = merchant_name or base.display_name
+    default_category = base.default_category
+    category = base.category
+    category_source = base.category_source
+    review_signals = base.review_signals
+
+    if manual.merchant_name is not None:
+        new_default = mappings.merchant_to_category.get(manual.merchant_name)
+        default_category = new_default
+        if base.category_source != "transaction_override" and manual.category is None:
+            if new_default is None:
+                category = UNCLASSIFIED_CATEGORY
+                category_source = "unclassified"
+                review_signals = ()
+            else:
+                category = new_default
+                category_source = "merchant_default"
+                review_signals = (
+                    (OTHER_EXPENSE_REVIEW,)
+                    if new_default == OTHER_EXPENSE_CATEGORY
+                    else ()
+                )
+
+    if manual.category is not None:
+        if manual.category not in mappings.categories:
+            raise MappingResolutionError(
+                f"Manual category {manual.category!r} is not defined in {mappings.categories_path}"
+            )
+        category = manual.category
+        category_source = "manual_override"
+        review_signals = ()
+
+    is_unclassified = category == UNCLASSIFIED_CATEGORY
+    return TransactionEnrichment(
+        transaction_id=base.transaction_id,
+        merchant_name=merchant_name,
+        display_name=display_name,
+        default_category=default_category,
+        category=category,
+        category_source=category_source,
+        is_unclassified=is_unclassified,
+        review_signals=review_signals,
+        note=manual.note if manual.note is not None else base.note,
+    )
+
+
+def build_household_domain_state(
+    raw_cmb_transactions: tuple[CmbTransaction, ...],
+    manual_entries: tuple[ManualSourceEntry, ...],
+    mappings: MerchantMappings,
+    *,
+    existing_links: tuple[TransactionSourceLink, ...] = (),
+) -> HouseholdDomainState:
+    """Run CMB and Manual Source through one source-aware pipeline while preserving prior Transaction identity links."""
+    cmb_records = CmbSourceAdapter().adapt_all(raw_cmb_transactions)
+    manual_records = ManualSourceAdapter().adapt_all(manual_entries)
+    source_records = cmb_records + manual_records
+    records_by_id = index_source_records(source_records)
+    record_merchants = _record_merchant_hints(source_records, manual_entries, mappings)
+
+    current_links = _retain_current_link_groups(existing_links, source_records)
+    existing_transactions = rebuild_transactions_from_source_links(
+        source_records,
+        current_links,
+    )
+    existing_merchants = _merchant_hints(
+        existing_transactions,
+        source_records,
+        current_links,
+        manual_entries,
+        mappings,
+    ) if existing_transactions else MappingProxyType({})
+
+    cmb_context = ReconciliationContext(
+        source_records_by_id=records_by_id,
+        merchant_by_transaction_id=existing_merchants,
+        merchant_by_source_record_id=record_merchants,
+    )
+    cmb_result = CmbReconciler().reconcile(
+        cmb_records,
+        existing_transactions=existing_transactions,
+        existing_links=current_links,
+        context=cmb_context,
+    )
+
+    merchants_after_cmb = _merchant_hints(
+        cmb_result.transactions,
+        source_records,
+        cmb_result.source_links,
+        manual_entries,
+        mappings,
+    )
+    manual_context = ReconciliationContext(
+        source_records_by_id=records_by_id,
+        merchant_by_transaction_id=merchants_after_cmb,
+        merchant_by_source_record_id=record_merchants,
+    )
+    manual_result = ManualReconciler().reconcile(
+        manual_records,
+        existing_transactions=cmb_result.transactions,
+        existing_links=cmb_result.source_links,
+        context=manual_context,
+    )
+
+    reconciliation = ReconciliationResult(
+        transactions=manual_result.transactions,
+        source_links=manual_result.source_links,
+        decisions=cmb_result.decisions + manual_result.decisions,
+    )
     transactions_by_id = index_transactions(reconciliation.transactions)
     source_records_by_transaction_id = index_authoritative_source_records(
         source_records,
@@ -114,25 +351,49 @@ def build_cmb_domain_state(
             reconciliation.source_links,
         )
     except UnboundTransactionOverrideError as exc:
-        # Missing legacy override IDs have historically been a complete-transaction-set
-        # validation error, so keep that public behavior while binding through Source Records.
         raise TransactionResolutionError(str(exc)) from exc
-    resolver = MappingEnrichmentResolver(mappings, bound_overrides)
-    enrichments = resolve_enrichments(
-        reconciliation.transactions,
+
+    base_resolver = MappingEnrichmentResolver(mappings, bound_overrides)
+    base_enrichments = resolve_enrichments(
+        manual_result.transactions,
         source_records_by_transaction_id,
-        resolver,
+        base_resolver,
+    )
+    manual_values = _manual_enrichment_inputs(manual_entries, reconciliation.source_links)
+    enrichments = tuple(
+        _apply_manual_enrichment(
+            enrichment,
+            manual_values.get(enrichment.transaction_id),
+            mappings,
+        )
+        for enrichment in base_enrichments
     )
     enrichments_by_transaction_id = MappingProxyType(
         {item.transaction_id: item for item in enrichments}
     )
-    return CmbDomainState(
+    return HouseholdDomainState(
         source_records=source_records,
         reconciliation=reconciliation,
         transactions_by_id=transactions_by_id,
         source_records_by_transaction_id=source_records_by_transaction_id,
         enrichments=enrichments,
         enrichments_by_transaction_id=enrichments_by_transaction_id,
+    )
+
+
+def build_cmb_domain_state(
+    raw_transactions: tuple[CmbTransaction, ...],
+    mappings: MerchantMappings,
+) -> CmbDomainState:
+    """Keep the established CMB-only entrypoint while routing it through the generalized household pipeline."""
+    state = build_household_domain_state(raw_transactions, (), mappings)
+    return CmbDomainState(
+        source_records=state.source_records,
+        reconciliation=state.reconciliation,
+        transactions_by_id=state.transactions_by_id,
+        source_records_by_transaction_id=state.source_records_by_transaction_id,
+        enrichments=state.enrichments,
+        enrichments_by_transaction_id=state.enrichments_by_transaction_id,
     )
 
 
@@ -216,7 +477,7 @@ def resolve_transactions_from_files(
     categories_path: Path = CATEGORIES_FILE,
     overrides_path: Path = TRANSACTION_CATEGORY_OVERRIDES_FILE,
 ) -> TransactionResolutionBatch:
-    """Keep the CLI file-based while routing decisions through the shared domain pipeline."""
+    """Keep the legacy diagnostic CLI CMB-only while production statistics can consume the wider household pipeline."""
     transactions = read_transactions_csv(transactions_path)
     mappings = load_merchant_mappings(
         merchants_path,
@@ -227,7 +488,7 @@ def resolve_transactions_from_files(
 
 
 def _format_transaction(item: TransactionResolutionItem) -> str:
-    """Show both source and system IDs because their separation is the key invariant introduced by this migration."""
+    """Show both source and system IDs because their separation is a core identity invariant."""
     transaction = item.transaction
     source_record = item.source_record
     enrichment = item.enrichment
@@ -250,6 +511,7 @@ def format_transaction_resolution_report(
         f"Transactions: {len(batch.transactions)}",
         f"Merchant defaults: {batch.category_source_counts['merchant_default']}",
         f"Transaction overrides: {batch.category_source_counts['transaction_override']}",
+        f"Manual overrides: {batch.category_source_counts['manual_override']}",
         f"Unclassified: {batch.category_source_counts['unclassified']}",
         "",
         "Review signals:",

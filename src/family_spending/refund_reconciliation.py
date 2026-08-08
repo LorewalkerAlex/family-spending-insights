@@ -85,8 +85,8 @@ def reconcile_refunds(
     source_records_by_transaction_id: Mapping[str, SourceRecord[Any]],
     enrichments_by_transaction_id: Mapping[str, TransactionEnrichment],
 ) -> RefundReconciliationResult:
-    """Net refunds into a derived spending view while leaving authoritative Transaction amounts unchanged."""
-    balances_by_description: dict[str | None, list[_ConsumptionBalance]] = {}
+    """Net expense refunds while leaving income and authoritative Transaction facts untouched."""
+    balances_by_description: dict[str, list[_ConsumptionBalance]] = {}
     balances_by_merchant: dict[str, list[_ConsumptionBalance]] = {}
     all_balances: list[_ConsumptionBalance] = []
     zero_amount_transactions = 0
@@ -101,9 +101,13 @@ def reconcile_refunds(
         key=lambda item: (item[1].transaction_date, item[0]),
     )
     for original_index, transaction in ordered_transactions:
+        # Spending analytics consumes expense facts only. Income remains a valid Transaction
+        # in the household domain but is intentionally outside refund/net-consumption v1.
+        if transaction.transaction_type == "income":
+            continue
         if transaction.transaction_type != "expense":
             raise RefundReconciliationError(
-                f"Refund reconciliation currently accepts expense Transactions only: {transaction.id!r}"
+                f"Unsupported transaction type for refund reconciliation: {transaction.transaction_type!r}"
             )
         try:
             source_record = source_records_by_transaction_id[transaction.id]
@@ -124,7 +128,10 @@ def reconcile_refunds(
             continue
 
         description = source_record.description
-        description_balances = balances_by_description.setdefault(description, [])
+        # Manual Source may have no raw description. Its unique source identity must not
+        # accidentally make every description-less purchase/refund share one fallback bucket.
+        description_key = description if description is not None else f"source:{source_record.id}"
+        description_balances = balances_by_description.setdefault(description_key, [])
         merchant_name = enrichment.merchant_name
         if amount > ZERO:
             balance = _ConsumptionBalance(

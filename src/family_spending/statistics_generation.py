@@ -8,6 +8,10 @@ from family_spending.ingestion.cmb_email_transactions import (
     CmbTransactionCsvError,
     read_transactions_csv,
 )
+from family_spending.manual_source import (
+    ManualSourceDataError,
+    read_manual_source_entries,
+)
 from family_spending.mapping import MappingDataError, MappingResolutionError, load_merchant_mappings
 from family_spending.month_coverage import MonthCoverageError, load_month_coverage
 from family_spending.reconciliation import ReconciliationError
@@ -20,6 +24,11 @@ from family_spending.settings import (
     TRANSACTION_CATEGORY_OVERRIDES_FILE,
     TRANSACTIONS_FILE,
 )
+from family_spending.source_link_store import (
+    SourceLinkStoreError,
+    read_transaction_source_links,
+    write_transaction_source_links,
+)
 from family_spending.spending_statistics import SpendingStatisticsError, aggregate_spending
 from family_spending.statistics_serialization import (
     StatisticsSerializationError,
@@ -28,7 +37,7 @@ from family_spending.statistics_serialization import (
 )
 from family_spending.transaction_resolution import (
     TransactionResolutionError,
-    build_cmb_domain_state,
+    build_household_domain_state,
 )
 from family_spending.transactions import TransactionDataError
 
@@ -53,6 +62,11 @@ class StatisticsGenerationSummary:
     output_path: Path
 
 
+def _default_sibling(path: Path, filename: str) -> Path:
+    """Keep test and alternate data roots isolated by deriving new local state beside the selected CMB CSV."""
+    return path.parent / filename
+
+
 def generate_spending_statistics(
     transactions_path: Path = TRANSACTIONS_FILE,
     merchants_path: Path = MERCHANTS_FILE,
@@ -60,15 +74,29 @@ def generate_spending_statistics(
     overrides_path: Path = TRANSACTION_CATEGORY_OVERRIDES_FILE,
     output_path: Path = SPENDING_STATISTICS_FILE,
     emails_dir: Path = EMAILS_DIR,
+    manual_source_path: Path | None = None,
+    source_links_path: Path | None = None,
 ) -> StatisticsGenerationSummary:
-    """Rebuild from source facts so the migration changes structure without hidden state."""
+    """Rebuild the downstream spending projection from current CMB, Manual, identity-link, and Enrichment state."""
+    if manual_source_path is None:
+        manual_source_path = _default_sibling(transactions_path, "manual_source_records.jsonl")
+    if source_links_path is None:
+        source_links_path = _default_sibling(transactions_path, "transaction_source_links.jsonl")
+
     raw_transactions = read_transactions_csv(transactions_path)
+    manual_entries = read_manual_source_entries(manual_source_path)
+    existing_links = read_transaction_source_links(source_links_path)
     mappings = load_merchant_mappings(
         merchants_path,
         categories_path,
         overrides_path,
     )
-    state = build_cmb_domain_state(raw_transactions, mappings)
+    state = build_household_domain_state(
+        raw_transactions,
+        manual_entries,
+        mappings,
+        existing_links=existing_links,
+    )
     refund_result = reconcile_refunds(
         state.reconciliation.transactions,
         state.source_records_by_transaction_id,
@@ -84,6 +112,10 @@ def generate_spending_statistics(
         emails_dir,
     )
     payload = serialize_spending_statistics(statistics, month_coverage)
+
+    # Persist identity relations only after the whole domain/analytics pipeline has validated.
+    # Both writers are atomic individually, so a failed validation never changes either file.
+    write_transaction_source_links(state.reconciliation.source_links, source_links_path)
     write_spending_statistics_json(payload, output_path)
 
     shown_month_names = {
@@ -123,7 +155,7 @@ def generate_spending_statistics(
 def format_statistics_generation_report(
     summary: StatisticsGenerationSummary,
 ) -> str:
-    """Expose the same reconciliation counters as before so real-data regression remains easy to compare manually."""
+    """Expose the established reconciliation counters so real-data regression stays easy to compare manually."""
     return "\n".join(
         (
             f"Raw transactions: {summary.raw_transactions}",
@@ -147,11 +179,13 @@ def format_statistics_generation_report(
 
 
 def main() -> None:
-    """Fail atomically so a successful rebuild always represents one coherent snapshot."""
+    """Fail cleanly on known source/domain errors so an operator never mistakes a partial rebuild for success."""
     try:
         summary = generate_spending_statistics()
     except (
         CmbTransactionCsvError,
+        ManualSourceDataError,
+        SourceLinkStoreError,
         MappingDataError,
         MappingResolutionError,
         ReconciliationError,

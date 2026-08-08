@@ -18,6 +18,7 @@ HIGH_VALUE_GENERAL_SHOPPING_REVIEW = "high_value_general_shopping_review"
 CategorySource = Literal[
     "merchant_default",
     "transaction_override",
+    "manual_override",
     "unclassified",
 ]
 
@@ -32,6 +33,7 @@ class TransactionEnrichment:
     category_source: CategorySource
     is_unclassified: bool
     review_signals: tuple[str, ...]
+    note: str | None = None
 
 
 class EnrichmentResolver(ABC):
@@ -51,7 +53,7 @@ def consumption_review_signals(
     """Evaluate amount-dependent review rules after refund netting because raw CMB amounts are not net spending."""
     if spending <= Decimal("0"):
         raise ValueError(f"Net consumption spending must be positive, got {spending!r}")
-    if enrichment.category_source == "transaction_override":
+    if enrichment.category_source in ("transaction_override", "manual_override"):
         return ()
     signals = list(enrichment.review_signals)
     if (
