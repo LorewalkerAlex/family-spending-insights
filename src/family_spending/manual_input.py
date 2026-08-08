@@ -5,7 +5,16 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-
+from family_spending.enrichment import (
+    update_category_enrichment_state,
+    update_merchant_enrichment_state,
+    update_note_enrichment_state,
+)
+from family_spending.enrichment_store import (
+    EnrichmentStateStoreError,
+    read_enrichment_states,
+    write_enrichment_states,
+)
 from family_spending.ingestion.cmb_email_transactions import CmbTransactionCsvError, read_transactions_csv
 from family_spending.manual_source import (
     MANUAL_SOURCE_RECORDS_FILE,
@@ -39,7 +48,6 @@ from family_spending.statistics_generation import generate_spending_statistics
 from family_spending.statistics_serialization import StatisticsSerializationError
 from family_spending.transaction_resolution import TransactionResolutionError, build_household_domain_state
 from family_spending.transactions import TransactionDataError
-
 
 @dataclass(frozen=True)
 class ManualInputResult:
@@ -78,37 +86,63 @@ def submit_manual_input(
     overrides_path: Path = TRANSACTION_CATEGORY_OVERRIDES_FILE,
     output_path: Path = SPENDING_STATISTICS_FILE,
     emails_dir: Path = EMAILS_DIR,
+    enrichment_state_path: Path | None = None,
 ) -> ManualInputResult:
     """Validate Manual input against current sources, persist it, then immediately run the downstream statistics pipeline."""
+    if enrichment_state_path is None:
+        enrichment_state_path = transactions_path.parent / "enrichment_state.jsonl"
     raw_cmb = read_transactions_csv(transactions_path)
     existing_manual = read_manual_source_entries(manual_source_path)
     existing_links = read_transaction_source_links(source_links_path)
+    existing_enrichment_states = read_enrichment_states(enrichment_state_path)
     mappings = load_merchant_mappings(merchants_path, categories_path, overrides_path)
-
     candidate_entries = existing_manual + (entry,)
     state = build_household_domain_state(
         raw_cmb,
         candidate_entries,
         mappings,
         existing_links=existing_links,
+        existing_enrichment_states={
+            item.transaction_id: item for item in existing_enrichment_states
+        },
     )
     decision = next(
         item for item in state.reconciliation.decisions if item.source_record_id == entry.id
     )
-
-    # Persist only after reconciliation and Enrichment validation succeeds. The following
-    # downstream rebuild uses the same source files and relation state just validated above.
+    updated_state = state.enrichment_states_by_transaction_id[decision.transaction_id]
+    if entry.merchant_name is not None:
+        updated_state = update_merchant_enrichment_state(
+            updated_state,
+            merchant_name=entry.merchant_name,
+            default_category=mappings.merchant_to_category.get(entry.merchant_name),
+        )
+    if entry.category is not None:
+        if entry.category not in mappings.categories:
+            raise MappingResolutionError(
+                f"Manual category {entry.category!r} is not defined in {mappings.categories_path}"
+            )
+        updated_state = update_category_enrichment_state(updated_state, entry.category)
+    if entry.note is not None:
+        updated_state = update_note_enrichment_state(updated_state, entry.note)
+    updated_enrichment_states = tuple(
+        updated_state if item.transaction_id == decision.transaction_id else item
+        for item in state.enrichment_states
+    )
+    # A new Manual Source action may explicitly refine current Enrichment. Historical Manual
+    # metadata is not replayed over later Application/API edits on ordinary rebuilds.
     write_manual_source_entries(candidate_entries, manual_source_path)
     write_transaction_source_links(state.reconciliation.source_links, source_links_path)
+    write_enrichment_states(updated_enrichment_states, enrichment_state_path)
     generate_spending_statistics(
-        transactions_path,
-        merchants_path,
-        categories_path,
-        overrides_path,
-        output_path,
-        emails_dir,
-        manual_source_path,
-        source_links_path,
+        transactions_path=transactions_path,
+        merchants_path=merchants_path,
+        categories_path=categories_path,
+        overrides_path=overrides_path,
+        output_path=output_path,
+        emails_dir=emails_dir,
+        manual_source_path=manual_source_path,
+        source_links_path=source_links_path,
+        enrichment_state_path=enrichment_state_path,
     )
     return ManualInputResult(
         source_record_id=entry.id,
@@ -146,6 +180,7 @@ def main() -> None:
         CmbTransactionCsvError,
         ManualSourceDataError,
         SourceLinkStoreError,
+        EnrichmentStateStoreError,
         MappingDataError,
         MappingResolutionError,
         ReconciliationError,

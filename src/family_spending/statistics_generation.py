@@ -3,7 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-
+from family_spending.enrichment_store import (
+    EnrichmentStateStoreError,
+    read_enrichment_states,
+    write_enrichment_states,
+)
 from family_spending.ingestion.cmb_email_transactions import (
     CmbTransactionCsvError,
     read_transactions_csv,
@@ -15,7 +19,7 @@ from family_spending.manual_source import (
 from family_spending.mapping import MappingDataError, MappingResolutionError, load_merchant_mappings
 from family_spending.month_coverage import MonthCoverageError, load_month_coverage
 from family_spending.reconciliation import ReconciliationError
-from family_spending.refund_reconciliation import RefundReconciliationError, reconcile_refunds
+from family_spending.refund_reconciliation import RefundReconciliationError
 from family_spending.settings import (
     CATEGORIES_FILE,
     EMAILS_DIR,
@@ -29,18 +33,17 @@ from family_spending.source_link_store import (
     read_transaction_source_links,
     write_transaction_source_links,
 )
-from family_spending.spending_statistics import SpendingStatisticsError, aggregate_spending
-from family_spending.statistics_serialization import (
-    StatisticsSerializationError,
-    serialize_spending_statistics,
-    write_spending_statistics_json,
+from family_spending.spending_projection import (
+    build_spending_projection,
+    write_spending_projection,
 )
+from family_spending.spending_statistics import SpendingStatisticsError
+from family_spending.statistics_serialization import StatisticsSerializationError
 from family_spending.transaction_resolution import (
     TransactionResolutionError,
     build_household_domain_state,
 )
 from family_spending.transactions import TransactionDataError
-
 
 @dataclass(frozen=True)
 class StatisticsGenerationSummary:
@@ -76,16 +79,19 @@ def generate_spending_statistics(
     emails_dir: Path = EMAILS_DIR,
     manual_source_path: Path | None = None,
     source_links_path: Path | None = None,
+    enrichment_state_path: Path | None = None,
 ) -> StatisticsGenerationSummary:
     """Rebuild the downstream spending projection from current CMB, Manual, identity-link, and Enrichment state."""
     if manual_source_path is None:
         manual_source_path = _default_sibling(transactions_path, "manual_source_records.jsonl")
     if source_links_path is None:
         source_links_path = _default_sibling(transactions_path, "transaction_source_links.jsonl")
-
+    if enrichment_state_path is None:
+        enrichment_state_path = _default_sibling(transactions_path, "enrichment_state.jsonl")
     raw_transactions = read_transactions_csv(transactions_path)
     manual_entries = read_manual_source_entries(manual_source_path)
     existing_links = read_transaction_source_links(source_links_path)
+    existing_enrichment_states = read_enrichment_states(enrichment_state_path)
     mappings = load_merchant_mappings(
         merchants_path,
         categories_path,
@@ -96,61 +102,40 @@ def generate_spending_statistics(
         manual_entries,
         mappings,
         existing_links=existing_links,
+        existing_enrichment_states={
+            item.transaction_id: item for item in existing_enrichment_states
+        },
     )
-    refund_result = reconcile_refunds(
+    projection = build_spending_projection(
         state.reconciliation.transactions,
+        state.transactions_by_id,
         state.source_records_by_transaction_id,
         state.enrichments_by_transaction_id,
-    )
-    statistics = aggregate_spending(
-        refund_result.net_consumption,
-        state.transactions_by_id,
-        state.enrichments_by_transaction_id,
-    )
-    month_coverage = load_month_coverage(
-        tuple(month.month for month in statistics.months),
         emails_dir,
     )
-    payload = serialize_spending_statistics(statistics, month_coverage)
-
-    # Persist identity relations only after the whole domain/analytics pipeline has validated.
-    # Both writers are atomic individually, so a failed validation never changes either file.
+    # Persist source identity and current Enrichment only after all downstream validation succeeds.
     write_transaction_source_links(state.reconciliation.source_links, source_links_path)
-    write_spending_statistics_json(payload, output_path)
-
-    shown_month_names = {
-        coverage.month for coverage in month_coverage if coverage.show
-    }
-    shown_months = tuple(
-        month for month in statistics.months if month.month in shown_month_names
-    )
-    shown_net_spending = sum(
-        (month.total_spending for month in shown_months),
-        start=Decimal("0"),
-    )
-    unclassified_net_transactions = sum(
-        state.enrichments_by_transaction_id[item.transaction_id].is_unclassified
-        for item in refund_result.net_consumption
-    )
+    write_enrichment_states(state.enrichment_states, enrichment_state_path)
+    write_spending_projection(projection, output_path)
+    summary = projection.summary
     return StatisticsGenerationSummary(
         raw_transactions=len(raw_transactions),
-        zero_amount_transactions=refund_result.zero_amount_transactions,
-        refund_transactions=refund_result.refund_transactions,
-        same_merchant_refund_matches=refund_result.same_merchant_refund_matches,
-        same_merchant_matched_amount=refund_result.same_merchant_matched_amount,
-        net_consumption_transactions=len(refund_result.net_consumption),
-        fully_refunded_transactions=refund_result.fully_refunded_transactions,
-        partially_refunded_transactions=refund_result.partially_refunded_transactions,
-        unmatched_refund_count=refund_result.unmatched_refund_count,
-        unmatched_refund_amount=refund_result.unmatched_refund_amount,
-        unclassified_net_transactions=unclassified_net_transactions,
-        months=len(statistics.months),
-        total_net_spending=statistics.total_spending,
-        shown_months=len(shown_months),
-        shown_net_spending=shown_net_spending,
+        zero_amount_transactions=summary.zero_amount_transactions,
+        refund_transactions=summary.refund_transactions,
+        same_merchant_refund_matches=summary.same_merchant_refund_matches,
+        same_merchant_matched_amount=summary.same_merchant_matched_amount,
+        net_consumption_transactions=summary.net_consumption_transactions,
+        fully_refunded_transactions=summary.fully_refunded_transactions,
+        partially_refunded_transactions=summary.partially_refunded_transactions,
+        unmatched_refund_count=summary.unmatched_refund_count,
+        unmatched_refund_amount=summary.unmatched_refund_amount,
+        unclassified_net_transactions=summary.unclassified_net_transactions,
+        months=summary.months,
+        total_net_spending=summary.total_net_spending,
+        shown_months=summary.shown_months,
+        shown_net_spending=summary.shown_net_spending,
         output_path=output_path,
     )
-
 
 def format_statistics_generation_report(
     summary: StatisticsGenerationSummary,
@@ -186,6 +171,7 @@ def main() -> None:
         CmbTransactionCsvError,
         ManualSourceDataError,
         SourceLinkStoreError,
+        EnrichmentStateStoreError,
         MappingDataError,
         MappingResolutionError,
         ReconciliationError,

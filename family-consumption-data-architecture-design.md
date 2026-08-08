@@ -567,18 +567,26 @@ Analytics Update
 
 ## 14. 当前实现落地状态与后续迁移约束
 
-第一条 CMB Email 纵向切片已经迁入本 HLD 定义的领域边界。当前实现仍保留原有 Email、CSV、正式 Mapping、退款规则、统计 schema v2 与 Dashboard 契约，但内部主链已经完成以下分离：
+当前已经有三条真实纵向路径沿本 HLD 的边界落地：CMB Email、Manual Source / Cross-source Reconciliation，以及 Enrichment 可编辑 / Application API。现有 Email、CSV、正式 Mapping、退款规则、统计 schema v2 与 Dashboard 契约继续保留。
 
-1. 当前 `CmbTransaction` / `transactions.csv` 保持原有六字段来源契约，并无损进入 Source Record；
-2. CMB Source Record 的既有 `transaction_id` 作为来源身份保留，系统 Transaction 使用独立身份，并通过 Source Record → Transaction 关系连接；
-3. CMB Email 继续作为对应信用卡财务事实的 authoritative Source，同一 CMB Source Record 重跑保持幂等；
-4. Transaction Core 只保留当前 HLD 定义的财务事实，raw description 与 CMB provenance 继续留在 Source Record；
-5. 正式 Merchant / Category Mapping 作为当前 Enrichment 规则运行，不写回 Transaction Core；
-6. `transaction_category_overrides.jsonl` 暂时保留历史字段和数据不变，运行时通过 Source Record → Transaction 关系把既有 CMB ID 绑定到正确的系统 Transaction；
-7. 退款归并不再改写或伪造 Transaction 金额，而是生成独立的净消费派生结果；Merchant 可以继续作为退款匹配辅助证据，Category 与 transaction override 不参与身份判断；
-8. 消费统计与 Dashboard 继续作为下游 Analytics / Projection。相同正式数据下，迁移后的 schema v2 统计输出已与迁移前基线完成字节级一致性验证。
+当前实现状态：
 
-当前只完成 CMB Source 的第一条主链实现。Manual Source、跨来源 Transaction matching、统一 Application / API 和后续存储实现仍应在进入对应纵向切片时，沿本 HLD 的相同边界继续扩展；不要为了未来能力重新把 Source、Transaction、Enrichment 或 Analytics 合并。
+1. `CmbTransaction` / `transactions.csv` 保持原有六字段来源契约，并无损进入 CMB Source Record；CMB Source Record 的既有 `transaction_id` 作为来源身份保留，系统 Transaction 使用独立身份，并通过 Source Record → Transaction 关系连接。
+2. CMB Email 继续作为对应信用卡财务事实的 authoritative Source；同一 CMB Source Record 重跑保持幂等。Manual Source 使用独立 Source Record，并在创建 Transaction 前同时检查 CMB-backed 与 Manual-backed Transaction。
+3. Cross-source Reconciliation 保持 source-aware / asymmetric：Manual 唯一匹配时复用已有 Transaction，无匹配时创建新 Transaction，多候选无法唯一判断时拒绝；CMB 后到并匹配 manual-only Transaction 时复用同一 Transaction identity，并由 CMB 成为该信用卡财务事实的 authoritative Source。
+4. Category 完全不参与 Transaction identity；Merchant 只作为辅助匹配证据。Reconciliation 在实际执行时可以读取当前 Enrichment Merchant，但 Enrichment 修改不会反向重写既有 Source Record → Transaction 关系。
+5. Transaction Core 只保留当前 HLD 定义的财务事实；raw description、来源 provenance、Merchant、Category、Note 继续分属 Source / Enrichment，不重新合并进 Transaction。
+6. 当前 Enrichment 使用独立持久状态保存 `merchant_name`、`default_category`、`category`、`category_source` 与 `note`。正式 Mapping / Default / transaction-level override 用于初始化和规则解析；普通统计重建不会覆盖已经存在的当前 Enrichment 编辑。
+7. `transaction_category_overrides.jsonl` 暂时保留历史字段和数据不变，运行时通过 Source Record → Transaction 关系把既有 CMB ID 绑定到正确的系统 Transaction。用户显式 Category 修改作为当前 Enrichment 的 `manual_override` 保存；清除显式 Category 时恢复当前 Merchant default，若无可用 default 则进入运行态 `待分类`。
+8. Enrichment Merchant 修改在没有显式 Category override 时重新解析 Merchant default；已有显式 `transaction_override` 或 `manual_override` 不会被普通 Merchant 修改静默覆盖。
+9. 退款归并不改写或伪造 Transaction 金额，而是生成独立净消费派生结果；Merchant 可以作为退款匹配辅助证据，Category 不参与身份判断。`income` 可以作为正式 Transaction 存在，但当前不进入 spending refund analysis / spending statistics。
+10. Application 层已经提供 Transaction + 当前 Enrichment 查询，以及 Merchant / Category / Note 修改。Enrichment 修改只从 Enrichment 阶段继续重建 refund / analytics / projection，不重新执行 Source Adapter、Reconciliation 或 Transaction identity 形成过程。
+11. 本地 JSON HTTP transport 已作为最小真实客户端入口落地，负责把查询与 Enrichment 修改交给 Application；客户端不直接写 `enrichment_state.jsonl`、Mapping 或统计文件。
+12. Enrichment state 属于正式当前状态，`spending_statistics.json` 属于可重建 Projection。单次 Enrichment mutation 先生成并写入新的派生 Projection，最后原子替换 authoritative Enrichment state；若 authoritative 写入失败，实现会尝试恢复旧 Projection，避免正常故障路径留下半提交的业务状态。
+13. Source 在 Application 初始化后发生变化时，client-only 查询/编辑不会在旧 link 集合上静默继续；Application 会要求重新执行 `initialize()`，先完成 Source / Reconciliation / downstream 同步。
+14. 消费统计与 Dashboard 继续作为下游 Analytics / Projection。在相同正式 CMB-only 数据下，当前主链仍保持 schema v2 统计输出与迁移前正式基线字节级一致。
+
+当前本地文件持久化只是这一阶段的 concrete storage，不改变 HLD 的存储无关边界。后续若实现 Mapping / Default / Override 的统一编辑入口、更多 Source、正式客户端或新的存储实现，应继续沿相同 Domain / Application 边界扩展，不要为了新能力重新合并 Source、Transaction、Enrichment 或 Analytics。
 
 ---
 
@@ -622,4 +630,4 @@ Analytics Update
 - Application / API 为所有客户端提供统一的数据读取和修改入口；
 - 具体存储技术通过数据访问边界隔离，留到 Technical Design 决定。
 
-第一条 CMB Email 纵向切片已经验证这些边界可以在现有代码上落地；后续 Source、Application / API 与客户端能力应继续沿相同领域边界按完整纵向切片推进。
+CMB Email、Manual Source / Cross-source Reconciliation 与 Enrichment 可编辑 / Application API 三条纵向切片已经验证这些边界可以在现有代码上落地；后续 Source、Application / API 与客户端能力应继续沿相同领域边界按完整纵向切片推进。
