@@ -2,24 +2,22 @@
 
 用于在本地获取、整理和分析家庭共同消费数据。
 
-当前正式主链路以招商银行信用卡电子账单为事实来源，并已迁入第一版统一领域骨架：
+当前正式数据链路已经包含 CMB Email 与 Manual Source 两个入口，并共享第一版统一领域骨架：
 
 ```text
-163 邮箱
-→ data/emails/*.eml
-→ data/transactions.csv
-→ CMB Adapter / Source Record
-→ CMB Reconciliation
+CMB Email / Manual Input
+→ Source Adapter / Source Record
+→ source-aware Reconciliation
 → Transaction + Source Link
-→ Merchant / Category Enrichment
+→ current Enrichment
 → 退款归并生成 Net Consumption
-→ 月份 / category / merchant 统计
-→ 根据账单文件名判断自然月完整性与展示策略
-→ data/reports/spending_statistics.json
+→ 月份 / category / merchant Analytics
+→ data/reports/spending_statistics.json Projection
+→ Application / local JSON API
 → local_dashboard/
 ```
 
-项目当前已经实现邮件获取、CMB Source Record / Transaction 身份分离、正式 Merchant Mapping、退款归并、消费统计派生文件、本地 HTML Dashboard，以及用于比较多种展示形式的本地图表 POC。增长率/环比分析、AI 报告、远程 API、Manual Source 完整录入链路和正式微信小程序仍不在当前实现范围内。
+项目当前已经实现邮件获取、CMB Source Record / Transaction 身份分离、Manual Source 与跨来源 Reconciliation、正式 Merchant Mapping、独立持久化的当前 Enrichment、退款归并、消费统计 Projection、本地 JSON Application/API，以及可浏览和编辑逐笔 Transaction Enrichment 的本地 HTML Dashboard。增长率/环比分析、AI 报告、面向公网部署与认证的远程 API、正式微信小程序等仍不在当前实现范围内。
 
 ## 数据与隐私边界
 
@@ -33,6 +31,9 @@ data/
 │   ├── categories.yaml
 │   └── transaction_category_overrides.jsonl
 ├── transactions.csv
+├── manual_source_records.jsonl
+├── transaction_source_links.jsonl
+├── enrichment_state.jsonl
 └── reports/
     └── spending_statistics.json
 ```
@@ -45,9 +46,12 @@ data/
 - `mappings/merchants.yaml`：人工确认的 `merchant_name → descriptions`。
 - `mappings/categories.yaml`：人工确认的 `category → merchant_names`。
 - `mappings/transaction_category_overrides.jsonl`：少量单笔交易的分类覆盖；文件中的 `transaction_id` 保留历史字段名，当前值仍是既有 CMB 来源 ID，运行时再绑定到系统 Transaction。
-- `reports/spending_statistics.json`：后端生成、供 Dashboard 只读消费的统计派生文件。
+- `manual_source_records.jsonl`：Manual Source 的本地来源事实。
+- `transaction_source_links.jsonl`：当前 Source Record → Transaction 关系。
+- `enrichment_state.jsonl`：当前 Transaction Enrichment authoritative state。
+- `reports/spending_statistics.json`：后端生成、可从正式状态重建的消费统计 Projection。
 
-除三份正式 Mapping 外，`data/` 中的原始邮件、截图、完整交易、OCR 结果和派生统计默认只保存在本地，不提交到 Git。
+除三份正式 Mapping 外，`data/` 中的原始邮件、截图、完整交易、运行态 Source/Link/Enrichment 状态、OCR 结果和派生统计默认只保存在本地，不提交到 Git。
 
 正式进入 Git 的数据文件只有：
 
@@ -266,6 +270,46 @@ data/transaction_source_links.jsonl
 
 当前 Spending Analytics 仍只统计 expense。Manual Source 可以录入 income，但 income 当前只保留为正式 Transaction，不进入现有消费统计。
 
+## Enrichment Application / API
+
+Enrichment 当前是独立持久化的 authoritative current state，保存在：
+
+```text
+data/enrichment_state.jsonl
+```
+
+Mapping / Merchant default / 既有 transaction-level override 负责新 Transaction 或缺失状态的初始化；之后的普通统计重建会保留已经存在的 Enrichment 编辑。Transaction Core 仍不包含 Merchant、Category 或 Note。
+
+本地 Application 提供：
+
+- 查询当前 Transaction + Source identity + Enrichment；
+- 查询正式 Category 列表；
+- 修改 Merchant、Category、Note；
+- Enrichment 修改后只继续执行 Refund / Net Consumption / Analytics / Projection；
+- 不因为 Enrichment 编辑重新执行 Source Adapter、Reconciliation 或 Transaction identity 构建。
+
+`category = null` 表示清除显式 Category，并恢复当前 Merchant 的默认分类；如果当前 Merchant 没有默认分类，则回到运行态 `待分类`。
+
+启动最小本地 JSON API：
+
+```powershell
+$env:PYTHONPATH="src"; uv run --frozen python -m family_spending.http_api
+```
+
+默认监听 `127.0.0.1:8765`，当前端点包括：
+
+```text
+GET   /api/health
+GET   /api/categories
+GET   /api/transactions
+GET   /api/transactions/{transaction_id}
+PATCH /api/transactions/{transaction_id}/enrichment
+```
+
+API 启动时会先执行 `Application.initialize()`，同步当前 Source / Reconciliation / Enrichment 状态并重建最新 Projection。Source 在初始化后发生变化时，旧 Application snapshot 不会静默继续使用失效 links；应重新启动或重新初始化 Application，使上游 Source / Reconciliation 先收敛。
+
+Enrichment mutation 把 Enrichment current state 视为 authoritative、消费统计视为可重建 Projection。正常故障路径不得留下 Enrichment 已更新而 Projection 仍旧的半提交状态。
+
 ## 退款归并
 
 正式统计在 Source Record → Transaction → Enrichment 建立后调用 `reconcile_refunds()`。退款匹配会读取 authoritative Source Record 的 description，并可使用当前 Merchant identity 作为辅助证据；Category 和 transaction override 不参与退款身份判断。
@@ -298,21 +342,22 @@ $env:PYTHONPATH="src"; uv run python -m family_spending.statistics_generation
 完整后端链路为：
 
 ```text
-read_transactions_csv()
+read CMB transactions + Manual Source records
+→ read existing Source Links + current Enrichment state
 → load_merchant_mappings()
-→ build_cmb_domain_state()
-   → CMB Adapter / Source Record
-   → CMB Reconciliation / Transaction / Source Link
-   → legacy override 绑定
-   → Merchant / Category Enrichment
-→ reconcile_refunds() → NetConsumption
-→ aggregate_spending()
-→ load_month_coverage() 读取账单文件名覆盖
-→ serialize_spending_statistics()
-→ 原子替换 spending_statistics.json
+→ build_household_domain_state()
+   → CMB / Manual Adapter + Source Record
+   → source-aware Reconciliation / Transaction / Source Link
+   → preserve or initialize current Enrichment
+→ build_spending_projection()
+   → reconcile_refunds() → NetConsumption
+   → aggregate_spending()
+   → load_month_coverage()
+   → serialize schema v2 statistics
+→ persist current Source Links / Enrichment state / spending Projection
 ```
 
-每次运行都从完整事实数据全量重建。当前数据规模不引入退款缓存、数据库或增量状态。
+每次显式运行会从当前完整 Source facts、既有 identity links 与 Enrichment current state 重新构建一致的下游结果。当前数据规模不引入退款缓存、数据库或增量统计状态。
 
 统计包含：
 
@@ -364,16 +409,16 @@ M+1 月 10 日账单
 npm install
 ```
 
-再生成最新统计：
+Dashboard 现在同时消费消费统计 Projection 与本地 Application/API。需要在两个终端分别启动：
 
 ```powershell
-$env:PYTHONPATH="src"; uv run python -m family_spending.statistics_generation
+# 终端 1：初始化当前领域状态并提供 Transaction / Enrichment API
+$env:PYTHONPATH="src"; uv run --frozen python -m family_spending.http_api
 ```
 
-从项目根目录启动静态服务：
-
 ```powershell
-uv run python -m http.server 8000
+# 终端 2：从项目根目录提供静态文件和 spending_statistics.json
+uv run --frozen python -m http.server 8000
 ```
 
 浏览器访问：
@@ -382,11 +427,13 @@ uv run python -m http.server 8000
 http://localhost:8000/local_dashboard/
 ```
 
-Dashboard 直接读取：
+聚合统计继续直接读取：
 
 ```text
 /data/reports/spending_statistics.json
 ```
+
+逐笔 Transaction / Enrichment 通过本地 API `http://127.0.0.1:8765/api` 读取和修改。API 不可用时，已经生成的聚合统计仍可独立展示；Transaction Workspace 会单独显示连接错误。
 
 当前能力：
 
@@ -394,10 +441,13 @@ Dashboard 直接读取：
 - 月份选择器只列出 `show=true` 月份，并保留全部符合展示策略的月份；
 - 展示后端已经排序的 category 和 merchant/display 汇总；
 - 显示待分类项目且不遗漏金额；
-- 支持 loading、空数据、错误和重新加载状态；
+- Transaction Workspace 跟随当前月份列出 Transaction，并展示其 Source description 与当前 Enrichment；
+- Merchant、Category、Note 通过 Application/API 修改，不直接写底层 JSONL、Mapping 或统计文件；
+- Category 选项来自 `/api/categories`；“跟随商户默认”发送 `category = null`，由后端执行默认分类语义；
+- 保存成功后 Application 已重建下游 Projection，Dashboard 再重新加载 `spending_statistics.json`；
+- 支持统计与 Transaction Workspace 各自的 loading、空数据、错误和重新加载状态；
 - 严格校验 `schema_version === 2`、字段类型、安全整数、月份布尔字段、待分类语义，以及全部月份和展示月份两套汇总对账；
-- 校验失败时停止展示，不在前端修正或重新聚合后端事实；
-- 不写回任何数据。
+- 校验失败时停止展示，不在前端修正或重新聚合后端事实。
 
 ### 多图表 POC
 
@@ -418,7 +468,7 @@ Chart.js 固定在项目的 npm 依赖中，并由页面加载本地 `node_modul
 
 每张图表独立创建和捕获失败。某一图表初始化或渲染失败时，只在该图表卡片显示错误，不影响总览、月份切换、category/merchant 表格或其他图表。
 
-`local_dashboard/api.js` 负责加载、schema 校验、金额/笔数对账和 view model；`local_dashboard/charts.js` 负责纯图表配置与图表实例生命周期；`local_dashboard/app.js` 负责 DOM 状态、月份交互以及将 service 数据交给图表层。未来其他客户端可以参考 service 职责和返回模型，但不需要复用浏览器 DOM、Chart.js 或 CSS 实现。
+`local_dashboard/api.js` 负责加载统计 Projection、schema 校验、金额/笔数对账和 view model；`local_dashboard/charts.js` 负责纯图表配置与图表实例生命周期；`local_dashboard/app.js` 负责统计 DOM 状态、月份交互以及将 service 数据交给图表层；`local_dashboard/application-api.js` 负责本地 JSON API contract 和错误边界；`local_dashboard/transactions.js` 负责 Transaction Workspace 的浏览与编辑交互。前端不重新实现 Reconciliation、Enrichment 规则或消费聚合。
 
 ## Rebuild 支持工具
 
@@ -446,7 +496,7 @@ $env:PYTHONPATH="src"; uv run --frozen python -m unittest -q
 Dashboard JavaScript 测试：
 
 ```powershell
-node --test local_dashboard/api.test.js local_dashboard/charts.test.js
+node --test local_dashboard/api.test.js local_dashboard/charts.test.js local_dashboard/application-api.test.js
 ```
 
 Python 编译检查：
@@ -470,7 +520,11 @@ local_dashboard/
 ├── app.js
 ├── styles.css
 ├── api.test.js
-└── charts.test.js
+├── charts.test.js
+├── application-api.js
+├── application-api.test.js
+├── transactions.js
+└── transactions.css
 
 scripts/
 ├── inspect_app_row_ocr.py
@@ -479,16 +533,22 @@ scripts/
 └── inspect_mapping_candidates.py
 
 src/family_spending/
+├── application.py                    # Transaction + current Enrichment Application use cases
+├── http_api.py                       # 最小本地 JSON transport
 ├── source_records.py                 # SourceRecord + SourceAdapter 扩展契约
 ├── transactions.py                   # Transaction Core + Source Link / 索引
-├── reconciliation.py                 # Reconciler 扩展契约 + CMB 实现
-├── enrichment.py                     # Enrichment 契约 + 金额相关复核规则
+├── reconciliation.py                 # Reconciler 扩展契约 + source-aware 实现
+├── enrichment.py                     # Enrichment current state 与更新规则
+├── enrichment_store.py               # Enrichment JSONL storage
+├── source_link_store.py              # Source Record → Transaction link storage
+├── manual_source.py                  # Manual Source local state
 ├── mapping.py                        # 正式 Mapping loader + Mapping Enrichment resolver
 ├── month_coverage.py
 ├── refund_reconciliation.py          # Transaction facts → NetConsumption 派生视图
+├── spending_projection.py            # downstream-only spending Projection
 ├── settings.py
 ├── spending_statistics.py            # AnalyticsProcessor + 消费统计
-├── statistics_generation.py          # 当前 CMB 主链 orchestrator
+├── statistics_generation.py          # Source → Transaction → Enrichment → Projection orchestrator
 ├── statistics_serialization.py
 ├── transaction_resolution.py         # 共享 CMB domain snapshot + 诊断 CLI
 └── ingestion/
@@ -497,8 +557,11 @@ src/family_spending/
     └── cmb_source_adapter.py
 
 tests/
+├── test_application.py
 ├── test_cmb_domain.py
 ├── test_cmb_email_transactions.py
+├── test_enrichment_store.py
+├── test_http_api.py
 ├── test_imap_163.py
 ├── test_local_dashboard.py
 ├── test_mapping.py
@@ -518,10 +581,10 @@ tests/
 - “全部月份 / 仅完整月份”切换 UI；
 - 最终图表组合收敛；
 - AI 消费报告；
-- 逐笔交易或退款明细界面；
+- 退款分配等更细的诊断明细界面；
 - Mapping 编辑器和复核处理界面；
 - 微信小程序正式客户端；
-- 远程 API、登录、云同步或多用户；
+- 面向公网部署的 API、登录、云同步或多用户；
 - 数据库、增量统计或后台调度；
 - 其他银行、微信或支付宝独立账单接入。
 

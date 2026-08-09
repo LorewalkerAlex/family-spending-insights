@@ -6,10 +6,13 @@
     <meta name="color-scheme" content="light" />
     <title>家庭消费统计</title>
     <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./transactions.css" />
     <script src="../node_modules/chart.js/dist/chart.umd.js" defer></script>
     <script src="./api.js" defer></script>
     <script src="./charts.js" defer></script>
     <script src="./app.js" defer></script>
+    <script src="./application-api.js" defer></script>
+    <script src="./transactions.js" defer></script>
   </head>
   <body>
     <main class="page-shell">
@@ -17,12 +20,10 @@
         <p class="eyebrow">Family Spending Insights</p>
         <h1>家庭消费统计</h1>
         <p class="page-header__description">
-          查看后端全量重建后的净消费汇总。当前页面只展示后端标记为可展示的自然月，且不修改任何交易或 Mapping。
+          查看后端生成的净消费统计，并通过本地 Application/API 浏览逐笔 Transaction、维护 Merchant / Category / Note。业务统计和写回规则仍全部由后端负责。
         </p>
       </header>
-
       <p class="state-message" data-state="loading">正在读取消费统计…</p>
-
       <section class="error-card" data-state="error" hidden aria-labelledby="error-title">
         <p class="eyebrow">无法展示统计</p>
         <h2 id="error-title" data-error-message>消费统计加载失败。</h2>
@@ -33,7 +34,6 @@
         </div>
         <button class="primary-button" type="button" data-action="reload">重新加载</button>
       </section>
-
       <div data-state="dashboard" hidden>
         <section class="summary-card" aria-labelledby="summary-title">
           <div>
@@ -51,12 +51,10 @@
             </div>
           </dl>
         </section>
-
         <section class="empty-card" data-state="empty" hidden>
           <h2>暂无可展示月份统计</h2>
           <p>统计文件结构有效，但当前没有 <code>show=true</code> 的月份数据。</p>
         </section>
-
         <div data-month-controls>
           <section class="month-card" aria-labelledby="month-title">
             <div class="month-card__selector">
@@ -72,6 +70,66 @@
             </div>
           </section>
 
+          <section class="transaction-workspace" data-transactions-workspace aria-labelledby="transactions-title">
+            <div class="transaction-workspace__heading">
+              <div>
+                <p class="eyebrow">Transaction Workspace</p>
+                <h2 id="transactions-title">逐笔交易与 Enrichment</h2>
+                <p>跟随上方统计月份浏览当前 Transaction。编辑只提交 Enrichment，保存后由 Application 重建下游 Projection，再刷新本页统计。</p>
+              </div>
+              <span class="transaction-workspace__count"><span data-transactions-count>—</span> 笔</span>
+            </div>
+
+            <p class="transaction-workspace__state" data-transactions-loading>正在连接本地 Application/API…</p>
+            <div class="transaction-workspace__error" data-transactions-error hidden>
+              <p data-transactions-error-message>无法连接本地 Application/API。</p>
+              <button class="secondary-button" type="button" data-action="retry-transactions">重新连接</button>
+            </div>
+
+            <div class="transaction-workspace__grid">
+              <div class="transaction-list-panel">
+                <ul class="transaction-list" data-transactions-list></ul>
+                <p class="transaction-list-empty" data-transactions-empty hidden>当前月份没有 Transaction。</p>
+              </div>
+
+              <div class="transaction-detail-panel">
+                <p class="transaction-detail-empty" data-transaction-detail-empty>选择一笔 Transaction 后可查看和编辑 Enrichment。</p>
+                <div data-transaction-detail hidden>
+                  <div class="transaction-detail__header">
+                    <h3 data-transaction-title>—</h3>
+                    <p class="transaction-detail__meta" data-transaction-meta>—</p>
+                    <p class="transaction-detail__source">原始描述：<strong data-transaction-source-description>—</strong></p>
+                    <p class="transaction-detail__categories">
+                      当前分类：<strong data-effective-category>—</strong>；商户默认：<strong data-default-category>—</strong>
+                    </p>
+                  </div>
+
+                  <form class="transaction-form" data-enrichment-form>
+                    <div class="transaction-form__field">
+                      <label for="enrichment-merchant">Merchant</label>
+                      <input id="enrichment-merchant" type="text" autocomplete="off" data-enrichment-merchant />
+                      <p class="transaction-form__hint">留空表示清除当前 Merchant。Merchant 变化时，后端只会重新计算隐式默认分类；显式分类 override 仍保留。</p>
+                    </div>
+                    <div class="transaction-form__field">
+                      <label for="enrichment-category">Category</label>
+                      <select id="enrichment-category" data-enrichment-category></select>
+                      <p class="transaction-form__hint">选择“跟随商户默认”会发送 <code>category = null</code>；无默认分类时回到“待分类”。</p>
+                    </div>
+                    <div class="transaction-form__field">
+                      <label for="enrichment-note">Note</label>
+                      <textarea id="enrichment-note" data-enrichment-note></textarea>
+                    </div>
+                    <div class="transaction-form__actions">
+                      <button class="primary-button" type="submit" data-action="save-enrichment">保存 Enrichment</button>
+                      <button class="secondary-button" type="button" data-action="reset-enrichment">恢复当前值</button>
+                      <p class="transaction-form__status" role="status" aria-live="polite" data-enrichment-status></p>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            </div>
+          </section>
+
           <section class="charts-section" aria-labelledby="charts-title">
             <div class="section-heading">
               <div>
@@ -80,7 +138,6 @@
               </div>
               <p>分类图例可点击隐藏或恢复系列；图表异常不会影响下方明细。</p>
             </div>
-
             <div class="chart-grid">
               <article class="chart-card">
                 <h3>月度总消费折线图</h3>
@@ -114,7 +171,6 @@
               </article>
             </div>
           </section>
-
           <section class="breakdown-card" aria-labelledby="breakdown-title">
             <div class="view-tabs" role="tablist" aria-label="统计维度">
               <button
@@ -141,7 +197,6 @@
               <h2 id="breakdown-title" data-list-title>分类支出</h2>
               <p>保持后端统计结果的既有顺序。</p>
             </div>
-
             <ul class="statistics-list" data-statistics-list></ul>
             <p class="list-empty" data-list-empty hidden></p>
           </section>

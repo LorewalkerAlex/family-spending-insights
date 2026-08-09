@@ -20,6 +20,10 @@ class LocalDashboardContractTests(unittest.TestCase):
             "styles.css",
             "api.test.js",
             "charts.test.js",
+            "application-api.js",
+            "application-api.test.js",
+            "transactions.js",
+            "transactions.css",
         }
         self.assertEqual(
             {path.name for path in DASHBOARD.iterdir() if path.is_file()},
@@ -29,10 +33,13 @@ class LocalDashboardContractTests(unittest.TestCase):
     def test_html_uses_only_local_assets(self) -> None:
         html = (DASHBOARD / "index.html").read_text(encoding="utf-8")
         self.assertIn('href="./styles.css"', html)
+        self.assertIn('href="./transactions.css"', html)
         self.assertIn('src="../node_modules/chart.js/dist/chart.umd.js"', html)
         self.assertIn('src="./api.js"', html)
         self.assertIn('src="./charts.js"', html)
         self.assertIn('src="./app.js"', html)
+        self.assertIn('src="./application-api.js"', html)
+        self.assertIn('src="./transactions.js"', html)
         self.assertIsNone(re.search(r"https?://", html, flags=re.IGNORECASE))
 
     def test_api_reads_formal_statistics_and_schema_v2(self) -> None:
@@ -46,6 +53,21 @@ class LocalDashboardContractTests(unittest.TestCase):
         self.assertIn("month.show", source)
         self.assertNotIn("mock-data", source)
         self.assertNotIn("wx.", source)
+
+    def test_transaction_workspace_uses_application_api_contract(self) -> None:
+        html = (DASHBOARD / "index.html").read_text(encoding="utf-8")
+        api_source = (DASHBOARD / "application-api.js").read_text(encoding="utf-8")
+        workspace_source = (DASHBOARD / "transactions.js").read_text(encoding="utf-8")
+        self.assertIn("data-transactions-workspace", html)
+        self.assertIn("data-enrichment-merchant", html)
+        self.assertIn("data-enrichment-category", html)
+        self.assertIn("data-enrichment-note", html)
+        self.assertIn('const DEFAULT_API_BASE = "http://127.0.0.1:8765/api";', api_source)
+        self.assertIn('request("/categories")', api_source)
+        self.assertIn('request("/transactions")', api_source)
+        self.assertIn('method: "PATCH"', api_source)
+        self.assertIn("service.updateEnrichment", workspace_source)
+        self.assertIn("elements.dashboardReload.click()", workspace_source)
 
     def test_chart_runtime_has_no_remote_url(self) -> None:
         source = (DASHBOARD / "charts.js").read_text(encoding="utf-8")

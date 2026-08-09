@@ -567,7 +567,7 @@ Analytics Update
 
 ## 14. 当前实现落地状态与后续迁移约束
 
-当前已经有三条真实纵向路径沿本 HLD 的边界落地：CMB Email、Manual Source / Cross-source Reconciliation，以及 Enrichment 可编辑 / Application API。现有 Email、CSV、正式 Mapping、退款规则、统计 schema v2 与 Dashboard 契约继续保留。
+当前已经有三条核心领域纵向路径沿本 HLD 的边界落地：CMB Email、Manual Source / Cross-source Reconciliation，以及 Enrichment 可编辑 / Application API；本地 Dashboard 也已作为第一个真实客户端接入 Application/API。现有 Email、CSV、正式 Mapping、退款规则与统计 schema v2 契约继续保留。
 
 当前实现状态：
 
@@ -584,7 +584,8 @@ Analytics Update
 11. 本地 JSON HTTP transport 已作为最小真实客户端入口落地，负责把查询与 Enrichment 修改交给 Application；客户端不直接写 `enrichment_state.jsonl`、Mapping 或统计文件。
 12. Enrichment state 属于正式当前状态，`spending_statistics.json` 属于可重建 Projection。单次 Enrichment mutation 先生成并写入新的派生 Projection，最后原子替换 authoritative Enrichment state；若 authoritative 写入失败，实现会尝试恢复旧 Projection，避免正常故障路径留下半提交的业务状态。
 13. Source 在 Application 初始化后发生变化时，client-only 查询/编辑不会在旧 link 集合上静默继续；Application 会要求重新执行 `initialize()`，先完成 Source / Reconciliation / downstream 同步。
-14. 消费统计与 Dashboard 继续作为下游 Analytics / Projection。在相同正式 CMB-only 数据下，当前主链仍保持 schema v2 统计输出与迁移前正式基线字节级一致。
+14. 消费统计继续作为下游 Analytics / Projection。在相同正式 CMB-only 数据下，当前主链仍保持 schema v2 统计输出与迁移前正式基线字节级一致。
+15. 本地 Dashboard 的聚合视图继续读取 `spending_statistics.json` Projection；逐笔 Transaction 浏览与 Merchant / Category / Note 编辑通过 Application/API 完成。客户端只做展示、筛选和命令提交，不复制 Reconciliation、Enrichment 或消费聚合规则；Enrichment PATCH 成功后重新读取已经由 Application 重建的 Projection。Application/API 暂时不可用不会改变已生成 Projection 的可读性。
 
 当前本地文件持久化只是这一阶段的 concrete storage，不改变 HLD 的存储无关边界。后续若实现 Mapping / Default / Override 的统一编辑入口、更多 Source、正式客户端或新的存储实现，应继续沿相同 Domain / Application 边界扩展，不要为了新能力重新合并 Source、Transaction、Enrichment 或 Analytics。
 
@@ -630,4 +631,4 @@ Analytics Update
 - Application / API 为所有客户端提供统一的数据读取和修改入口；
 - 具体存储技术通过数据访问边界隔离，留到 Technical Design 决定。
 
-CMB Email、Manual Source / Cross-source Reconciliation 与 Enrichment 可编辑 / Application API 三条纵向切片已经验证这些边界可以在现有代码上落地；后续 Source、Application / API 与客户端能力应继续沿相同领域边界按完整纵向切片推进。
+CMB Email、Manual Source / Cross-source Reconciliation 与 Enrichment 可编辑 / Application API 三条核心纵向切片已经验证这些边界可以在现有代码上落地；本地 Dashboard 进一步验证了客户端可以在不复制核心业务规则的前提下消费 Projection 并通过统一 Application/API 修改 Enrichment。后续 Source、Application / API 与客户端能力应继续沿相同领域边界按完整纵向切片推进。
