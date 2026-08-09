@@ -17,7 +17,7 @@ CMB Email / Manual Input
 → local_dashboard/
 ```
 
-项目当前已经实现邮件获取、CMB Source Record / Transaction 身份分离、Manual Source 与跨来源 Reconciliation、正式 Merchant Mapping、独立持久化的当前 Enrichment、退款归并、消费统计 Projection、本地 JSON Application/API，以及可浏览和编辑逐笔 Transaction Enrichment 的本地 HTML Dashboard。增长率/环比分析、AI 报告、面向公网部署与认证的远程 API、正式微信小程序等仍不在当前实现范围内。
+项目当前已经实现邮件获取、CMB Source Record / Transaction 身份分离、Manual Source 与跨来源 Reconciliation、正式 Merchant Mapping、独立持久化的当前 Enrichment、退款归并、消费统计 Projection、本地 JSON Application/API，以及支持 Manual Input、逐笔 Transaction 浏览和 Enrichment 编辑的本地 HTML Dashboard。增长率/环比分析、AI 报告、面向公网部署与认证的远程 API、正式微信小程序等仍不在当前实现范围内。
 
 ## 数据与隐私边界
 
@@ -46,7 +46,7 @@ data/
 - `mappings/merchants.yaml`：人工确认的 `merchant_name → descriptions`。
 - `mappings/categories.yaml`：人工确认的 `category → merchant_names`。
 - `mappings/transaction_category_overrides.jsonl`：少量单笔交易的分类覆盖；文件中的 `transaction_id` 保留历史字段名，当前值仍是既有 CMB 来源 ID，运行时再绑定到系统 Transaction。
-- `manual_source_records.jsonl`：Manual Source 的本地来源事实。
+- `manual_source_records.jsonl`：Manual Source 的本地来源事实；当前录入保存 `type/date/amount/description/note`，Merchant / Category 由下游 Mapping / Enrichment 决定。
 - `transaction_source_links.jsonl`：当前 Source Record → Transaction 关系。
 - `enrichment_state.jsonl`：当前 Transaction Enrichment authoritative state。
 - `reports/spending_statistics.json`：后端生成、可从正式状态重建的消费统计 Projection。
@@ -161,7 +161,7 @@ amount
 currency
 ```
 
-原始 description、`source_email`、`source_index`、Merchant 和 Category 都不复制进 Transaction Core。CMB 来源当前是对应信用卡财务事实的 authoritative Source；同一 CMB Source Record 重跑保持幂等。当前阶段尚未实现 Manual Source 的跨来源 Transaction matching。
+原始 description、`source_email`、`source_index`、Merchant 和 Category 都不复制进 Transaction Core。CMB 来源当前是对应信用卡财务事实的 authoritative Source；同一 CMB Source Record 重跑保持幂等。Manual Source 已通过 source-aware Reconciliation 与 CMB-backed / Manual-backed Transaction 做跨来源匹配。
 
 ## Merchant Mapping
 
@@ -214,12 +214,13 @@ $env:PYTHONPATH="src"; uv run python -m family_spending.transaction_resolution
 type
 date
 amount
+description
 
 可选：
-merchant
-category
 note
 ~~~
+
+`description` 是用户输入并持久化保存的 Manual Source 原始文本，不是 Canonical Merchant。Manual Input 不直接创建或修改 Merchant / Category；已有 description 如果命中正式 Mapping，会沿用 `description → merchant → default category` 路径，新 description 未命中时进入运行态 `待分类`，后续与 CMB 未匹配 description 共用 Mapping Review。
 
 本地命令行入口：
 
@@ -229,10 +230,11 @@ uv run python -m family_spending.manual_input `
     --type expense `
     --date 2026-08-08 `
     --amount 88.50 `
-    --merchant "示例商户" `
-    --category "餐饮美食" `
-    --note "示例"
+    --description "小区门口早餐摊" `
+    --note "现金"
 ~~~
+
+Dashboard 也通过 `POST /api/manual-inputs` 调用同一个 Application use case。录入框会从历史 Manual Source 中读取 distinct description，仅做去空白、大小写与前缀级别的轻量候选提示；用户可以复用已有 description，也可以明确新建，不会自动模糊合并。
 
 Manual Input 会主动执行完整下游 Pipeline：
 
@@ -257,7 +259,8 @@ Manual Input
 - Category 完全不参与 Transaction identity 判断。
 - Merchant 只作为辅助匹配证据。
 - CMB 后续到达并匹配 manual-only Transaction 时，复用同一个 Transaction identity，并由 CMB 成为该信用卡交易核心财务事实的 authoritative Source。
-- Manual 提供的 Merchant、Category、Note 等用户补充信息与 Transaction Core 分离，不会因为 CMB 成为 authoritative Source 而被作为 Transaction 财务事实覆盖。
+- Manual `description` 属于 Source Record 原始事实；Merchant / Category 仍由共享 Mapping / Enrichment 路径决定。Manual `note` 作为用户补充信息进入当前 Enrichment，但不进入 Transaction Core。
+- Manual Input 在真正写入前先完成校验与 Reconciliation；写入 Manual Source、Source Link、Enrichment 或 Projection 任一步失败时，会恢复本次命令前的相关文件状态，避免正常故障路径留下半提交。
 
 本地运行状态包括：
 
@@ -282,6 +285,8 @@ Mapping / Merchant default / 既有 transaction-level override 负责新 Transac
 
 本地 Application 提供：
 
+- 创建 source-native Manual Input，并复用现有 Mapping / Manual Source / Cross-source Reconciliation / downstream Pipeline；
+- 查询历史 Manual description，供录入时做轻量复用提示；
 - 查询当前 Transaction + Source identity + Enrichment；
 - 查询正式 Category 列表；
 - 修改 Merchant、Category、Note；
@@ -301,14 +306,16 @@ $env:PYTHONPATH="src"; uv run --frozen python -m family_spending.http_api
 ```text
 GET   /api/health
 GET   /api/categories
+GET   /api/manual-descriptions
 GET   /api/transactions
 GET   /api/transactions/{transaction_id}
+POST  /api/manual-inputs
 PATCH /api/transactions/{transaction_id}/enrichment
 ```
 
 API 启动时会先执行 `Application.initialize()`，同步当前 Source / Reconciliation / Enrichment 状态并重建最新 Projection。Source 在初始化后发生变化时，旧 Application snapshot 不会静默继续使用失效 links；应重新启动或重新初始化 Application，使上游 Source / Reconciliation 先收敛。
 
-Enrichment mutation 把 Enrichment current state 视为 authoritative、消费统计视为可重建 Projection。正常故障路径不得留下 Enrichment 已更新而 Projection 仍旧的半提交状态。
+Application mutation 保持 authoritative state 与可重建 Projection 的提交边界。Enrichment PATCH 不得留下 Enrichment 已更新而 Projection 仍旧的半提交状态；Manual Input 也会在跨 Manual Source / Source Link / Enrichment / Projection 写入失败时恢复本次命令前状态。
 
 ## 退款归并
 
@@ -433,7 +440,7 @@ http://localhost:8000/local_dashboard/
 /data/reports/spending_statistics.json
 ```
 
-逐笔 Transaction / Enrichment 通过本地 API `http://127.0.0.1:8765/api` 读取和修改。API 不可用时，已经生成的聚合统计仍可独立展示；Transaction Workspace 会单独显示连接错误。
+Manual Input 与逐笔 Transaction / Enrichment 都通过本地 API `http://127.0.0.1:8765/api` 读取和修改。API 不可用时，已经生成的聚合统计仍可独立展示；Manual Input 与 Transaction Workspace 会分别显示连接错误。
 
 当前能力：
 
@@ -441,8 +448,10 @@ http://localhost:8000/local_dashboard/
 - 月份选择器只列出 `show=true` 月份，并保留全部符合展示策略的月份；
 - 展示后端已经排序的 category 和 merchant/display 汇总；
 - 显示待分类项目且不遗漏金额；
+- Manual Input 表单支持录入 `type / date / amount / description` 以及可选 `note`；description 先作为 Manual Source 原始事实保存，输入时只从历史 Manual description 提供轻量复用候选；
+- Manual Input 成功后由后端完成 Reconciliation 与 Projection 刷新，Dashboard 再重新读取统计与 Transaction Workspace；
 - Transaction Workspace 跟随当前月份列出 Transaction，并展示其 Source description 与当前 Enrichment；
-- Merchant、Category、Note 通过 Application/API 修改，不直接写底层 JSONL、Mapping 或统计文件；
+- 当前 Transaction Workspace 的 Merchant / Category 修改只作为单笔 Enrichment 例外，不写 Mapping；正常的未分类与 Mapping 错误审核后续收敛到统一 Mapping Review。Note 同样通过 Application/API 修改；
 - Category 选项来自 `/api/categories`；“跟随商户默认”发送 `category = null`，由后端执行默认分类语义；
 - 保存成功后 Application 已重建下游 Projection，Dashboard 再重新加载 `spending_statistics.json`；
 - 支持统计与 Transaction Workspace 各自的 loading、空数据、错误和重新加载状态；
@@ -468,7 +477,7 @@ Chart.js 固定在项目的 npm 依赖中，并由页面加载本地 `node_modul
 
 每张图表独立创建和捕获失败。某一图表初始化或渲染失败时，只在该图表卡片显示错误，不影响总览、月份切换、category/merchant 表格或其他图表。
 
-`local_dashboard/api.js` 负责加载统计 Projection、schema 校验、金额/笔数对账和 view model；`local_dashboard/charts.js` 负责纯图表配置与图表实例生命周期；`local_dashboard/app.js` 负责统计 DOM 状态、月份交互以及将 service 数据交给图表层；`local_dashboard/application-api.js` 负责本地 JSON API contract 和错误边界；`local_dashboard/transactions.js` 负责 Transaction Workspace 的浏览与编辑交互。前端不重新实现 Reconciliation、Enrichment 规则或消费聚合。
+`local_dashboard/api.js` 负责加载统计 Projection、schema 校验、金额/笔数对账和 view model；`local_dashboard/charts.js` 负责纯图表配置与图表实例生命周期；`local_dashboard/app.js` 负责统计 DOM 状态、月份交互以及将 service 数据交给图表层；`local_dashboard/application-api.js` 负责本地 JSON API contract 和错误边界；`local_dashboard/manual-entry.js` 负责 Manual Input 表单提交；`local_dashboard/transactions.js` 负责 Transaction Workspace 的浏览与编辑交互。前端不重新实现 Reconciliation、Enrichment 规则或消费聚合。
 
 ## Rebuild 支持工具
 
@@ -523,6 +532,8 @@ local_dashboard/
 ├── charts.test.js
 ├── application-api.js
 ├── application-api.test.js
+├── manual-entry.js
+├── manual-entry.css
 ├── transactions.js
 └── transactions.css
 
@@ -542,6 +553,7 @@ src/family_spending/
 ├── enrichment_store.py               # Enrichment JSONL storage
 ├── source_link_store.py              # Source Record → Transaction link storage
 ├── manual_source.py                  # Manual Source local state
+├── manual_input.py                   # Manual Input command + cross-file rollback boundary
 ├── mapping.py                        # 正式 Mapping loader + Mapping Enrichment resolver
 ├── month_coverage.py
 ├── refund_reconciliation.py          # Transaction facts → NetConsumption 派生视图
@@ -562,6 +574,7 @@ tests/
 ├── test_cmb_email_transactions.py
 ├── test_enrichment_store.py
 ├── test_http_api.py
+├── test_manual_input_application_api.py
 ├── test_imap_163.py
 ├── test_local_dashboard.py
 ├── test_mapping.py

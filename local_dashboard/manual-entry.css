@@ -1,0 +1,141 @@
+.manual-entry-card {
+  margin-top: 1rem;
+  padding: 1.25rem;
+  border: 1px solid #dfe5e0;
+  border-radius: 1rem;
+  background: #ffffff;
+  box-shadow: 0 0.5rem 1.5rem rgb(29 48 37 / 0.05);
+}
+
+.manual-entry-card__heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.manual-entry-card__heading p {
+  max-width: 42rem;
+  margin-bottom: 0;
+  color: #637068;
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+
+.manual-entry-form {
+  display: grid;
+  gap: 1rem;
+}
+
+.manual-entry-form__grid {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.manual-entry-form__field {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.manual-entry-form__field label {
+  color: #526159;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.manual-entry-form input,
+.manual-entry-form select,
+.manual-entry-form textarea {
+  width: 100%;
+  min-height: 2.7rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid #cbd5ce;
+  border-radius: 0.7rem;
+  color: #17201b;
+  background: #ffffff;
+  font: inherit;
+}
+
+.manual-entry-form textarea {
+  min-height: 5.5rem;
+  resize: vertical;
+}
+
+.manual-entry-form input:focus-visible,
+.manual-entry-form select:focus-visible,
+.manual-entry-form textarea:focus-visible {
+  outline: 3px solid #9ec7b1;
+  outline-offset: 2px;
+}
+
+.manual-entry-form__hint {
+  margin: 0;
+  color: #6b776f;
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.manual-entry-form__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.manual-entry-form__status {
+  flex: 1 1 18rem;
+  margin: 0;
+  color: #526159;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+@media (min-width: 48rem) {
+  .manual-entry-card {
+    padding: 1.5rem;
+  }
+
+  .manual-entry-form__grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .manual-entry-form__field--wide {
+    grid-column: span 2;
+  }
+
+  .manual-entry-form__field--full {
+    grid-column: 1 / -1;
+  }
+}
+
+.manual-description-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.manual-description-suggestion {
+  padding: 0.45rem 0.65rem;
+  border: 1px solid #cbd5ce;
+  border-radius: 999px;
+  color: #33443a;
+  background: #f8faf8;
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.manual-description-suggestion:hover {
+  border-color: #8fa99a;
+  background: #eef4f0;
+}
+
+.manual-description-suggestion:focus-visible {
+  outline: 3px solid #9ec7b1;
+  outline-offset: 2px;
+}
+
+.manual-description-suggestion--new {
+  border-style: dashed;
+}

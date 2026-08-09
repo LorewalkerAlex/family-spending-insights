@@ -7,6 +7,8 @@ const {
   ApplicationApiError,
   DEFAULT_API_BASE,
   createApplicationService,
+  findSimilarManualDescriptions,
+  normalizeManualDescription,
   validateTransaction,
 } = require("./application-api.js");
 
@@ -75,7 +77,6 @@ test("loads formal categories and transactions from the local API", async () => 
       return response({ transactions: [makeTransaction()] });
     },
   });
-
   const categories = await service.getCategories();
   const transactions = await service.getTransactions();
 
@@ -98,7 +99,6 @@ test("PATCH sends only the caller-provided Enrichment command", async () => {
       return response({ transaction: updated });
     },
   });
-
   const updated = await service.updateEnrichment("txn-1", {
     category: "交通出行",
   });
@@ -137,7 +137,6 @@ test("surfaces backend Application errors without replacing their message", asyn
         { ok: false, status: 409 },
       ),
   });
-
   await assert.rejects(service.getTransactions(), (error) => {
     assert.ok(error instanceof ApplicationApiError);
     assert.equal(error.code, "api_error");
@@ -177,4 +176,149 @@ test("rejects malformed successful JSON payloads", async () => {
     assert.equal(error.code, "invalid_json");
     return true;
   });
+});
+
+
+test("Manual description matching stays lightweight and whitespace-insensitive", () => {
+  assert.equal(normalizeManualDescription("  小区 门口早餐摊  "), "小区门口早餐摊");
+  assert.deepEqual(
+    findSimilarManualDescriptions(
+      "小区门口早餐摊",
+      ["小区 门口早餐摊", "小区门口水果摊", "早餐"],
+    ),
+    ["小区 门口早餐摊"],
+  );
+  assert.deepEqual(
+    findSimilarManualDescriptions("早餐", ["早餐店", "公司早餐", "水果店"]),
+    ["早餐店"],
+  );
+});
+
+test("loads historical Manual descriptions for reuse suggestions", async () => {
+  const requests = [];
+  const service = createApplicationService({
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return response({ descriptions: ["小区门口早餐摊", "现金房租"] });
+    },
+  });
+
+  const descriptions = await service.getManualDescriptions();
+  assert.deepEqual(descriptions, ["小区门口早餐摊", "现金房租"]);
+  assert.equal(requests[0].url, `${DEFAULT_API_BASE}/manual-descriptions`);
+  assert.equal(requests[0].options.cache, "no-store");
+});
+
+test("POST sends Manual Input through the Application API contract", async () => {
+  const requests = [];
+  const transaction = makeTransaction({
+    id: "txn-manual-1",
+    date: "2026-08-09",
+    amount: "88.50",
+  });
+  transaction.source = {
+    id: "manual-1",
+    type: "manual",
+    description: "小区门口早餐摊",
+  };
+  transaction.enrichment.note = "现金";
+
+  const service = createApplicationService({
+    baseUrl: "http://127.0.0.1:9999/api/",
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return response({
+        manual_input: {
+          source_record_id: "manual-1",
+          action: "created",
+          transaction,
+        },
+      });
+    },
+  });
+
+  const result = await service.createManualInput({
+    type: "expense",
+    date: "2026-08-09",
+    amount: "88.50",
+    description: "小区门口早餐摊",
+    note: "现金",
+  });
+
+  assert.equal(result.sourceRecordId, "manual-1");
+  assert.equal(result.action, "created");
+  assert.equal(result.transaction.id, "txn-manual-1");
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, "http://127.0.0.1:9999/api/manual-inputs");
+  assert.equal(requests[0].options.method, "POST");
+  assert.deepEqual(JSON.parse(requests[0].options.body), {
+    type: "expense",
+    date: "2026-08-09",
+    amount: "88.50",
+    description: "小区门口早餐摊",
+    note: "现金",
+  });
+});
+
+test("Manual Input client validation rejects unknown fields and numeric amounts", async () => {
+  const service = createApplicationService({
+    fetchImpl: async () => {
+      throw new Error("fetch must not run");
+    },
+  });
+
+  await assert.rejects(
+    service.createManualInput({
+      type: "expense",
+      date: "2026-08-09",
+      amount: "88.50",
+      description: "测试",
+      unexpected: true,
+    }),
+    TypeError,
+  );
+  await assert.rejects(
+    service.createManualInput({
+      type: "expense",
+      date: "2026-08-09",
+      amount: 88.5,
+      description: "测试",
+    }),
+    ApplicationApiError,
+  );
+  await assert.rejects(
+    service.createManualInput({
+      type: "expense",
+      date: "2026-08-09",
+      amount: "88.50",
+    }),
+    TypeError,
+  );
+});
+
+test("rejects unknown Manual Input result actions from a successful response", async () => {
+  const service = createApplicationService({
+    fetchImpl: async () =>
+      response({
+        manual_input: {
+          source_record_id: "manual-1",
+          action: "merged",
+          transaction: makeTransaction(),
+        },
+      }),
+  });
+
+  await assert.rejects(
+    service.createManualInput({
+      type: "expense",
+      date: "2026-08-09",
+      amount: "88.50",
+      description: "测试",
+    }),
+    (error) => {
+      assert.ok(error instanceof ApplicationApiError);
+      assert.equal(error.code, "invalid_data");
+      return true;
+    },
+  );
 });

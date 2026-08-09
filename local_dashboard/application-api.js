@@ -20,6 +20,7 @@
     "manual_override",
     "unclassified",
   ]);
+  const MANUAL_INPUT_ACTIONS = new Set(["created", "matched", "reused"]);
 
   class ApplicationApiError extends Error {
     constructor(code, message, options = {}) {
@@ -110,7 +111,6 @@
     ).map((signal, index) =>
       requireString(signal, `${path}.enrichment.review_signals[${index}]`),
     );
-
     return Object.freeze({
       id: requireString(transaction.id, `${path}.id`),
       type: requireString(transaction.type, `${path}.type`),
@@ -153,6 +153,65 @@
     });
   }
 
+  function validateManualInputResult(value, path = "manual_input") {
+    const result = requireRecord(value, path);
+    const action = requireString(result.action, `${path}.action`);
+    if (!MANUAL_INPUT_ACTIONS.has(action)) {
+      fail(
+        "invalid_data",
+        `${path}.action 包含未知值 ${action}。`,
+        `${path}.action`,
+      );
+    }
+    return Object.freeze({
+      sourceRecordId: requireString(
+        result.source_record_id,
+        `${path}.source_record_id`,
+      ),
+      action,
+      transaction: validateTransaction(result.transaction, `${path}.transaction`),
+    });
+  }
+
+  function normalizeManualDescription(value) {
+    if (typeof value !== "string") {
+      throw new TypeError("Manual description 必须是字符串。");
+    }
+    return value.trim().toLocaleLowerCase().replace(/\s+/gu, "");
+  }
+
+  function findSimilarManualDescriptions(query, descriptions, limit = 5) {
+    if (!Array.isArray(descriptions)) {
+      throw new TypeError("Manual descriptions 必须是数组。");
+    }
+    if (!Number.isInteger(limit) || limit <= 0) {
+      throw new TypeError("Manual description 候选数量必须是正整数。");
+    }
+    const normalizedQuery = normalizeManualDescription(query);
+    if (normalizedQuery === "") {
+      return Object.freeze([]);
+    }
+
+    const matches = [];
+    descriptions.forEach((description, index) => {
+      if (typeof description !== "string" || description.trim() === "") {
+        return;
+      }
+      const normalized = normalizeManualDescription(description);
+      let score = null;
+      if (normalized === normalizedQuery) {
+        score = 0;
+      } else if (normalized.startsWith(normalizedQuery) || normalizedQuery.startsWith(normalized)) {
+        score = 1;
+      }
+      if (score !== null) {
+        matches.push({ description, score, index });
+      }
+    });
+    matches.sort((left, right) => left.score - right.score || left.index - right.index);
+    return Object.freeze(matches.slice(0, limit).map((item) => item.description));
+  }
+
   function normalizeBaseUrl(value) {
     const base = value || DEFAULT_API_BASE;
     if (typeof base !== "string" || base.trim() === "") {
@@ -183,7 +242,6 @@
         requestOptions.headers["Content-Type"] = "application/json";
         requestOptions.body = JSON.stringify(options.body);
       }
-
       let response;
       try {
         response = await fetchImpl(`${baseUrl}${path}`, requestOptions);
@@ -195,7 +253,6 @@
       if (!response || typeof response.ok !== "boolean") {
         fail("api_unavailable", "本地 API 没有返回有效响应。", path);
       }
-
       let payload;
       try {
         payload = await response.json();
@@ -205,7 +262,6 @@
           cause: error,
         });
       }
-
       if (!response.ok) {
         const record = isRecord(payload) ? payload : null;
         const backendMessage =
@@ -239,6 +295,14 @@
       return freezeArray(categories);
     }
 
+    async function getManualDescriptions() {
+      const payload = await request("/manual-descriptions");
+      const descriptions = requireArray(payload.descriptions, "descriptions").map(
+        (description, index) => requireString(description, `descriptions[${index}]`),
+      );
+      return Object.freeze(descriptions);
+    }
+
     async function getTransactions() {
       const payload = await request("/transactions");
       const transactions = requireArray(payload.transactions, "transactions").map(
@@ -251,6 +315,42 @@
       const id = requireString(transactionId, "transactionId");
       const payload = await request(`/transactions/${encodeURIComponent(id)}`);
       return validateTransaction(payload.transaction);
+    }
+
+    async function createManualInput(command) {
+      const input = requireRecord(command, "manualInput");
+      const allowed = new Set(["type", "date", "amount", "description", "note"]);
+      const keys = Object.keys(input);
+      const unknown = keys.filter((key) => !allowed.has(key));
+      if (unknown.length > 0) {
+        throw new TypeError(`Manual Input 包含未知字段：${unknown.join(", ")}`);
+      }
+      for (const required of ["type", "date", "amount", "description"]) {
+        if (!Object.prototype.hasOwnProperty.call(input, required)) {
+          throw new TypeError(`Manual Input 缺少必填字段：${required}`);
+        }
+      }
+
+      const type = requireString(input.type, "manualInput.type");
+      if (type !== "income" && type !== "expense") {
+        throw new TypeError("Manual Input type 必须是 income 或 expense。");
+      }
+      const date = requireString(input.date, "manualInput.date");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        throw new TypeError("Manual Input date 必须使用 YYYY-MM-DD 格式。");
+      }
+      const body = {
+        type,
+        date,
+        amount: requireAmountString(input.amount, "manualInput.amount"),
+        description: requireString(input.description, "manualInput.description").trim(),
+      };
+      if (Object.prototype.hasOwnProperty.call(input, "note")) {
+        body.note = requireNullableString(input.note, "manualInput.note");
+      }
+
+      const payload = await request("/manual-inputs", { method: "POST", body });
+      return validateManualInputResult(payload.manual_input);
     }
 
     async function updateEnrichment(transactionId, patch) {
@@ -280,8 +380,10 @@
     return Object.freeze({
       getHealth,
       getCategories,
+      getManualDescriptions,
       getTransactions,
       getTransaction,
+      createManualInput,
       updateEnrichment,
     });
   }
@@ -290,6 +392,9 @@
     ApplicationApiError,
     DEFAULT_API_BASE,
     createApplicationService,
+    normalizeManualDescription,
+    findSimilarManualDescriptions,
     validateTransaction,
+    validateManualInputResult,
   });
 });

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -22,12 +24,15 @@ from family_spending.enrichment_store import (
 )
 from family_spending.ingestion.cmb_email_transactions import read_transactions_csv
 from family_spending.ingestion.cmb_source_adapter import CmbSourceAdapter
+from family_spending.manual_input import submit_manual_input
 from family_spending.manual_source import (
     MANUAL_SOURCE_RECORDS_FILE,
     ManualSourceAdapter,
+    create_manual_source_entry,
     read_manual_source_entries,
 )
 from family_spending.mapping import MerchantMappings, load_merchant_mappings
+from family_spending.reconciliation import ReconciliationError
 from family_spending.settings import (
     CATEGORIES_FILE,
     EMAILS_DIR,
@@ -66,7 +71,11 @@ class ApplicationNotFoundError(ApplicationError):
 
 
 class ApplicationValidationError(ApplicationError):
-    """Raised when a client command cannot be represented by the current Enrichment model."""
+    """Raised when a client command cannot be represented by the current domain model."""
+
+
+class ApplicationConflictError(ApplicationError):
+    """Raised when a valid command cannot be applied uniquely to current state."""
 
 
 class ApplicationStateError(ApplicationError):
@@ -122,6 +131,20 @@ class TransactionView:
 
 
 @dataclass(frozen=True)
+class ManualInputView:
+    source_record_id: str
+    action: str
+    transaction: TransactionView
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source_record_id": self.source_record_id,
+            "action": self.action,
+            "transaction": self.transaction.to_dict(),
+        }
+
+
+@dataclass(frozen=True)
 class _ApplicationSnapshot:
     transactions: tuple[Transaction, ...]
     transactions_by_id: Mapping[str, Transaction]
@@ -159,6 +182,17 @@ class FamilySpendingApplication:
         )
         return tuple(sorted(mappings.categories))
 
+    def list_manual_descriptions(self) -> tuple[str, ...]:
+        """Return distinct source-native Manual descriptions, newest first, for lightweight reuse hints."""
+        seen: set[str] = set()
+        descriptions: list[str] = []
+        for entry in reversed(read_manual_source_entries(self.paths.manual_source)):
+            if entry.description is None or entry.description in seen:
+                continue
+            seen.add(entry.description)
+            descriptions.append(entry.description)
+        return tuple(descriptions)
+
     def list_transactions(self) -> tuple[TransactionView, ...]:
         snapshot = self._load_snapshot()
         return tuple(self._view(snapshot, transaction) for transaction in snapshot.transactions)
@@ -172,6 +206,71 @@ class FamilySpendingApplication:
                 f"Transaction {transaction_id!r} does not exist"
             ) from exc
         return self._view(snapshot, transaction)
+
+    def create_manual_input(
+        self,
+        *,
+        transaction_type: object,
+        transaction_date: object,
+        amount: object,
+        description: object,
+        note: object = None,
+    ) -> ManualInputView:
+        """Persist one source-native Manual description and run the shared Mapping/Reconciliation pipeline."""
+        type_value = self._required_text(transaction_type, "type")
+        if type_value not in {"income", "expense"}:
+            raise ApplicationValidationError("type must be either 'income' or 'expense'")
+
+        date_value = self._required_text(transaction_date, "date")
+        try:
+            parsed_date = date.fromisoformat(date_value)
+        except ValueError as exc:
+            raise ApplicationValidationError(
+                f"date must use YYYY-MM-DD format, got {date_value!r}"
+            ) from exc
+
+        amount_value = self._required_text(amount, "amount")
+        try:
+            parsed_amount = Decimal(amount_value)
+        except (InvalidOperation, ValueError) as exc:
+            raise ApplicationValidationError(
+                f"amount must be a decimal string, got {amount_value!r}"
+            ) from exc
+        if not parsed_amount.is_finite():
+            raise ApplicationValidationError(
+                f"amount must be a finite decimal string, got {amount_value!r}"
+            )
+
+        description_value = self._required_text(description, "description")
+        note_value = self._optional_text(note, "note")
+        entry = create_manual_source_entry(
+            transaction_type=type_value,
+            transaction_date=parsed_date,
+            amount=parsed_amount,
+            description=description_value,
+            note=note_value,
+        )
+        try:
+            result = submit_manual_input(
+                entry,
+                transactions_path=self.paths.transactions,
+                manual_source_path=self.paths.manual_source,
+                source_links_path=self.paths.source_links,
+                merchants_path=self.paths.merchants,
+                categories_path=self.paths.categories,
+                overrides_path=self.paths.overrides,
+                output_path=self.paths.spending_statistics,
+                emails_dir=self.paths.emails,
+                enrichment_state_path=self.paths.enrichment_state,
+            )
+        except ReconciliationError as exc:
+            raise ApplicationConflictError(str(exc)) from exc
+
+        return ManualInputView(
+            source_record_id=result.source_record_id,
+            action=result.action,
+            transaction=self.get_transaction(result.transaction_id),
+        )
 
     def update_enrichment(
         self,
@@ -194,7 +293,6 @@ class FamilySpendingApplication:
             raise ApplicationNotFoundError(
                 f"Transaction {transaction_id!r} does not exist"
             ) from exc
-
         updated = current
         if merchant is not _UNSET:
             merchant_name = self._optional_text(merchant, "merchant")
@@ -220,12 +318,10 @@ class FamilySpendingApplication:
                 updated,
                 self._optional_text(note, "note"),
             )
-
         try:
             validate_enrichment_state_categories(updated, snapshot.mappings.categories)
         except ValueError as exc:
             raise ApplicationValidationError(str(exc)) from exc
-
         states = tuple(
             updated if state.transaction_id == transaction_id else state
             for state in snapshot.enrichment_states
@@ -343,6 +439,12 @@ class FamilySpendingApplication:
             source_record=snapshot.source_records_by_transaction_id[transaction.id],
             enrichment=snapshot.enrichments_by_transaction_id[transaction.id],
         )
+
+    @staticmethod
+    def _required_text(value: object, field: str) -> str:
+        if not isinstance(value, str) or value.strip() == "":
+            raise ApplicationValidationError(f"{field} must be a non-empty string")
+        return value.strip()
 
     @staticmethod
     def _optional_text(value: object, field: str) -> str | None:

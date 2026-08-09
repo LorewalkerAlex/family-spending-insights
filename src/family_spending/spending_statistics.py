@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
@@ -116,7 +116,6 @@ class SpendingStatisticsProcessor(AnalyticsProcessor[SpendingStatistics]):
                 raise SpendingStatisticsError(
                     f"Net consumption references missing enrichment {consumption.transaction_id!r}"
                 ) from exc
-
             month = transaction.transaction_date.strftime("%Y-%m")
             month_aggregate = by_month.setdefault(month, _new_month_aggregate())
             month_aggregate.total.add(consumption.spending)
@@ -124,15 +123,15 @@ class SpendingStatisticsProcessor(AnalyticsProcessor[SpendingStatistics]):
                 enrichment.category,
                 _Aggregate(),
             ).add(consumption.spending)
+            # Merchant identity can be known while Category remains unclassified, and vice versa.
             merchant_key = (
                 enrichment.merchant_name,
                 enrichment.display_name,
-                enrichment.is_unclassified,
+                enrichment.merchant_name is None,
             )
             month_aggregate.merchants.setdefault(merchant_key, _Aggregate()).add(
                 consumption.spending
             )
-
         monthly_statistics: list[MonthlySpendingStatistics] = []
         for month in sorted(by_month, reverse=True):
             aggregate = by_month[month]
@@ -192,7 +191,6 @@ class SpendingStatisticsProcessor(AnalyticsProcessor[SpendingStatistics]):
                     merchants=merchants,
                 )
             )
-
         total_spending = sum(
             (month.total_spending for month in monthly_statistics),
             start=ZERO,

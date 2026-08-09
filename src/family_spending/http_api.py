@@ -50,6 +50,16 @@ class _RequestHandler(BaseHTTPRequestHandler):
                     {"categories": list(self.server.application.list_categories())},
                 )
                 return
+            if path == "/api/manual-descriptions":
+                self._send_json(
+                    HTTPStatus.OK,
+                    {
+                        "descriptions": list(
+                            self.server.application.list_manual_descriptions()
+                        )
+                    },
+                )
+                return
             if path == "/api/transactions":
                 self._send_json(
                     HTTPStatus.OK,
@@ -73,6 +83,42 @@ class _RequestHandler(BaseHTTPRequestHandler):
             self._send_error_json(HTTPStatus.NOT_FOUND, "Route not found")
         except ApplicationNotFoundError as exc:
             self._send_error_json(HTTPStatus.NOT_FOUND, str(exc))
+        except ApplicationValidationError as exc:
+            self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+        except ApplicationError as exc:
+            self._send_error_json(HTTPStatus.CONFLICT, str(exc))
+        except Exception as exc:
+            self._send_error_json(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
+
+    def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        try:
+            path = urlsplit(self.path).path
+            if path != "/api/manual-inputs":
+                self._send_error_json(HTTPStatus.NOT_FOUND, "Route not found")
+                return
+
+            payload = self._read_json_object()
+            allowed = {"type", "date", "amount", "description", "note"}
+            unknown = sorted(set(payload) - allowed)
+            if unknown:
+                raise ApplicationValidationError(
+                    f"Unknown Manual Input fields: {unknown!r}"
+                )
+            required = ("type", "date", "amount", "description")
+            missing = [field for field in required if field not in payload]
+            if missing:
+                raise ApplicationValidationError(
+                    f"Manual Input is missing required fields: {missing!r}"
+                )
+
+            result = self.server.application.create_manual_input(
+                transaction_type=payload["type"],
+                transaction_date=payload["date"],
+                amount=payload["amount"],
+                description=payload["description"],
+                note=payload.get("note"),
+            )
+            self._send_json(HTTPStatus.CREATED, {"manual_input": result.to_dict()})
         except ApplicationValidationError as exc:
             self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
         except ApplicationError as exc:
@@ -153,7 +199,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(content_length))
         self.send_header("Cache-Control", "no-store")
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, PATCH, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
     def log_message(self, format: str, *args: object) -> None:
@@ -169,7 +215,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    """Synchronize source-driven state once, then serve client reads and downstream-only Enrichment edits."""
+    """Synchronize source-driven state once, then serve local client commands through Application use cases."""
     args = build_parser().parse_args()
     application = FamilySpendingApplication()
     try:
