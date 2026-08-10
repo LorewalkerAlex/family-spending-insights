@@ -26,6 +26,9 @@ class LocalDashboardContractTests(unittest.TestCase):
             "manual-entry.css",
             "transactions.js",
             "transactions.css",
+            "mapping-review.js",
+            "mapping-review.css",
+            "mapping-review-api.test.js",
         }
         self.assertEqual(
             {path.name for path in DASHBOARD.iterdir() if path.is_file()},
@@ -37,6 +40,7 @@ class LocalDashboardContractTests(unittest.TestCase):
         self.assertIn('href="./styles.css"', html)
         self.assertIn('href="./transactions.css"', html)
         self.assertIn('href="./manual-entry.css"', html)
+        self.assertIn('href="./mapping-review.css"', html)
         self.assertIn('src="../node_modules/chart.js/dist/chart.umd.js"', html)
         self.assertIn('src="./api.js"', html)
         self.assertIn('src="./charts.js"', html)
@@ -44,6 +48,7 @@ class LocalDashboardContractTests(unittest.TestCase):
         self.assertIn('src="./application-api.js"', html)
         self.assertIn('src="./transactions.js"', html)
         self.assertIn('src="./manual-entry.js"', html)
+        self.assertIn('src="./mapping-review.js"', html)
         self.assertIsNone(re.search(r"https?://", html, flags=re.IGNORECASE))
 
     def test_api_reads_formal_statistics_and_schema_v2(self) -> None:
@@ -94,6 +99,24 @@ class LocalDashboardContractTests(unittest.TestCase):
         self.assertIn("findSimilarManualDescriptions", entry_source)
         self.assertNotIn("service.getCategories", entry_source)
         self.assertNotIn("Reconciliation", entry_source)
+
+    def test_mapping_review_uses_application_api_and_keeps_single_transaction_edits_separate(self) -> None:
+        html = (DASHBOARD / "index.html").read_text(encoding="utf-8")
+        api_source = (DASHBOARD / "application-api.js").read_text(encoding="utf-8")
+        review_source = (DASHBOARD / "mapping-review.js").read_text(encoding="utf-8")
+        self.assertIn("data-mapping-review", html)
+        self.assertIn("data-mapping-review-list", html)
+        self.assertIn("data-mapping-review-merchant", html)
+        self.assertIn("data-mapping-review-category", html)
+        self.assertIn("更新 Mapping 并应用", html)
+        self.assertIn("仅修改这一笔", html)
+        self.assertIn('request("/mapping-reviews")', api_source)
+        self.assertIn('request("/mapping-reviews/preview"', api_source)
+        self.assertIn('request("/mapping-reviews/apply"', api_source)
+        self.assertIn("service.previewMappingReview", review_source)
+        self.assertIn("service.applyMappingReview", review_source)
+        self.assertIn("findSimilarMerchantNames", review_source)
+        self.assertNotIn("Reconciliation", review_source)
 
     def test_chart_runtime_has_no_remote_url(self) -> None:
         source = (DASHBOARD / "charts.js").read_text(encoding="utf-8")

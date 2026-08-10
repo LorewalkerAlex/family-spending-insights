@@ -16,7 +16,6 @@
 本文不讨论具体数据库表、API 协议、类与函数设计、并发控制、部署方式、任务调度技术、缓存策略或具体 UI。
 
 ---
-
 ## 2. 当前阶段目标
 
 长期目标是形成一个家庭财务平台，可逐步支持：
@@ -39,7 +38,6 @@
 - Scheduled Input 不是独立 Source，而是自动调用 Manual Source 的流程。
 
 ---
-
 ## 3. 总体数据 Pipeline
 
 系统从代码执行角度是一条主动调用的下游 Pipeline：
@@ -84,13 +82,11 @@ Manual Input
 Enrichment Update
 → downstream analytics / projection
 ```
-
 不会因此重新修改 Transaction、Source Record 或已经确定的 Reconciliation 关系。
 
 某个处理阶段可以在执行时读取其他当前状态作为辅助信息。例如 Reconciliation 可以读取当前 Merchant 信息作为匹配证据。这种读取不意味着被读取的数据变成该阶段的上游，也不意味着其变化会自动反向重跑已经完成的上游处理。
 
 ---
-
 ## 4. Source
 
 ### 4.1 定义
@@ -116,7 +112,6 @@ Manual Source
 ```
 
 未来可以根据真实需求增加 SMS、其他银行或其他来源。
-
 ### 4.3 Scheduled Input
 
 Scheduled Input 不是独立 Source。
@@ -155,9 +150,7 @@ Manual Source 不需要为了统一模型而强行制造一个独立 Artifact。
 Source Artifact 是否存在、如何保存，由具体 Source 决定。
 
 ---
-
 ## 6. Source Record
-
 ### 6.1 定义
 
 Source Record 是某个 Source 经过 Adapter 规范化后，对一笔候选财务事实的来源级表达。
@@ -188,9 +181,7 @@ SourceRecord
 - `currency`：币种；
 - `description`：来源提供的原始文本，可选；
 - source-specific provenance：仅该 Source 需要的追溯信息。
-
 不要求所有 Source 都伪造相同的来源定位字段。
-
 ### 6.2 当前 CMB Email 契约映射
 
 当前 `CmbTransaction` / `transactions.csv` 已有字段：
@@ -219,12 +210,9 @@ CMB-specific provenance:
 - source_email
 - source_index
 ```
-
 因此现有 CMB Email 数据可以无损进入新的 Source Record 模型。
 
 当前 `transaction_id` 在新架构中更接近 CMB Source Record 的来源身份，不应直接假定为未来系统级 Transaction ID。
-
-
 ### 6.3 Manual Source 契约映射
 
 Manual Input 同样先保存来源级原始事实，而不是直接把 Canonical Merchant / Category 当成 Source 字段。当前输入语义为：
@@ -247,13 +235,11 @@ SourceRecord.amount       ← amount
 SourceRecord.currency     ← CNY
 SourceRecord.description  ← 用户原始 description
 ```
-
 `description` 必须保留用户输入的来源文本，不用规范化 Merchant 覆盖。`note` 是用户补充信息，可在显式 Manual Input command 中进入当前 Enrichment，但不进入 Transaction Core。Merchant / Category 继续通过共享 `description → merchant → default category` Mapping 路径建立。
 
 Manual Input 界面可以读取历史 Manual description 做非常轻量的复用提示，例如忽略空白或大小写差异、有限的前缀候选；这种匹配只用于避免误建重复 description，不是自动 Mapping，也不得静默合并语义不同的文本。用户仍可明确新建 description。新增且未命中 Mapping 的 description 与 CMB 未匹配 description 一样进入统一 Mapping Review。
 
 ---
-
 ## 7. Transaction
 
 ### 7.1 定义
@@ -291,7 +277,6 @@ type = income, amount > 0
 退款不是 Income。
 
 信用卡还款不属于当前外部 Expense Transaction。
-
 ### 7.3 Transaction 不包含的内容
 
 以下内容不属于 Transaction Core：
@@ -313,7 +298,6 @@ source type
 ---
 
 ## 8. Reconciliation
-
 ### 8.1 定义
 
 Reconciliation 判断一个新的 Source Record 是否对应系统中已经存在的 Transaction。
@@ -339,7 +323,6 @@ CMB Source Record ─────┘
 ### 8.2 Reconciliation 是 Source-aware 的
 
 不同 Source 的处理规则不是对称的。
-
 #### CMB Email
 
 信用卡数据是对应信用卡交易的权威来源。
@@ -361,7 +344,6 @@ Manual Source 在创建新 Transaction 前必须先检查是否已经存在对�
 - 历史 Manual Source 已经产生的 Transaction。
 
 只有不存在对应 Transaction 时，Manual Source 才创建新的 Transaction。
-
 ### 8.3 匹配证据
 
 第一版匹配主要使用：
@@ -401,7 +383,6 @@ CMB 的 `source_email + source_index` 等 provenance 可以用于稳定来源身
 跨来源匹配才需要金额、日期、Merchant 等证据。
 
 ---
-
 ## 9. Enrichment
 
 ### 9.1 定义
@@ -435,7 +416,6 @@ query / analysis-time view
 ```
 
 Transaction 确定以后，不因为 Merchant、Category 或 Note 的修改而变化。
-
 ### 9.3 Mapping Review 与单笔例外
 
 人工审核的主要目标是修正或建立稳定 Mapping path，而不是默认逐笔编辑 Transaction。新账单或 Manual Source 出现未匹配 description 时，正常审核路径应是：
@@ -449,9 +429,7 @@ description
 ```
 
 其中 `description → merchant` 的修改影响对应 description；`merchant → default category` 的修改影响仍跟随该默认值的 Merchant 交易。只有某笔交易实际用途确实偏离稳定 Mapping 时，才使用 transaction-level Enrichment exception。
-
 PC Web、微信小程序和未来客户端必须通过统一 Application / API 执行 Mapping Review、单笔例外以及 Note 修改，不直接写 YAML 或其他底层存储。Application command 负责明确影响范围、更新当前 Enrichment state，并继续刷新下游结果。
-
 ### 9.4 Reconciliation 对 Enrichment 的使用
 
 Reconciliation 可以在执行时读取当前 Merchant 等 Enrichment 信息，作为匹配证据。
@@ -463,7 +441,6 @@ Reconciliation 可以在执行时读取当前 Merchant 等 Enrichment 信息，�
 - 不会因为 Enrichment 改变而自动重新解释历史 Source Record 与 Transaction 的既有关系。
 
 ---
-
 ## 10. Analytics 与 Projection
 
 Analytics 消费正式 Transaction 与当前 Enrichment 的组合视图。
@@ -488,7 +465,6 @@ Forecast 是分析行为，不是新的核心 Transaction 或预测交易事实�
 Analytics / Projection 不反向修改 Transaction、Source Record 或 Enrichment。
 
 ---
-
 ## 11. Application / API 与客户端
 
 PC Web、微信小程序以及未来 App 共用同一套后端 Application / API。
@@ -505,7 +481,6 @@ Application / API 承接：
 客户端负责交互与展示，不复制核心数据处理规则，也不直接操作底层存储。
 
 ---
-
 ## 12. 数据读写与存储边界
 
 HLD 不绑定具体持久化方案。
@@ -548,7 +523,6 @@ Concrete Storage
 ```
 
 典型路径：
-
 ### Manual Input
 
 ```text
@@ -581,7 +555,6 @@ Enrichment Update
 → downstream processing
 → Analytics / Projection
 ```
-
 ### Analytics Logic Update
 
 ```text
@@ -592,13 +565,11 @@ Analytics Update
 不会触碰 Source、Reconciliation、Transaction 或 Enrichment。
 
 ---
-
 ## 14. 当前实现落地状态与后续迁移约束
 
-当前已经有三条核心领域纵向路径沿本 HLD 的边界落地：CMB Email、Manual Source / Cross-source Reconciliation，以及 Enrichment 可编辑 / Application API；本地 Dashboard 也已作为第一个真实客户端接入 Application/API，并可直接提交 Manual Input。现有 Email、CSV、正式 Mapping、退款规则与统计 schema v2 契约继续保留。
+当前已经有四条核心领域纵向路径沿本 HLD 的边界落地：CMB Email、Manual Source / Cross-source Reconciliation、Enrichment 可编辑 / Application API，以及 Mapping Review / Mapping Correction；本地 Dashboard 也已作为第一个真实客户端接入 Application/API，并可直接提交 Manual Input、执行 Mapping Review 和提交 transaction-only Enrichment exception。现有 Email、CSV、正式 Mapping、退款规则与统计 schema v2 契约继续保留。
 
 当前实现状态：
-
 1. `CmbTransaction` / `transactions.csv` 保持原有六字段来源契约，并无损进入 CMB Source Record；CMB Source Record 的既有 `transaction_id` 作为来源身份保留，系统 Transaction 使用独立身份，并通过 Source Record → Transaction 关系连接。
 2. CMB Email 继续作为对应信用卡财务事实的 authoritative Source；同一 CMB Source Record 重跑保持幂等。Manual Source 使用独立 Source Record，并在创建 Transaction 前同时检查 CMB-backed 与 Manual-backed Transaction。
 3. Cross-source Reconciliation 保持 source-aware / asymmetric：Manual 唯一匹配时复用已有 Transaction，无匹配时创建新 Transaction，多候选无法唯一判断时拒绝；CMB 后到并匹配 manual-only Transaction 时复用同一 Transaction identity，并由 CMB 成为该信用卡财务事实的 authoritative Source。
@@ -614,12 +585,15 @@ Analytics Update
 13. Source 在 Application 初始化后发生变化时，client-only 查询/编辑不会在旧 link 集合上静默继续；Application 会要求重新执行 `initialize()`，先完成 Source / Reconciliation / downstream 同步。
 14. 消费统计继续作为下游 Analytics / Projection。在相同正式 CMB-only 数据下，当前主链仍保持 schema v2 统计输出与迁移前正式基线字节级一致。
 15. 本地 Dashboard 的聚合视图继续读取 `spending_statistics.json` Projection；Manual Input、逐笔 Transaction 浏览与 Merchant / Category / Note 编辑通过 Application/API 完成。Manual Input 当前输入原始 description，并从后端读取历史 Manual description 做轻量复用提示；新 description 未命中 Mapping 时保持待分类。创建成功后重新读取 Transaction Workspace 与已经由 Application 重建的 Projection。客户端只做展示、筛选和命令提交，不复制 Reconciliation、Enrichment 或消费聚合规则；Application/API 暂时不可用不会改变已生成 Projection 的可读性。
-16. 当前逐笔 Enrichment 编辑仍是已实现能力，但不应继续作为正式审核主工作流扩展。下一阶段应把未分类 / Mapping 错误处理收敛为 Mapping Review：默认修正或建立 `description → merchant → default category` 路径并应用到受影响历史交易，只有明确的特殊交易才使用 transaction-level exception。
-
-当前本地文件持久化只是这一阶段的 concrete storage，不改变 HLD 的存储无关边界。后续若实现 Mapping / Default / Override 的统一编辑入口、更多 Source、正式客户端或新的存储实现，应继续沿相同 Domain / Application 边界扩展，不要为了新能力重新合并 Source、Transaction、Enrichment 或 Analytics。
+16. 正常审核入口已经落地为 Mapping Review：CMB 与 Manual Source 的未匹配 description 进入同一 workspace，并按 description 聚合交易笔数、金额和来源类型；逐笔 Transaction Workspace 不再承担正常 Mapping 审核职责。
+17. Mapping Review Preview 分别计算 `description → Merchant` 和 `Merchant → default Category` 的实际传播范围，并报告被保留的 transaction-only Merchant / Category 例外和总影响 Enrichment 数量。新 Merchant 必须同时确定正式默认 Category，并在 Apply 前显式二次确认。
+18. Preview token 绑定当前 Mapping 选择以及与影响范围相关的 Mapping / Enrichment 状态；预览后底层状态变化时旧 token 失效，Apply 必须拒绝并要求重新 Preview，避免影响范围静默扩大或缩小。
+19. Mapping Review Apply 会更新 `merchants.yaml` / `categories.yaml`，并只传播到仍跟随修改前 Mapping 的当前 Enrichment state。已有显式 transaction-only Merchant / Category exception 保持原决定，不会被 Mapping Correction 静默覆盖。
+20. Mapping Review mutation 从 Mapping / Enrichment 阶段继续执行 downstream Projection，不重新执行 Source Adapter、Reconciliation 或 Transaction identity 构建。Mapping、affected Enrichment 与 Projection 在单次 Application command 中使用文件快照协调；任一步失败时恢复命令前状态。
+21. `transaction_category_overrides.jsonl` 仍保持第 7 条所述 legacy bootstrap 角色，本轮 Mapping Review 不向该文件新增记录。后续仍需独立迁移其中的历史人工决定到 persistent Enrichment，再移除正常 runtime 对 legacy override 文件的依赖。
+当前本地文件持久化只是这一阶段的 concrete storage，不改变 HLD 的存储无关边界。下一阶段优先处理 legacy transaction category override → persistent Enrichment 的历史迁移与 runtime 依赖收敛；后续若实现更多 Source、正式客户端或新的存储实现，仍应继续沿相同 Domain / Application 边界扩展，不要为了新能力重新合并 Source、Transaction、Enrichment 或 Analytics。
 
 ---
-
 ## 15. 当前非目标
 
 当前 HLD 不提前设计：
@@ -641,7 +615,6 @@ Analytics Update
 这些内容只有在真实需求进入实现阶段并影响当前边界时再设计。
 
 ---
-
 ## 16. 设计结论
 
 当前系统的基础架构可以概括为：
@@ -659,5 +632,4 @@ Analytics Update
 - 某一阶段修改后只继续执行下游，上游保持不变；
 - Application / API 为所有客户端提供统一的数据读取和修改入口；
 - 具体存储技术通过数据访问边界隔离，留到 Technical Design 决定。
-
-CMB Email、Manual Source / Cross-source Reconciliation 与 Enrichment 可编辑 / Application API 三条核心纵向切片已经验证这些边界可以在现有代码上落地；本地 Dashboard 进一步验证了客户端可以在不复制核心业务规则的前提下消费 Projection，并通过统一 Application/API 创建 Manual Input 和修改 Enrichment。后续 Source、Application / API 与客户端能力应继续沿相同领域边界按完整纵向切片推进。
+CMB Email、Manual Source / Cross-source Reconciliation、Enrichment 可编辑 / Application API 与 Mapping Review / Mapping Correction 四条核心纵向切片已经验证这些边界可以在现有代码上落地；本地 Dashboard 进一步验证了客户端可以在不复制核心业务规则的前提下消费 Projection，并通过统一 Application/API 创建 Manual Input、维护 Mapping 和提交 transaction-only Enrichment exception。后续 Source、Application / API 与客户端能力应继续沿相同领域边界按完整纵向切片推进。

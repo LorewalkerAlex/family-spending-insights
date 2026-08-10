@@ -1,0 +1,242 @@
+.mapping-review-card {
+  margin-top: 24px;
+  padding: 24px;
+  border: 1px solid #d9dde5;
+  border-radius: 18px;
+  background: #fff;
+}
+
+.mapping-review-card__heading,
+.mapping-review-detail__heading,
+.mapping-review-form__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.mapping-review-card__heading h2,
+.mapping-review-detail__heading h3 {
+  margin: 0;
+}
+
+.mapping-review-card__heading p,
+.mapping-review-detail__heading p {
+  margin: 6px 0 0;
+}
+
+.mapping-review-card__count {
+  white-space: nowrap;
+  font-size: 0.9rem;
+  color: #5d6470;
+}
+
+.mapping-review-state,
+.mapping-review-error,
+.mapping-review-empty,
+.mapping-review-detail-empty,
+.mapping-review-form__status,
+.mapping-review-form__hint,
+.mapping-review-detail__meta,
+.mapping-review-detail__exception-hint {
+  color: #5d6470;
+}
+
+.mapping-review-error {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: #fff4f2;
+}
+
+.mapping-review-error p {
+  margin-top: 0;
+}
+
+.mapping-review-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.9fr) minmax(340px, 1.4fr);
+  gap: 20px;
+  margin-top: 18px;
+}
+
+.mapping-review-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 520px;
+  overflow: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+}
+
+.mapping-review-list__item + .mapping-review-list__item {
+  border-top: 1px solid #eceef2;
+}
+
+.mapping-review-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mapping-review-row:hover,
+.mapping-review-row--selected {
+  background: #f5f7fb;
+}
+
+.mapping-review-row__identity,
+.mapping-review-row__values {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mapping-review-row__identity {
+  min-width: 0;
+}
+
+.mapping-review-row__identity strong {
+  overflow-wrap: anywhere;
+}
+
+.mapping-review-row__identity span,
+.mapping-review-row__values span {
+  color: #6b7280;
+  font-size: 0.84rem;
+}
+
+.mapping-review-row__values {
+  flex: 0 0 auto;
+  align-items: flex-end;
+}
+
+.mapping-review-detail {
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  background: #fbfcfe;
+}
+
+.mapping-review-detail__heading strong {
+  overflow-wrap: anywhere;
+}
+
+.mapping-review-detail__exception-hint {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #f2f5fa;
+}
+
+.mapping-review-form {
+  display: grid;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.mapping-review-form__field {
+  display: grid;
+  gap: 8px;
+}
+
+.mapping-review-form__field label {
+  font-weight: 650;
+}
+
+.mapping-review-form__field input,
+.mapping-review-form__field select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid #cfd4dc;
+  border-radius: 10px;
+  background: #fff;
+  font: inherit;
+}
+
+.mapping-review-form__hint {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.mapping-review-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mapping-review-suggestion {
+  padding: 7px 10px;
+  border: 1px solid #ccd3df;
+  border-radius: 999px;
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.84rem;
+}
+
+.mapping-review-impact {
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: #f2f7f4;
+}
+
+.mapping-review-impact h4 {
+  margin: 0 0 8px;
+}
+
+.mapping-review-impact ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.mapping-review-impact li + li {
+  margin-top: 6px;
+}
+
+.mapping-review-impact__emphasis {
+  font-weight: 650;
+}
+
+.mapping-review-form__actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.mapping-review-form__status {
+  width: 100%;
+  margin: 0;
+}
+
+.mapping-review-single-exception {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.mapping-review-single-exception p {
+  margin: 0 0 10px;
+  color: #5d6470;
+}
+
+@media (max-width: 860px) {
+  .mapping-review-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mapping-review-card__heading,
+  .mapping-review-detail__heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

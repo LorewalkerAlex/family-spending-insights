@@ -60,6 +60,12 @@ class _RequestHandler(BaseHTTPRequestHandler):
                     },
                 )
                 return
+            if path == "/api/mapping-reviews":
+                self._send_json(
+                    HTTPStatus.OK,
+                    {"mapping_review": self.server.application.get_mapping_review_workspace().to_dict()},
+                )
+                return
             if path == "/api/transactions":
                 self._send_json(
                     HTTPStatus.OK,
@@ -93,32 +99,16 @@ class _RequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         try:
             path = urlsplit(self.path).path
-            if path != "/api/manual-inputs":
-                self._send_error_json(HTTPStatus.NOT_FOUND, "Route not found")
+            if path == "/api/manual-inputs":
+                self._handle_manual_input()
                 return
-
-            payload = self._read_json_object()
-            allowed = {"type", "date", "amount", "description", "note"}
-            unknown = sorted(set(payload) - allowed)
-            if unknown:
-                raise ApplicationValidationError(
-                    f"Unknown Manual Input fields: {unknown!r}"
-                )
-            required = ("type", "date", "amount", "description")
-            missing = [field for field in required if field not in payload]
-            if missing:
-                raise ApplicationValidationError(
-                    f"Manual Input is missing required fields: {missing!r}"
-                )
-
-            result = self.server.application.create_manual_input(
-                transaction_type=payload["type"],
-                transaction_date=payload["date"],
-                amount=payload["amount"],
-                description=payload["description"],
-                note=payload.get("note"),
-            )
-            self._send_json(HTTPStatus.CREATED, {"manual_input": result.to_dict()})
+            if path == "/api/mapping-reviews/preview":
+                self._handle_mapping_review_preview()
+                return
+            if path == "/api/mapping-reviews/apply":
+                self._handle_mapping_review_apply()
+                return
+            self._send_error_json(HTTPStatus.NOT_FOUND, "Route not found")
         except ApplicationValidationError as exc:
             self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
         except ApplicationError as exc:
@@ -163,6 +153,75 @@ class _RequestHandler(BaseHTTPRequestHandler):
             self._send_error_json(HTTPStatus.CONFLICT, str(exc))
         except Exception as exc:
             self._send_error_json(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
+
+    def _handle_manual_input(self) -> None:
+        payload = self._read_json_object()
+        allowed = {"type", "date", "amount", "description", "note"}
+        unknown = sorted(set(payload) - allowed)
+        if unknown:
+            raise ApplicationValidationError(
+                f"Unknown Manual Input fields: {unknown!r}"
+            )
+        required = ("type", "date", "amount", "description")
+        missing = [field for field in required if field not in payload]
+        if missing:
+            raise ApplicationValidationError(
+                f"Manual Input is missing required fields: {missing!r}"
+            )
+        result = self.server.application.create_manual_input(
+            transaction_type=payload["type"],
+            transaction_date=payload["date"],
+            amount=payload["amount"],
+            description=payload["description"],
+            note=payload.get("note"),
+        )
+        self._send_json(HTTPStatus.CREATED, {"manual_input": result.to_dict()})
+
+    def _handle_mapping_review_preview(self) -> None:
+        payload = self._read_json_object()
+        allowed = {"description", "merchant", "category"}
+        self._require_exact_fields(payload, allowed, allowed, "Mapping Review preview")
+        preview = self.server.application.preview_mapping_review(
+            description=payload["description"],
+            merchant=payload["merchant"],
+            category=payload["category"],
+        )
+        self._send_json(HTTPStatus.OK, {"preview": preview.to_dict()})
+
+    def _handle_mapping_review_apply(self) -> None:
+        payload = self._read_json_object()
+        allowed = {
+            "description",
+            "merchant",
+            "category",
+            "preview_token",
+            "confirm_new_merchant",
+        }
+        required = {"description", "merchant", "category", "preview_token"}
+        self._require_exact_fields(payload, allowed, required, "Mapping Review apply")
+        preview = self.server.application.apply_mapping_review(
+            description=payload["description"],
+            merchant=payload["merchant"],
+            category=payload["category"],
+            preview_token=payload["preview_token"],
+            confirm_new_merchant=payload.get("confirm_new_merchant", False),
+        )
+        self._send_json(HTTPStatus.OK, {"mapping_review": preview.to_dict()})
+
+    @staticmethod
+    def _require_exact_fields(
+        payload: dict[str, Any],
+        allowed: set[str],
+        required: set[str],
+        label: str,
+    ) -> None:
+        """Keep command contracts explicit so the HTTP layer cannot silently accept unused client intent."""
+        unknown = sorted(set(payload) - allowed)
+        if unknown:
+            raise ApplicationValidationError(f"Unknown {label} fields: {unknown!r}")
+        missing = sorted(required - set(payload))
+        if missing:
+            raise ApplicationValidationError(f"{label} is missing required fields: {missing!r}")
 
     def _read_json_object(self) -> dict[str, Any]:
         """Require one small JSON object; this local transport intentionally has no generic request framework."""

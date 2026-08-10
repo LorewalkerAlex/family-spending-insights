@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="./styles.css" />
     <link rel="stylesheet" href="./transactions.css" />
     <link rel="stylesheet" href="./manual-entry.css" />
+    <link rel="stylesheet" href="./mapping-review.css" />
     <script src="../node_modules/chart.js/dist/chart.umd.js" defer></script>
     <script src="./api.js" defer></script>
     <script src="./charts.js" defer></script>
@@ -15,6 +16,7 @@
     <script src="./application-api.js" defer></script>
     <script src="./transactions.js" defer></script>
     <script src="./manual-entry.js" defer></script>
+    <script src="./mapping-review.js" defer></script>
   </head>
   <body>
     <main class="page-shell">
@@ -22,7 +24,7 @@
         <p class="eyebrow">Family Spending Insights</p>
         <h1>家庭消费统计</h1>
         <p class="page-header__description">
-          查看后端生成的净消费统计，通过本地 Application/API 手工录入收入/支出，并浏览逐笔 Transaction、维护 Merchant / Category / Note。业务统计、Reconciliation 和写回规则仍全部由后端负责。
+          查看后端生成的净消费统计，通过本地 Application/API 手工录入收入/支出、审核未匹配 description 的 Mapping，并浏览逐笔 Transaction 例外。业务统计、Reconciliation 和写回规则仍全部由后端负责。
         </p>
       </header>
       <p class="state-message" data-state="loading">正在读取消费统计…</p>
@@ -99,6 +101,63 @@
             </div>
           </form>
         </section>
+        <section class="mapping-review-card" data-mapping-review aria-labelledby="mapping-review-title">
+          <div class="mapping-review-card__heading">
+            <div>
+              <p class="eyebrow">Mapping Review</p>
+              <h2 id="mapping-review-title">待分类 description 审核</h2>
+              <p>按原始 description 聚合 CMB 与 Manual 待审核交易。正常处理会修改长期 Mapping，并只传播到仍跟随旧 Mapping 的 Enrichment；已有单笔例外不会被覆盖。</p>
+            </div>
+            <span class="mapping-review-card__count"><span data-mapping-review-count>—</span> 个待审核 description</span>
+          </div>
+          <p class="mapping-review-state" data-mapping-review-loading>正在读取 Mapping Review…</p>
+          <div class="mapping-review-error" data-mapping-review-error hidden>
+            <p data-mapping-review-error-message>无法读取 Mapping Review。</p>
+            <button class="secondary-button" type="button" data-action="retry-mapping-review">重新连接</button>
+          </div>
+          <p class="mapping-review-empty" data-mapping-review-empty hidden>当前没有未匹配 description。</p>
+          <div class="mapping-review-grid">
+            <ul class="mapping-review-list" data-mapping-review-list></ul>
+            <div class="mapping-review-detail">
+              <p class="mapping-review-detail-empty" data-mapping-review-detail-empty>选择一个 description 后建立或修正 Mapping path。</p>
+              <div data-mapping-review-detail hidden>
+                <div class="mapping-review-detail__heading">
+                  <div>
+                    <h3 data-mapping-review-description>—</h3>
+                    <p class="mapping-review-detail__meta" data-mapping-review-meta>—</p>
+                  </div>
+                </div>
+                <p class="mapping-review-detail__exception-hint" data-mapping-review-exception-hint></p>
+                <form class="mapping-review-form" data-mapping-review-form>
+                  <div class="mapping-review-form__field">
+                    <label for="mapping-review-merchant">Merchant</label>
+                    <input id="mapping-review-merchant" type="text" autocomplete="off" data-mapping-review-merchant required />
+                    <p class="mapping-review-form__hint" data-mapping-review-merchant-hint>先搜索并复用已有 Merchant；确实不存在时才新建。</p>
+                    <div class="mapping-review-suggestions" data-mapping-review-merchant-suggestions hidden></div>
+                  </div>
+                  <div class="mapping-review-form__field">
+                    <label for="mapping-review-category">Merchant 默认 Category</label>
+                    <select id="mapping-review-category" data-mapping-review-category required></select>
+                    <p class="mapping-review-form__hint">选择已有 Merchant 时，如果这里改成不同 Category，会同时修改该 Merchant 的长期默认规则；预览会给出真实影响笔数。</p>
+                  </div>
+                  <div class="mapping-review-impact" data-mapping-review-impact hidden>
+                    <h4>预计影响</h4>
+                    <ul data-mapping-review-impact-list></ul>
+                  </div>
+                  <div class="mapping-review-form__actions">
+                    <button class="secondary-button" type="submit" data-action="preview-mapping-review">预览 Mapping 影响</button>
+                    <button class="primary-button" type="button" data-action="apply-mapping-review" disabled>更新 Mapping 并应用</button>
+                    <p class="mapping-review-form__status" role="status" aria-live="polite" data-mapping-review-status></p>
+                  </div>
+                </form>
+                <div class="mapping-review-single-exception">
+                  <p><strong>仅修改这一笔？</strong> 不要改 Mapping。请在下方 Transaction Workspace 选择具体交易，使用 transaction-only Enrichment exception。</p>
+                  <button class="secondary-button" type="button" data-action="mapping-review-single-exception">前往 Transaction Workspace</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
         <div data-month-controls>
           <section class="month-card" aria-labelledby="month-title">
             <div class="month-card__selector">
@@ -118,7 +177,7 @@
               <div>
                 <p class="eyebrow">Transaction Workspace</p>
                 <h2 id="transactions-title">逐笔交易与 Enrichment</h2>
-                <p>跟随上方统计月份浏览当前 Transaction。这里的 Merchant / Category 编辑只作为单笔 Enrichment 例外，不修改 Mapping；正常的未分类与 Mapping 修正将在统一 Mapping Review 中处理。保存后由 Application 重建下游 Projection，再刷新本页统计。</p>
+                <p>跟随上方统计月份浏览当前 Transaction。这里的 Merchant / Category 编辑只作为单笔 Enrichment 例外，不修改 Mapping；正常的未分类与 Mapping 修正使用上方 Mapping Review。保存后由 Application 重建下游 Projection，再刷新本页统计。</p>
               </div>
               <span class="transaction-workspace__count"><span data-transactions-count>—</span> 笔</span>
             </div>

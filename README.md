@@ -16,9 +16,7 @@ CMB Email / Manual Input
 → Application / local JSON API
 → local_dashboard/
 ```
-
-项目当前已经实现邮件获取、CMB Source Record / Transaction 身份分离、Manual Source 与跨来源 Reconciliation、正式 Merchant Mapping、独立持久化的当前 Enrichment、退款归并、消费统计 Projection、本地 JSON Application/API，以及支持 Manual Input、逐笔 Transaction 浏览和 Enrichment 编辑的本地 HTML Dashboard。增长率/环比分析、AI 报告、面向公网部署与认证的远程 API、正式微信小程序等仍不在当前实现范围内。
-
+项目当前已经实现邮件获取、CMB Source Record / Transaction 身份分离、Manual Source 与跨来源 Reconciliation、正式 Merchant Mapping、按 description 聚合的 Mapping Review / Mapping Correction、独立持久化的当前 Enrichment、退款归并、消费统计 Projection、本地 JSON Application/API，以及支持 source-native Manual Input、Mapping Review、逐笔 Transaction 浏览和 transaction-only Enrichment exception 的本地 HTML Dashboard。增长率/环比分析、AI 报告、面向公网部署与认证的远程 API、正式微信小程序等仍不在当前实现范围内。
 ## 数据与隐私边界
 
 ```text
@@ -39,7 +37,6 @@ data/
 ```
 
 数据职责：
-
 - `emails/`：从 163 邮箱保存的原始 RFC822 邮件，是不可变事实来源；稳定文件名中的账单日期也用于判断自然月数据是否完整。
 - `screenshots/`：历史 Merchant Mapping 建立和识别验证使用的本地截图。
 - `transactions.csv`：从全部原始邮件全量重建的 CMB 来源级事实数据；进入统一领域模型后对应 `SourceRecord`，不是系统级 Transaction 存储。
@@ -50,7 +47,6 @@ data/
 - `transaction_source_links.jsonl`：当前 Source Record → Transaction 关系。
 - `enrichment_state.jsonl`：当前 Transaction Enrichment authoritative state。
 - `reports/spending_statistics.json`：后端生成、可从正式状态重建的消费统计 Projection。
-
 除三份正式 Mapping 外，`data/` 中的原始邮件、截图、完整交易、运行态 Source/Link/Enrichment 状态、OCR 结果和派生统计默认只保存在本地，不提交到 Git。
 
 正式进入 Git 的数据文件只有：
@@ -62,7 +58,6 @@ data/mappings/transaction_category_overrides.jsonl
 ```
 
 `待分类` 是运行时和界面状态，不是正式 category，也不会写入 Mapping。
-
 ## 环境准备
 
 项目要求 Python 3.14 或更高版本，并使用 uv 管理 Python 环境。
@@ -95,7 +90,6 @@ EMAIL_AUTH_CODE=
 ```text
 src/family_spending/settings.py
 ```
-
 ## 获取原始邮件
 
 ```powershell
@@ -111,7 +105,6 @@ $env:PYTHONPATH="src"; uv run python -m family_spending.ingestion.imap_163
 - 跳过已经存在的邮件，避免重复下载完整内容。
 
 原始 `.eml` 是后续所有交易数据的可追溯来源。账单文件名由邮件日期和内容哈希稳定生成；月份完整性只读取该稳定文件名中的日期，不解析 EML 正文账期。
-
 ## 重建交易事实
 
 ```powershell
@@ -135,7 +128,6 @@ data/transactions.csv
 - `transaction_id` 由来源邮件和邮件内位置稳定生成；在统一领域模型中它作为 CMB `SourceRecord.id`，不再直接充当系统级 Transaction ID。
 
 CSV 字段为：
-
 ```text
 transaction_id
 transaction_date
@@ -146,7 +138,6 @@ source_index
 ```
 
 `read_transactions_csv()` 会严格校验 header、字段完整性、日期、金额、`source_index`、重复 ID、编码和可读性，并在错误中包含路径、行号和相关字段。
-
 ## CMB Source Record 与 Transaction
 
 `CmbTransaction` 继续承担 CMB Email / CSV 边界的数据契约；进入正式主链后，`CmbSourceAdapter` 会把它无损转换为 `SourceRecord`。`CmbReconciler` 再建立独立的系统 Transaction 与 Source Link。
@@ -162,7 +153,6 @@ currency
 ```
 
 原始 description、`source_email`、`source_index`、Merchant 和 Category 都不复制进 Transaction Core。CMB 来源当前是对应信用卡财务事实的 authoritative Source；同一 CMB Source Record 重跑保持幂等。Manual Source 已通过 source-aware Reconciliation 与 CMB-backed / Manual-backed Transaction 做跨来源匹配。
-
 ## Merchant Mapping
 
 正式 Mapping 与交易事实分开维护，不会把标准商户、分类或复核状态写回 `transactions.csv`。
@@ -178,7 +168,6 @@ legacy CMB source id → override category
 为兼容已经人工审核的 `transaction_category_overrides.jsonl`，文件格式暂不迁移。运行时先通过 Source Link 把旧 `transaction_id` 字段中的 CMB Source Record ID 绑定到当前系统 Transaction ID，再应用单笔 category override。
 
 运行顺序为：
-
 ```text
 description 匹配 merchant
 → 获得 merchant 默认 category
@@ -195,14 +184,32 @@ description 匹配 merchant
 - 默认 category 为 `综合购物` 且净消费金额达到高额阈值时会产生非阻断复核信号；
 - 复核信号只存在于运行结果中，不写回正式配置。
 
-运行完整 CMB domain snapshot 的只读诊断与 Mapping / override 一致性检查：
+正常的未分类与 Mapping 错误审核已经收敛为 Mapping Review，而不是默认逐笔编辑 Transaction：
 
+~~~text
+unmapped CMB / Manual description
+→ 按 description 聚合 Review item
+→ 选择已有 Merchant 或明确新建 Merchant
+→ 确认 Merchant 默认 Category
+→ Preview 影响范围
+→ Apply Mapping + affected Enrichment
+→ downstream Projection
+~~~
+
+Mapping Review 当前规则：
+- CMB 与 Manual Source 的未匹配 description 共用同一 Review queue，并按 description 聚合交易笔数、金额和来源类型；
+- Merchant 候选只用于提示，用户必须明确选择或新建，不会静默模糊合并；新 Merchant 需要显式二次确认；
+- Preview 分别说明 `description → Merchant`、`Merchant → default Category` 的作用范围、被保留的 transaction-only 例外以及本次总影响 Enrichment 数量；
+- Apply 只传播到仍然跟随旧 Mapping 的当前 Enrichment state；已有显式 Merchant / Category 单笔例外不会被 Mapping Correction 静默覆盖；
+- Preview token 绑定当前 Mapping 选择和受影响状态；预览后状态发生变化时 Apply 会拒绝旧 token，要求重新预览；
+- Mapping、affected Enrichment 与 Projection 作为同一个 Application mutation 边界处理；失败时恢复命令前快照，避免留下半提交状态。
+
+运行完整 CMB domain snapshot 的只读诊断与 Mapping / override 一致性检查：
 ```powershell
 $env:PYTHONPATH="src"; uv run python -m family_spending.transaction_resolution
 ```
 
 该入口会构建与统计主链一致的 CMB domain snapshot，并执行退款净额计算，以便高额 `综合购物` 复核使用净消费金额；它不写 `spending_statistics.json`，也不修改交易或正式 Mapping。
-
 ## Manual Source 与跨来源 Reconciliation
 
 当前已经实现第二个正式输入入口 Manual Source，用于补充非信用卡交易，或在信用卡账单到达前先记录交易。
@@ -223,7 +230,6 @@ note
 `description` 是用户输入并持久化保存的 Manual Source 原始文本，不是 Canonical Merchant。Manual Input 不直接创建或修改 Merchant / Category；已有 description 如果命中正式 Mapping，会沿用 `description → merchant → default category` 路径，新 description 未命中时进入运行态 `待分类`，后续与 CMB 未匹配 description 共用 Mapping Review。
 
 本地命令行入口：
-
 ~~~powershell
 $env:PYTHONPATH="src"
 uv run python -m family_spending.manual_input `
@@ -237,7 +243,6 @@ uv run python -m family_spending.manual_input `
 Dashboard 也通过 `POST /api/manual-inputs` 调用同一个 Application use case。录入框会从历史 Manual Source 中读取 distinct description，仅做去空白、大小写与前缀级别的轻量候选提示；用户可以复用已有 description，也可以明确新建，不会自动模糊合并。
 
 Manual Input 会主动执行完整下游 Pipeline：
-
 ~~~text
 Manual Input
 → Manual Source Adapter
@@ -251,7 +256,6 @@ Manual Input
 ~~~
 
 跨来源 Reconciliation 当前规则：
-
 - Manual Source 创建新 Transaction 前，会检查已有 CMB-backed 与 Manual-backed Transaction。
 - 找到唯一对应 Transaction 时复用现有 Transaction，不创建重复交易。
 - 无匹配时才创建新的 Transaction。
@@ -261,7 +265,6 @@ Manual Input
 - CMB 后续到达并匹配 manual-only Transaction 时，复用同一个 Transaction identity，并由 CMB 成为该信用卡交易核心财务事实的 authoritative Source。
 - Manual `description` 属于 Source Record 原始事实；Merchant / Category 仍由共享 Mapping / Enrichment 路径决定。Manual `note` 作为用户补充信息进入当前 Enrichment，但不进入 Transaction Core。
 - Manual Input 在真正写入前先完成校验与 Reconciliation；写入 Manual Source、Source Link、Enrichment 或 Projection 任一步失败时，会恢复本次命令前的相关文件状态，避免正常故障路径留下半提交。
-
 本地运行状态包括：
 
 ~~~text
@@ -272,7 +275,6 @@ data/transaction_source_links.jsonl
 这些都属于本地运行数据，不提交到 Git。
 
 当前 Spending Analytics 仍只统计 expense。Manual Source 可以录入 income，但 income 当前只保留为正式 Transaction，不进入现有消费统计。
-
 ## Enrichment Application / API
 
 Enrichment 当前是独立持久化的 authoritative current state，保存在：
@@ -284,17 +286,18 @@ data/enrichment_state.jsonl
 Mapping / Merchant default / 既有 transaction-level override 负责新 Transaction 或缺失状态的初始化；之后的普通统计重建会保留已经存在的 Enrichment 编辑。Transaction Core 仍不包含 Merchant、Category 或 Note。
 
 本地 Application 提供：
-
 - 创建 source-native Manual Input，并复用现有 Mapping / Manual Source / Cross-source Reconciliation / downstream Pipeline；
 - 查询历史 Manual description，供录入时做轻量复用提示；
 - 查询当前 Transaction + Source identity + Enrichment；
 - 查询正式 Category 列表；
-- 修改 Merchant、Category、Note；
+- 查询按未匹配 description 聚合的 Mapping Review workspace；
+- 预览 `description → Merchant` 与 `Merchant → default Category` 修改的准确影响范围；
+- 应用经过预览确认的 Mapping Correction，并只更新仍跟随 Mapping 的当前 Enrichment；
+- 修改单笔 Transaction 的 Merchant、Category、Note，作为 transaction-only Enrichment exception；
 - Enrichment 修改后只继续执行 Refund / Net Consumption / Analytics / Projection；
 - 不因为 Enrichment 编辑重新执行 Source Adapter、Reconciliation 或 Transaction identity 构建。
 
 `category = null` 表示清除显式 Category，并恢复当前 Merchant 的默认分类；如果当前 Merchant 没有默认分类，则回到运行态 `待分类`。
-
 启动最小本地 JSON API：
 
 ```powershell
@@ -307,16 +310,17 @@ $env:PYTHONPATH="src"; uv run --frozen python -m family_spending.http_api
 GET   /api/health
 GET   /api/categories
 GET   /api/manual-descriptions
+GET   /api/mapping-reviews
 GET   /api/transactions
 GET   /api/transactions/{transaction_id}
 POST  /api/manual-inputs
+POST  /api/mapping-reviews/preview
+POST  /api/mapping-reviews/apply
 PATCH /api/transactions/{transaction_id}/enrichment
 ```
-
 API 启动时会先执行 `Application.initialize()`，同步当前 Source / Reconciliation / Enrichment 状态并重建最新 Projection。Source 在初始化后发生变化时，旧 Application snapshot 不会静默继续使用失效 links；应重新启动或重新初始化 Application，使上游 Source / Reconciliation 先收敛。
 
-Application mutation 保持 authoritative state 与可重建 Projection 的提交边界。Enrichment PATCH 不得留下 Enrichment 已更新而 Projection 仍旧的半提交状态；Manual Input 也会在跨 Manual Source / Source Link / Enrichment / Projection 写入失败时恢复本次命令前状态。
-
+Application mutation 保持 authoritative state 与可重建 Projection 的提交边界。Enrichment PATCH 不得留下 Enrichment 已更新而 Projection 仍旧的半提交状态；Manual Input 会在跨 Manual Source / Source Link / Enrichment / Projection 写入失败时恢复本次命令前状态；Mapping Review Apply 同样会快照并协调 Mapping、affected Enrichment 与 Projection，任一步失败时恢复本次命令前状态。
 ## 退款归并
 
 正式统计在 Source Record → Transaction → Enrichment 建立后调用 `reconcile_refunds()`。退款匹配会读取 authoritative Source Record 的 description，并可使用当前 Merchant identity 作为辅助证据；Category 和 transaction override 不参与退款身份判断。
@@ -335,11 +339,9 @@ amount = 0：忽略并单独计数
 2. 若未命中，并且双方 description 已映射到同一 merchant，则在过去 30 个自然日内匹配同额的最近一笔消费；
 3. 若仍未命中，再按同 description 历史消费从近到远累计扣减；
 4. 无法匹配的剩余退款不进入统计，只记录数量和金额摘要。
-
 退款只能抵消历史消费，不能抵消未来交易。Merchant 回退只使用当前 Merchant identity，不使用 Category 或 transaction override。
 
 退款归并不会改写 Transaction Core。原始消费保持正数、退款保持负数；下游得到独立的 `NetConsumption(transaction_id, spending)` 派生结果，其中 `spending` 为正的剩余净消费金额。部分退款仍引用原消费 Transaction；完全退款的 Transaction 和 Source Record 继续存在并参与正式 override 一致性校验，但不会产生 NetConsumption，也不进入消费统计笔数。
-
 ## 生成消费统计
 
 ```powershell
@@ -347,7 +349,6 @@ $env:PYTHONPATH="src"; uv run python -m family_spending.statistics_generation
 ```
 
 完整后端链路为：
-
 ```text
 read CMB transactions + Manual Source records
 → read existing Source Links + current Enrichment state
@@ -363,7 +364,6 @@ read CMB transactions + Manual Source records
    → serialize schema v2 statistics
 → persist current Source Links / Enrichment state / spending Projection
 ```
-
 每次显式运行会从当前完整 Source facts、既有 identity links 与 Enrichment current state 重新构建一致的下游结果。当前数据规模不引入退款缓存、数据库或增量统计状态。
 
 统计包含：
@@ -382,7 +382,6 @@ read CMB transactions + Manual Source records
 - 待分类净消费仍进入总额、category 和 merchant/display 对账；
 - 待分类 merchant 使用原始 description 作为展示名，但不会成为正式 `merchant_name`；
 - 每月总金额和笔数必须分别等于 category 与 merchant/display 汇总之和。
-
 ### 自然月完整性与展示策略
 
 信用卡账单约按每月 10 日切分，因此单份账单不能证明一个完整自然月。对于自然月 `M`，后端要求同时存在：
@@ -405,9 +404,7 @@ M+1 月 10 日账单
 
 - `all_data`：全部月份汇总；
 - `shown_data`：仅 `show=true` 月份汇总。
-
 两种汇总均包含金额、交易笔数和月份数，Dashboard 使用 `shown_data`。金额继续使用人民币最小单位“分”的安全整数表示；文件保持确定性字段顺序和原子替换，不包含逐笔来源邮件或退款分配历史。
-
 ## 本地消费统计 Dashboard
 
 先安装一次本地图表依赖：
@@ -439,11 +436,9 @@ http://localhost:8000/local_dashboard/
 ```text
 /data/reports/spending_statistics.json
 ```
-
-Manual Input 与逐笔 Transaction / Enrichment 都通过本地 API `http://127.0.0.1:8765/api` 读取和修改。API 不可用时，已经生成的聚合统计仍可独立展示；Manual Input 与 Transaction Workspace 会分别显示连接错误。
+Manual Input、Mapping Review 与逐笔 Transaction / Enrichment 都通过本地 API `http://127.0.0.1:8765/api` 读取和修改。API 不可用时，已经生成的聚合统计仍可独立展示；Manual Input、Mapping Review 与 Transaction Workspace 会分别显示连接错误。
 
 当前能力：
-
 - 总览使用 `summary.shown_data`，不会把 `show=false` 月份金额混入当前展示；
 - 月份选择器只列出 `show=true` 月份，并保留全部符合展示策略的月份；
 - 展示后端已经排序的 category 和 merchant/display 汇总；
@@ -451,13 +446,16 @@ Manual Input 与逐笔 Transaction / Enrichment 都通过本地 API `http://127.
 - Manual Input 表单支持录入 `type / date / amount / description` 以及可选 `note`；description 先作为 Manual Source 原始事实保存，输入时只从历史 Manual description 提供轻量复用候选；
 - Manual Input 成功后由后端完成 Reconciliation 与 Projection 刷新，Dashboard 再重新读取统计与 Transaction Workspace；
 - Transaction Workspace 跟随当前月份列出 Transaction，并展示其 Source description 与当前 Enrichment；
-- 当前 Transaction Workspace 的 Merchant / Category 修改只作为单笔 Enrichment 例外，不写 Mapping；正常的未分类与 Mapping 错误审核后续收敛到统一 Mapping Review。Note 同样通过 Application/API 修改；
+- Mapping Review Workspace 按未匹配 description 聚合 CMB 与 Manual Source 交易，并显示笔数、总金额和来源类型；
+- Review 时可以搜索/选择已有 Merchant 或明确新建 Merchant，并选择正式默认 Category；Merchant 相似候选只做提示，不会自动合并；
+- Apply 前必须先 Preview；Preview 明确区分 description Mapping、Merchant 默认 Category、保留的 transaction-only 例外和总影响 Enrichment 数量；新 Merchant Apply 还需要二次确认；
+- Apply 成功后后端已更新正式 Mapping、affected Enrichment 与 Projection，Dashboard 会重新加载 Mapping Review、Transaction Workspace 与统计；
+- Transaction Workspace 的 Merchant / Category 修改继续只作为 transaction-only Enrichment exception，不写 Mapping；Note 同样通过 Application/API 修改；
 - Category 选项来自 `/api/categories`；“跟随商户默认”发送 `category = null`，由后端执行默认分类语义；
 - 保存成功后 Application 已重建下游 Projection，Dashboard 再重新加载 `spending_statistics.json`；
 - 支持统计与 Transaction Workspace 各自的 loading、空数据、错误和重新加载状态；
 - 严格校验 `schema_version === 2`、字段类型、安全整数、月份布尔字段、待分类语义，以及全部月份和展示月份两套汇总对账；
 - 校验失败时停止展示，不在前端修正或重新聚合后端事实。
-
 ### 多图表 POC
 
 图表 POC 从同一份 Dashboard service view model 读取后端已经聚合好的月份/category 数据，不生成第二套统计事实。趋势图按月份正序展示最近 12 个 `show=true` 自然月；月份选择器本身不受 12 个月限制。
@@ -474,11 +472,9 @@ Manual Input 与逐笔 Transaction / Enrichment 都通过本地 API `http://127.
 Category 趋势图补齐缺失月份时使用 0，仅作为已有月度 category 聚合的视图转换。图表金额仍保留“分”的整数值，在 tooltip 中统一格式化成人民币。
 
 Chart.js 固定在项目的 npm 依赖中，并由页面加载本地 `node_modules/chart.js/dist/chart.umd.js`；运行 Dashboard 时不使用 CDN，也不发起其他外部网络请求。Chart.js 内置图例交互用于隐藏/恢复 category 系列。
-
 每张图表独立创建和捕获失败。某一图表初始化或渲染失败时，只在该图表卡片显示错误，不影响总览、月份切换、category/merchant 表格或其他图表。
 
-`local_dashboard/api.js` 负责加载统计 Projection、schema 校验、金额/笔数对账和 view model；`local_dashboard/charts.js` 负责纯图表配置与图表实例生命周期；`local_dashboard/app.js` 负责统计 DOM 状态、月份交互以及将 service 数据交给图表层；`local_dashboard/application-api.js` 负责本地 JSON API contract 和错误边界；`local_dashboard/manual-entry.js` 负责 Manual Input 表单提交；`local_dashboard/transactions.js` 负责 Transaction Workspace 的浏览与编辑交互。前端不重新实现 Reconciliation、Enrichment 规则或消费聚合。
-
+`local_dashboard/api.js` 负责加载统计 Projection、schema 校验、金额/笔数对账和 view model；`local_dashboard/charts.js` 负责纯图表配置与图表实例生命周期；`local_dashboard/app.js` 负责统计 DOM 状态、月份交互以及将 service 数据交给图表层；`local_dashboard/application-api.js` 负责本地 JSON API contract、Mapping Review transport 和错误边界；`local_dashboard/manual-entry.js` 负责 Manual Input 表单提交；`local_dashboard/mapping-review.js` 负责 Mapping Review workspace、Preview 与 Apply 交互；`local_dashboard/transactions.js` 负责 Transaction Workspace 的浏览与单笔例外编辑。前端不重新实现 Reconciliation、Mapping propagation、Enrichment 规则或消费聚合。
 ## Rebuild 支持工具
 
 `scripts/` 中保留了本次 Rebuild 期间建立 Merchant Mapping 时使用的截图切行、OCR 和候选匹配检查工具：
@@ -493,7 +489,6 @@ scripts/inspect_mapping_candidates.py
 这些文件属于 Rebuild 过程资产，仍在仓库中维护，因此相关 OCR 依赖继续保留。它们不是正式消费统计运行链路，不会被邮件获取、交易重建、退款归并、统计生成或 Dashboard 自动调用。
 
 工具只应读取本地截图、OCR 和交易数据，并把结果写到受 `.gitignore` 保护的本地目录。正式运行时仍只读取三份已审核 Mapping。
-
 ## 运行测试
 
 完整 Python 测试：
@@ -505,7 +500,7 @@ $env:PYTHONPATH="src"; uv run --frozen python -m unittest -q
 Dashboard JavaScript 测试：
 
 ```powershell
-node --test local_dashboard/api.test.js local_dashboard/charts.test.js local_dashboard/application-api.test.js
+node --test local_dashboard/api.test.js local_dashboard/charts.test.js local_dashboard/application-api.test.js local_dashboard/mapping-review-api.test.js
 ```
 
 Python 编译检查：
@@ -515,7 +510,6 @@ uv run --frozen python -m compileall -q src tests
 ```
 
 需要定位失败时，再对对应模块使用 `-v`，避免正常验证输出全部测试名称。
-
 ## 当前代码结构
 
 ```text
@@ -534,6 +528,9 @@ local_dashboard/
 ├── application-api.test.js
 ├── manual-entry.js
 ├── manual-entry.css
+├── mapping-review.js
+├── mapping-review.css
+├── mapping-review-api.test.js
 ├── transactions.js
 └── transactions.css
 
@@ -542,7 +539,6 @@ scripts/
 ├── inspect_app_rows.py
 ├── inspect_description_matching.py
 └── inspect_mapping_candidates.py
-
 src/family_spending/
 ├── application.py                    # Transaction + current Enrichment Application use cases
 ├── http_api.py                       # 最小本地 JSON transport
@@ -555,6 +551,7 @@ src/family_spending/
 ├── manual_source.py                  # Manual Source local state
 ├── manual_input.py                   # Manual Input command + cross-file rollback boundary
 ├── mapping.py                        # 正式 Mapping loader + Mapping Enrichment resolver
+├── mapping_review.py                 # Mapping Review aggregation / preview / Mapping propagation
 ├── month_coverage.py
 ├── refund_reconciliation.py          # Transaction facts → NetConsumption 派生视图
 ├── spending_projection.py            # downstream-only spending Projection
@@ -567,7 +564,6 @@ src/family_spending/
     ├── imap_163.py
     ├── cmb_email_transactions.py
     └── cmb_source_adapter.py
-
 tests/
 ├── test_application.py
 ├── test_cmb_domain.py
@@ -578,6 +574,8 @@ tests/
 ├── test_imap_163.py
 ├── test_local_dashboard.py
 ├── test_mapping.py
+├── test_mapping_review_application.py
+├── test_mapping_review_http_api.py
 ├── test_month_coverage.py
 ├── test_refund_reconciliation.py
 ├── test_spending_statistics.py
@@ -585,7 +583,6 @@ tests/
 ├── test_statistics_serialization.py
 └── test_transaction_resolution.py
 ```
-
 ## 当前非目标
 
 当前没有实现：
@@ -595,7 +592,7 @@ tests/
 - 最终图表组合收敛；
 - AI 消费报告；
 - 退款分配等更细的诊断明细界面；
-- Mapping 编辑器和复核处理界面；
+- legacy `transaction_category_overrides.jsonl` → persistent Enrichment 的历史数据迁移，以及迁移完成后的 runtime 依赖移除；
 - 微信小程序正式客户端；
 - 面向公网部署的 API、登录、云同步或多用户；
 - 数据库、增量统计或后台调度；

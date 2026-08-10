@@ -78,6 +78,20 @@
     return value;
   }
 
+  function requireNonNegativeInteger(value, path) {
+    if (!Number.isInteger(value) || value < 0) {
+      fail("invalid_data", `${path} 必须是非负整数。`, path);
+    }
+    return value;
+  }
+
+  function requirePositiveInteger(value, path) {
+    if (!Number.isInteger(value) || value <= 0) {
+      fail("invalid_data", `${path} 必须是正整数。`, path);
+    }
+    return value;
+  }
+
   function requireAmountString(value, path) {
     const amount = requireString(value, path);
     if (!/^-?\d+(?:\.\d+)?$/.test(amount)) {
@@ -173,6 +187,104 @@
     });
   }
 
+  function validateMappingReviewItem(value, path = "mapping_review.items[]") {
+    const item = requireRecord(value, path);
+    const sourceTypes = requireArray(item.source_types, `${path}.source_types`).map(
+      (sourceType, index) => requireString(sourceType, `${path}.source_types[${index}]`),
+    );
+    return Object.freeze({
+      description: requireString(item.description, `${path}.description`),
+      transactionCount: requirePositiveInteger(
+        item.transaction_count,
+        `${path}.transaction_count`,
+      ),
+      totalAmount: requireAmountString(item.total_amount, `${path}.total_amount`),
+      currency: requireString(item.currency, `${path}.currency`),
+      latestDate: requireString(item.latest_date, `${path}.latest_date`),
+      sourceTypes: Object.freeze(sourceTypes),
+      transactionOnlyExceptionCount: requireNonNegativeInteger(
+        item.transaction_only_exception_count,
+        `${path}.transaction_only_exception_count`,
+      ),
+    });
+  }
+
+  function validateMerchantMappingOption(value, path = "mapping_review.merchants[]") {
+    const merchant = requireRecord(value, path);
+    return Object.freeze({
+      name: requireString(merchant.name, `${path}.name`),
+      defaultCategory: requireString(
+        merchant.default_category,
+        `${path}.default_category`,
+      ),
+    });
+  }
+
+  function validateMappingReviewWorkspace(value, path = "mapping_review") {
+    const workspace = requireRecord(value, path);
+    const items = requireArray(workspace.items, `${path}.items`).map((item, index) =>
+      validateMappingReviewItem(item, `${path}.items[${index}]`),
+    );
+    const merchants = requireArray(workspace.merchants, `${path}.merchants`).map(
+      (merchant, index) =>
+        validateMerchantMappingOption(merchant, `${path}.merchants[${index}]`),
+    );
+    const categories = requireArray(workspace.categories, `${path}.categories`).map(
+      (category, index) => requireString(category, `${path}.categories[${index}]`),
+    );
+    return Object.freeze({
+      items: Object.freeze(items),
+      merchants: Object.freeze(merchants),
+      categories: Object.freeze(categories),
+    });
+  }
+
+  function validateMappingReviewPreview(value, path = "preview") {
+    const preview = requireRecord(value, path);
+    const token = requireString(preview.token, `${path}.token`);
+    if (!/^[0-9a-f]{64}$/.test(token)) {
+      fail("invalid_data", `${path}.token 必须是 SHA-256 十六进制字符串。`, `${path}.token`);
+    }
+    return Object.freeze({
+      token,
+      description: requireString(preview.description, `${path}.description`),
+      merchant: requireString(preview.merchant, `${path}.merchant`),
+      category: requireString(preview.category, `${path}.category`),
+      isNewMerchant: requireBoolean(
+        preview.is_new_merchant,
+        `${path}.is_new_merchant`,
+      ),
+      previousDefaultCategory: requireNullableString(
+        preview.previous_default_category,
+        `${path}.previous_default_category`,
+      ),
+      descriptionTransactionCount: requirePositiveInteger(
+        preview.description_transaction_count,
+        `${path}.description_transaction_count`,
+      ),
+      descriptionAffectedTransactionCount: requireNonNegativeInteger(
+        preview.description_affected_transaction_count,
+        `${path}.description_affected_transaction_count`,
+      ),
+      defaultCategoryAffectedTransactionCount: requireNonNegativeInteger(
+        preview.default_category_affected_transaction_count,
+        `${path}.default_category_affected_transaction_count`,
+      ),
+      totalAffectedTransactionCount: requireNonNegativeInteger(
+        preview.total_affected_transaction_count,
+        `${path}.total_affected_transaction_count`,
+      ),
+      preservedMerchantExceptionCount: requireNonNegativeInteger(
+        preview.preserved_merchant_exception_count,
+        `${path}.preserved_merchant_exception_count`,
+      ),
+      preservedCategoryExceptionCount: requireNonNegativeInteger(
+        preview.preserved_category_exception_count,
+        `${path}.preserved_category_exception_count`,
+      ),
+    });
+  }
+
   function normalizeManualDescription(value) {
     if (typeof value !== "string") {
       throw new TypeError("Manual description 必须是字符串。");
@@ -191,7 +303,6 @@
     if (normalizedQuery === "") {
       return Object.freeze([]);
     }
-
     const matches = [];
     descriptions.forEach((description, index) => {
       if (typeof description !== "string" || description.trim() === "") {
@@ -210,6 +321,47 @@
     });
     matches.sort((left, right) => left.score - right.score || left.index - right.index);
     return Object.freeze(matches.slice(0, limit).map((item) => item.description));
+  }
+
+  function normalizeMerchantName(value) {
+    if (typeof value !== "string") {
+      throw new TypeError("Merchant 名称必须是字符串。");
+    }
+    return value.trim().toLocaleLowerCase().replace(/\s+/gu, "");
+  }
+
+  function findSimilarMerchantNames(query, merchants, limit = 5) {
+    if (!Array.isArray(merchants)) {
+      throw new TypeError("Merchant 候选必须是数组。");
+    }
+    if (!Number.isInteger(limit) || limit <= 0) {
+      throw new TypeError("Merchant 候选数量必须是正整数。");
+    }
+    const normalizedQuery = normalizeMerchantName(query);
+    if (normalizedQuery === "") {
+      return Object.freeze([]);
+    }
+    const matches = [];
+    merchants.forEach((merchant, index) => {
+      const name = typeof merchant === "string" ? merchant : merchant && merchant.name;
+      if (typeof name !== "string" || name.trim() === "") {
+        return;
+      }
+      const normalized = normalizeMerchantName(name);
+      let score = null;
+      if (normalized === normalizedQuery) {
+        score = 0;
+      } else if (normalized.startsWith(normalizedQuery) || normalizedQuery.startsWith(normalized)) {
+        score = 1;
+      } else if (normalized.includes(normalizedQuery) || normalizedQuery.includes(normalized)) {
+        score = 2;
+      }
+      if (score !== null) {
+        matches.push({ name, score, index });
+      }
+    });
+    matches.sort((left, right) => left.score - right.score || left.index - right.index);
+    return Object.freeze(matches.slice(0, limit).map((item) => item.name));
   }
 
   function normalizeBaseUrl(value) {
@@ -303,6 +455,11 @@
       return Object.freeze(descriptions);
     }
 
+    async function getMappingReviews() {
+      const payload = await request("/mapping-reviews");
+      return validateMappingReviewWorkspace(payload.mapping_review);
+    }
+
     async function getTransactions() {
       const payload = await request("/transactions");
       const transactions = requireArray(payload.transactions, "transactions").map(
@@ -330,7 +487,6 @@
           throw new TypeError(`Manual Input 缺少必填字段：${required}`);
         }
       }
-
       const type = requireString(input.type, "manualInput.type");
       if (type !== "income" && type !== "expense") {
         throw new TypeError("Manual Input type 必须是 income 或 expense。");
@@ -348,9 +504,79 @@
       if (Object.prototype.hasOwnProperty.call(input, "note")) {
         body.note = requireNullableString(input.note, "manualInput.note");
       }
-
       const payload = await request("/manual-inputs", { method: "POST", body });
       return validateManualInputResult(payload.manual_input);
+    }
+
+    function mappingReviewCommand(command, path) {
+      const input = requireRecord(command, path);
+      const allowed = new Set(["description", "merchant", "category"]);
+      const keys = Object.keys(input);
+      const unknown = keys.filter((key) => !allowed.has(key));
+      if (unknown.length > 0) {
+        throw new TypeError(`Mapping Review 包含未知字段：${unknown.join(", ")}`);
+      }
+      for (const required of allowed) {
+        if (!Object.prototype.hasOwnProperty.call(input, required)) {
+          throw new TypeError(`Mapping Review 缺少必填字段：${required}`);
+        }
+      }
+      return {
+        description: requireString(input.description, `${path}.description`).trim(),
+        merchant: requireString(input.merchant, `${path}.merchant`).trim(),
+        category: requireString(input.category, `${path}.category`).trim(),
+      };
+    }
+
+    async function previewMappingReview(command) {
+      const body = mappingReviewCommand(command, "mappingReview");
+      const payload = await request("/mapping-reviews/preview", {
+        method: "POST",
+        body,
+      });
+      return validateMappingReviewPreview(payload.preview);
+    }
+
+    async function applyMappingReview(command) {
+      const input = requireRecord(command, "mappingReviewApply");
+      const base = mappingReviewCommand(
+        {
+          description: input.description,
+          merchant: input.merchant,
+          category: input.category,
+        },
+        "mappingReviewApply",
+      );
+      const allowed = new Set([
+        "description",
+        "merchant",
+        "category",
+        "previewToken",
+        "confirmNewMerchant",
+      ]);
+      const unknown = Object.keys(input).filter((key) => !allowed.has(key));
+      if (unknown.length > 0) {
+        throw new TypeError(`Mapping Review Apply 包含未知字段：${unknown.join(", ")}`);
+      }
+      const body = {
+        ...base,
+        preview_token: requireString(
+          input.previewToken,
+          "mappingReviewApply.previewToken",
+        ),
+        confirm_new_merchant:
+          input.confirmNewMerchant === undefined
+            ? false
+            : requireBoolean(
+                input.confirmNewMerchant,
+                "mappingReviewApply.confirmNewMerchant",
+              ),
+      };
+      const payload = await request("/mapping-reviews/apply", {
+        method: "POST",
+        body,
+      });
+      return validateMappingReviewPreview(payload.mapping_review, "mapping_review");
     }
 
     async function updateEnrichment(transactionId, patch) {
@@ -381,9 +607,12 @@
       getHealth,
       getCategories,
       getManualDescriptions,
+      getMappingReviews,
       getTransactions,
       getTransaction,
       createManualInput,
+      previewMappingReview,
+      applyMappingReview,
       updateEnrichment,
     });
   }
@@ -394,7 +623,12 @@
     createApplicationService,
     normalizeManualDescription,
     findSimilarManualDescriptions,
+    normalizeMerchantName,
+    findSimilarMerchantNames,
     validateTransaction,
     validateManualInputResult,
+    validateMappingReviewItem,
+    validateMappingReviewWorkspace,
+    validateMappingReviewPreview,
   });
 });

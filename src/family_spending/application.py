@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
@@ -32,6 +34,17 @@ from family_spending.manual_source import (
     read_manual_source_entries,
 )
 from family_spending.mapping import MerchantMappings, load_merchant_mappings
+from family_spending.mapping_review import (
+    MappingReviewError,
+    MappingReviewItem,
+    MappingReviewPlan,
+    MappingReviewPreview,
+    MerchantMappingOption,
+    build_mapping_review_items,
+    build_merchant_mapping_options,
+    plan_mapping_review,
+    write_mapping_review,
+)
 from family_spending.reconciliation import ReconciliationError
 from family_spending.settings import (
     CATEGORIES_FILE,
@@ -145,6 +158,21 @@ class ManualInputView:
 
 
 @dataclass(frozen=True)
+class MappingReviewWorkspaceView:
+    items: tuple[MappingReviewItem, ...]
+    merchants: tuple[MerchantMappingOption, ...]
+    categories: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return one consistent Mapping Review snapshot so UI options and pending groups cannot drift."""
+        return {
+            "items": [item.to_dict() for item in self.items],
+            "merchants": [merchant.to_dict() for merchant in self.merchants],
+            "categories": list(self.categories),
+        }
+
+
+@dataclass(frozen=True)
 class _ApplicationSnapshot:
     transactions: tuple[Transaction, ...]
     transactions_by_id: Mapping[str, Transaction]
@@ -153,6 +181,13 @@ class _ApplicationSnapshot:
     enrichment_states_by_transaction_id: Mapping[str, TransactionEnrichmentState]
     enrichments_by_transaction_id: Mapping[str, TransactionEnrichment]
     mappings: MerchantMappings
+
+
+@dataclass(frozen=True)
+class _FileSnapshot:
+    path: Path
+    existed: bool
+    contents: bytes | None
 
 
 class FamilySpendingApplication:
@@ -193,6 +228,112 @@ class FamilySpendingApplication:
             descriptions.append(entry.description)
         return tuple(descriptions)
 
+    def get_mapping_review_workspace(self) -> MappingReviewWorkspaceView:
+        """Aggregate unmapped CMB and Manual descriptions from the current reconciled snapshot."""
+        snapshot = self._load_snapshot()
+        try:
+            items = build_mapping_review_items(
+                snapshot.transactions,
+                snapshot.source_records_by_transaction_id,
+                snapshot.enrichment_states_by_transaction_id,
+                snapshot.mappings,
+            )
+        except MappingReviewError as exc:
+            raise ApplicationStateError(str(exc)) from exc
+        return MappingReviewWorkspaceView(
+            items=items,
+            merchants=build_merchant_mapping_options(snapshot.mappings),
+            categories=tuple(sorted(snapshot.mappings.categories)),
+        )
+
+    def preview_mapping_review(
+        self,
+        *,
+        description: object,
+        merchant: object,
+        category: object,
+    ) -> MappingReviewPreview:
+        """Preview the exact Mapping and Enrichment propagation before any authoritative file changes."""
+        snapshot = self._load_snapshot()
+        return self._plan_mapping_review(
+            snapshot,
+            description=description,
+            merchant=merchant,
+            category=category,
+        ).preview
+
+    def apply_mapping_review(
+        self,
+        *,
+        description: object,
+        merchant: object,
+        category: object,
+        preview_token: object,
+        confirm_new_merchant: object = False,
+    ) -> MappingReviewPreview:
+        """Commit reviewed Mapping plus affected Enrichment state as one rollback-protected mutation."""
+        if not isinstance(confirm_new_merchant, bool):
+            raise ApplicationValidationError("confirm_new_merchant must be a boolean")
+        token = self._required_text(preview_token, "preview_token")
+        snapshot = self._load_snapshot()
+        plan = self._plan_mapping_review(
+            snapshot,
+            description=description,
+            merchant=merchant,
+            category=category,
+        )
+        if plan.preview.token != token:
+            raise ApplicationConflictError(
+                "Mapping Review state changed after preview; refresh the preview before applying"
+            )
+        if plan.preview.is_new_merchant and not confirm_new_merchant:
+            raise ApplicationValidationError(
+                "Creating a new Merchant requires explicit confirm_new_merchant=true"
+            )
+
+        persisted_paths = (
+            self.paths.merchants,
+            self.paths.categories,
+            self.paths.enrichment_state,
+            self.paths.spending_statistics,
+        )
+        snapshots = tuple(_snapshot_file(path) for path in persisted_paths)
+        try:
+            write_mapping_review(
+                merchants_path=self.paths.merchants,
+                categories_path=self.paths.categories,
+                description=plan.preview.description,
+                merchant=plan.preview.merchant,
+                category=plan.preview.category,
+            )
+            refreshed_mappings = load_merchant_mappings(
+                self.paths.merchants,
+                self.paths.categories,
+                self.paths.overrides,
+            )
+            for state in plan.enrichment_states:
+                validate_enrichment_state_categories(state, refreshed_mappings.categories)
+            enrichments_by_id = self._materialize_enrichments(
+                snapshot,
+                plan.enrichment_states,
+            )
+            projection = build_spending_projection(
+                snapshot.transactions,
+                snapshot.transactions_by_id,
+                snapshot.source_records_by_transaction_id,
+                enrichments_by_id,
+                self.paths.emails,
+            )
+            write_enrichment_states(plan.enrichment_states, self.paths.enrichment_state)
+            write_spending_projection(projection, self.paths.spending_statistics)
+        except MappingReviewError as exc:
+            self._restore_mapping_review_files(snapshots, exc)
+            raise ApplicationValidationError(str(exc)) from exc
+        except Exception as exc:
+            self._restore_mapping_review_files(snapshots, exc)
+            raise
+        return plan.preview
+
     def list_transactions(self) -> tuple[TransactionView, ...]:
         snapshot = self._load_snapshot()
         return tuple(self._view(snapshot, transaction) for transaction in snapshot.transactions)
@@ -220,7 +361,6 @@ class FamilySpendingApplication:
         type_value = self._required_text(transaction_type, "type")
         if type_value not in {"income", "expense"}:
             raise ApplicationValidationError("type must be either 'income' or 'expense'")
-
         date_value = self._required_text(transaction_date, "date")
         try:
             parsed_date = date.fromisoformat(date_value)
@@ -228,7 +368,6 @@ class FamilySpendingApplication:
             raise ApplicationValidationError(
                 f"date must use YYYY-MM-DD format, got {date_value!r}"
             ) from exc
-
         amount_value = self._required_text(amount, "amount")
         try:
             parsed_amount = Decimal(amount_value)
@@ -240,7 +379,6 @@ class FamilySpendingApplication:
             raise ApplicationValidationError(
                 f"amount must be a finite decimal string, got {amount_value!r}"
             )
-
         description_value = self._required_text(description, "description")
         note_value = self._optional_text(note, "note")
         entry = create_manual_source_entry(
@@ -265,7 +403,6 @@ class FamilySpendingApplication:
             )
         except ReconciliationError as exc:
             raise ApplicationConflictError(str(exc)) from exc
-
         return ManualInputView(
             source_record_id=result.source_record_id,
             action=result.action,
@@ -326,17 +463,7 @@ class FamilySpendingApplication:
             updated if state.transaction_id == transaction_id else state
             for state in snapshot.enrichment_states
         )
-        states_by_id = {state.transaction_id: state for state in states}
-        enrichments = tuple(
-            materialize_enrichment_state(
-                states_by_id[item.id],
-                snapshot.source_records_by_transaction_id[item.id],
-            )
-            for item in snapshot.transactions
-        )
-        enrichments_by_id = MappingProxyType(
-            {item.transaction_id: item for item in enrichments}
-        )
+        enrichments_by_id = self._materialize_enrichments(snapshot, states)
         projection = build_spending_projection(
             snapshot.transactions,
             snapshot.transactions_by_id,
@@ -364,6 +491,63 @@ class FamilySpendingApplication:
             source_record=snapshot.source_records_by_transaction_id[transaction_id],
             enrichment=enrichments_by_id[transaction_id],
         )
+
+    def _plan_mapping_review(
+        self,
+        snapshot: _ApplicationSnapshot,
+        *,
+        description: object,
+        merchant: object,
+        category: object,
+    ) -> MappingReviewPlan:
+        description_value = self._required_text(description, "description")
+        merchant_value = self._required_text(merchant, "merchant")
+        category_value = self._required_text(category, "category")
+        try:
+            return plan_mapping_review(
+                transactions=snapshot.transactions,
+                source_records_by_transaction_id=snapshot.source_records_by_transaction_id,
+                enrichment_states=snapshot.enrichment_states,
+                mappings=snapshot.mappings,
+                description=description_value,
+                merchant=merchant_value,
+                category=category_value,
+            )
+        except MappingReviewError as exc:
+            raise ApplicationValidationError(str(exc)) from exc
+
+    def _materialize_enrichments(
+        self,
+        snapshot: _ApplicationSnapshot,
+        states: tuple[TransactionEnrichmentState, ...],
+    ) -> Mapping[str, TransactionEnrichment]:
+        """Materialize a candidate Enrichment state set against unchanged authoritative Source Records."""
+        states_by_id = {state.transaction_id: state for state in states}
+        enrichments = tuple(
+            materialize_enrichment_state(
+                states_by_id[transaction.id],
+                snapshot.source_records_by_transaction_id[transaction.id],
+            )
+            for transaction in snapshot.transactions
+        )
+        return MappingProxyType(
+            {item.transaction_id: item for item in enrichments}
+        )
+
+    def _restore_mapping_review_files(
+        self,
+        snapshots: tuple[_FileSnapshot, ...],
+        original_error: Exception,
+    ) -> None:
+        """Restore every persisted participant if Mapping mutation fails after any file has changed."""
+        try:
+            for snapshot in reversed(snapshots):
+                _restore_file(snapshot)
+        except Exception as rollback_error:
+            raise ApplicationStateError(
+                "Mapping Review mutation failed and rollback could not restore all persisted files: "
+                f"original={original_error}; rollback={rollback_error}"
+            ) from rollback_error
 
     def _load_snapshot(self) -> _ApplicationSnapshot:
         """Rehydrate already-reconciled current state without invoking either Reconciler."""
@@ -457,3 +641,38 @@ class FamilySpendingApplication:
             )
         stripped = value.strip()
         return stripped or None
+
+
+def _snapshot_file(path: Path) -> _FileSnapshot:
+    """Capture exact bytes so a multi-file Mapping mutation can restore the pre-command state."""
+    if not path.exists():
+        return _FileSnapshot(path=path, existed=False, contents=None)
+    return _FileSnapshot(path=path, existed=True, contents=path.read_bytes())
+
+
+def _restore_file(snapshot: _FileSnapshot) -> None:
+    """Restore one captured file atomically, or remove a file that did not exist before the command."""
+    if not snapshot.existed:
+        snapshot.path.unlink(missing_ok=True)
+        return
+    assert snapshot.contents is not None
+    snapshot.path.parent.mkdir(parents=True, exist_ok=True)
+    handle = tempfile.NamedTemporaryFile(
+        mode="wb",
+        dir=snapshot.path.parent,
+        prefix=f".{snapshot.path.name}.",
+        suffix=".rollback",
+        delete=False,
+    )
+    temp_path = Path(handle.name)
+    try:
+        with handle:
+            handle.write(snapshot.contents)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, snapshot.path)
+    except Exception:
+        try:
+            temp_path.unlink(missing_ok=True)
+        finally:
+            raise
