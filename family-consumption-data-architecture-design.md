@@ -475,7 +475,7 @@ Application / API 承接：
 - Transaction 查询；
 - Reconciliation / Review 用例；
 - Merchant / Category / Note 等 Enrichment 修改；
-- Mapping / Default / Override 维护；
+- Mapping / Default / transaction-level exception 维护；
 - Analytics / Projection 查询。
 
 客户端负责交互与展示，不复制核心数据处理规则，也不直接操作底层存储。
@@ -575,23 +575,23 @@ Analytics Update
 3. Cross-source Reconciliation 保持 source-aware / asymmetric：Manual 唯一匹配时复用已有 Transaction，无匹配时创建新 Transaction，多候选无法唯一判断时拒绝；CMB 后到并匹配 manual-only Transaction 时复用同一 Transaction identity，并由 CMB 成为该信用卡财务事实的 authoritative Source。
 4. Category 完全不参与 Transaction identity；Merchant 只作为辅助匹配证据。Reconciliation 在实际执行时可以读取当前 Enrichment Merchant，但 Enrichment 修改不会反向重写既有 Source Record → Transaction 关系。
 5. Transaction Core 只保留当前 HLD 定义的财务事实；raw description、来源 provenance、Merchant、Category、Note 继续分属 Source / Enrichment，不重新合并进 Transaction。
-6. 当前 Enrichment 使用独立持久状态保存 `merchant_name`、`default_category`、`category`、`category_source` 与 `note`。正式 Mapping / Default / transaction-level override 用于初始化和规则解析；普通统计重建不会覆盖已经存在的当前 Enrichment 编辑。
-7. `transaction_category_overrides.jsonl` 当前只作为历史兼容 / bootstrap 输入保留，运行时通过 Source Record → Transaction 关系把既有 CMB ID 绑定到正确的系统 Transaction；新的客户端单笔 Category 修改只保存到当前 Enrichment state，不再追加该文件。后续应先把仍依赖的历史人工决定迁入持久 Enrichment，再移除这条 legacy runtime 依赖，避免长期维护两套单笔事实来源。
+6. 当前 Enrichment 使用独立持久状态保存 `merchant_name`、`default_category`、`category`、`category_source` 与 `note`。正式 Mapping / Default 用于初始化新 Transaction 或缺失状态；已经持久化的 transaction-level exception 属于当前 Enrichment state，普通统计重建不会覆盖 `transaction_override`、`manual_override` 或其他已有 Enrichment 编辑。
+7. 历史 `transaction_category_overrides.jsonl` 已完成一次性迁移：旧 CMB Source Record ID 先通过正式 Source Link 绑定到系统 Transaction，仍有效的历史人工 Category 决定随后写入 persistent Enrichment，并保留 `category_source = transaction_override`。迁移完成后该 JSONL 已从正常 runtime 与正式 Mapping 配置中移除，不再存在第二套单笔 Category 事实来源。
 8. Enrichment Merchant 修改在没有显式 Category override 时重新解析 Merchant default；已有显式 `transaction_override` 或 `manual_override` 不会被普通 Merchant 修改静默覆盖。
 9. 退款归并不改写或伪造 Transaction 金额，而是生成独立净消费派生结果；Merchant 可以作为退款匹配辅助证据，Category 不参与身份判断。`income` 可以作为正式 Transaction 存在，但当前不进入 spending refund analysis / spending statistics。
 10. Application 层已经提供 source-native Manual Input、历史 Manual description 查询、Transaction + 当前 Enrichment 查询，以及 Merchant / Category / Note 修改。Manual Input 只接收 `type/date/amount/description/note`，原始 description 进入 Source Record，再复用现有 Mapping / Cross-source Reconciliation / downstream Pipeline；Enrichment 修改只从 Enrichment 阶段继续重建 refund / analytics / projection，不重新执行 Source Adapter、Reconciliation 或 Transaction identity 形成过程。
 11. 本地 JSON HTTP transport 已作为最小真实客户端入口落地，负责把 Manual Input、查询与 Enrichment 修改交给 Application；客户端不直接写 Manual Source、Source Link、`enrichment_state.jsonl`、Mapping 或统计文件。
 12. Enrichment state 属于正式当前状态，`spending_statistics.json` 属于可重建 Projection。单次 Enrichment mutation 先生成并写入新的派生 Projection，最后原子替换 authoritative Enrichment state；若 authoritative 写入失败，实现会尝试恢复旧 Projection。Manual Input 在校验和 Reconciliation 完成后才进入持久化，并对 Manual Source、Source Link、Enrichment 与 Projection 建立本次命令级文件快照；任一步写入失败时恢复旧状态，避免正常故障路径留下半提交的业务状态。
 13. Source 在 Application 初始化后发生变化时，client-only 查询/编辑不会在旧 link 集合上静默继续；Application 会要求重新执行 `initialize()`，先完成 Source / Reconciliation / downstream 同步。
-14. 消费统计继续作为下游 Analytics / Projection。在相同正式 CMB-only 数据下，当前主链仍保持 schema v2 统计输出与迁移前正式基线字节级一致。
+14. 消费统计继续作为下游 Analytics / Projection。legacy override runtime 依赖移除后，真实正式数据执行完整 rebuild，Source Link、persistent Enrichment 与 `spending_statistics.json` 均与迁移完成前状态保持字节级一致，说明单笔历史决定已由 persistent Enrichment 独立承接。
 15. 本地 Dashboard 的聚合视图继续读取 `spending_statistics.json` Projection；Manual Input、逐笔 Transaction 浏览与 Merchant / Category / Note 编辑通过 Application/API 完成。Manual Input 当前输入原始 description，并从后端读取历史 Manual description 做轻量复用提示；新 description 未命中 Mapping 时保持待分类。创建成功后重新读取 Transaction Workspace 与已经由 Application 重建的 Projection。客户端只做展示、筛选和命令提交，不复制 Reconciliation、Enrichment 或消费聚合规则；Application/API 暂时不可用不会改变已生成 Projection 的可读性。
 16. 正常审核入口已经落地为 Mapping Review：CMB 与 Manual Source 的未匹配 description 进入同一 workspace，并按 description 聚合交易笔数、金额和来源类型；逐笔 Transaction Workspace 不再承担正常 Mapping 审核职责。
 17. Mapping Review Preview 分别计算 `description → Merchant` 和 `Merchant → default Category` 的实际传播范围，并报告被保留的 transaction-only Merchant / Category 例外和总影响 Enrichment 数量。新 Merchant 必须同时确定正式默认 Category，并在 Apply 前显式二次确认。
 18. Preview token 绑定当前 Mapping 选择以及与影响范围相关的 Mapping / Enrichment 状态；预览后底层状态变化时旧 token 失效，Apply 必须拒绝并要求重新 Preview，避免影响范围静默扩大或缩小。
 19. Mapping Review Apply 会更新 `merchants.yaml` / `categories.yaml`，并只传播到仍跟随修改前 Mapping 的当前 Enrichment state。已有显式 transaction-only Merchant / Category exception 保持原决定，不会被 Mapping Correction 静默覆盖。
 20. Mapping Review mutation 从 Mapping / Enrichment 阶段继续执行 downstream Projection，不重新执行 Source Adapter、Reconciliation 或 Transaction identity 构建。Mapping、affected Enrichment 与 Projection 在单次 Application command 中使用文件快照协调；任一步失败时恢复命令前状态。
-21. `transaction_category_overrides.jsonl` 仍保持第 7 条所述 legacy bootstrap 角色，本轮 Mapping Review 不向该文件新增记录。后续仍需独立迁移其中的历史人工决定到 persistent Enrichment，再移除正常 runtime 对 legacy override 文件的依赖。
-当前本地文件持久化只是这一阶段的 concrete storage，不改变 HLD 的存储无关边界。下一阶段优先处理 legacy transaction category override → persistent Enrichment 的历史迁移与 runtime 依赖收敛；后续若实现更多 Source、正式客户端或新的存储实现，仍应继续沿相同 Domain / Application 边界扩展，不要为了新能力重新合并 Source、Transaction、Enrichment 或 Analytics。
+21. 正常 runtime 现在只加载 `merchants.yaml` 与 `categories.yaml` 两份正式 Mapping；Application initialize、Manual Input、Statistics Generation、Transaction Resolution 和 Mapping Review 均不再接受或读取 legacy override path。`transaction_override` 只作为 persistent Enrichment 的合法 `category_source` 保留，以表达已经迁移且仍需保留的历史单笔决定。
+当前本地文件持久化只是这一阶段的 concrete storage，不改变 HLD 的存储无关边界。legacy transaction category override → persistent Enrichment 的历史迁移与 runtime 依赖收敛已经完成；后续可以继续按产品价值优先级推进新的完整纵向切片，而无需再维护这条兼容链路。若实现更多 Source、正式客户端或新的存储实现，仍应继续沿相同 Domain / Application 边界扩展，不要为了新能力重新合并 Source、Transaction、Enrichment 或 Analytics。
 
 ---
 ## 15. 当前非目标

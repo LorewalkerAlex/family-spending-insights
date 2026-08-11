@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
+
 from family_spending.enrichment_store import (
     EnrichmentStateStoreError,
     read_enrichment_states,
@@ -25,7 +26,6 @@ from family_spending.settings import (
     EMAILS_DIR,
     MERCHANTS_FILE,
     SPENDING_STATISTICS_FILE,
-    TRANSACTION_CATEGORY_OVERRIDES_FILE,
     TRANSACTIONS_FILE,
 )
 from family_spending.source_link_store import (
@@ -44,6 +44,7 @@ from family_spending.transaction_resolution import (
     build_household_domain_state,
 )
 from family_spending.transactions import TransactionDataError
+
 
 @dataclass(frozen=True)
 class StatisticsGenerationSummary:
@@ -74,14 +75,13 @@ def generate_spending_statistics(
     transactions_path: Path = TRANSACTIONS_FILE,
     merchants_path: Path = MERCHANTS_FILE,
     categories_path: Path = CATEGORIES_FILE,
-    overrides_path: Path = TRANSACTION_CATEGORY_OVERRIDES_FILE,
     output_path: Path = SPENDING_STATISTICS_FILE,
     emails_dir: Path = EMAILS_DIR,
     manual_source_path: Path | None = None,
     source_links_path: Path | None = None,
     enrichment_state_path: Path | None = None,
 ) -> StatisticsGenerationSummary:
-    """Rebuild the downstream spending projection from current CMB, Manual, identity-link, and Enrichment state."""
+    """Rebuild the downstream spending projection from current source, identity, and persistent Enrichment state."""
     if manual_source_path is None:
         manual_source_path = _default_sibling(transactions_path, "manual_source_records.jsonl")
     if source_links_path is None:
@@ -92,11 +92,7 @@ def generate_spending_statistics(
     manual_entries = read_manual_source_entries(manual_source_path)
     existing_links = read_transaction_source_links(source_links_path)
     existing_enrichment_states = read_enrichment_states(enrichment_state_path)
-    mappings = load_merchant_mappings(
-        merchants_path,
-        categories_path,
-        overrides_path,
-    )
+    mappings = load_merchant_mappings(merchants_path, categories_path)
     state = build_household_domain_state(
         raw_transactions,
         manual_entries,
@@ -113,7 +109,7 @@ def generate_spending_statistics(
         state.enrichments_by_transaction_id,
         emails_dir,
     )
-    # Persist source identity and current Enrichment only after all downstream validation succeeds.
+    # Persist identity and current Enrichment only after every downstream validation has succeeded.
     write_transaction_source_links(state.reconciliation.source_links, source_links_path)
     write_enrichment_states(state.enrichment_states, enrichment_state_path)
     write_spending_projection(projection, output_path)
@@ -136,6 +132,7 @@ def generate_spending_statistics(
         shown_net_spending=summary.shown_net_spending,
         output_path=output_path,
     )
+
 
 def format_statistics_generation_report(
     summary: StatisticsGenerationSummary,

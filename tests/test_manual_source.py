@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from unittest.mock import patch
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from types import MappingProxyType
+from unittest.mock import patch
 
 from family_spending.enrichment import UNCLASSIFIED_CATEGORY
 from family_spending.ingestion.cmb_email_transactions import CmbTransaction
@@ -18,36 +18,58 @@ from family_spending.manual_source import (
     write_manual_source_entries,
 )
 from family_spending.mapping import MerchantMappings
-from family_spending.reconciliation import CmbReconciler, ManualReconciler, ReconciliationContext, ReconciliationError
+from family_spending.reconciliation import (
+    CmbReconciler,
+    ManualReconciler,
+    ReconciliationContext,
+    ReconciliationError,
+)
 from family_spending.refund_reconciliation import reconcile_refunds
-from family_spending.source_link_store import read_transaction_source_links, write_transaction_source_links
+from family_spending.source_link_store import (
+    read_transaction_source_links,
+    write_transaction_source_links,
+)
 from family_spending.transaction_resolution import build_household_domain_state
 from family_spending.transactions import index_authoritative_source_records
 
 
-def mappings(*, overrides: dict[str, str] | None = None) -> MerchantMappings:
+def mappings() -> MerchantMappings:
+    """Build current Mapping rules directly without any transaction-specific fact source."""
     return MerchantMappings(
-        description_to_merchant=MappingProxyType({
-            "支付宝-咖啡": "咖啡店",
-            "支付宝-家电": "京东购物",
-        }),
-        merchant_to_category=MappingProxyType({
-            "咖啡店": "餐饮美食",
-            "京东购物": "综合购物",
-        }),
-        transaction_category_overrides=MappingProxyType(overrides or {}),
+        description_to_merchant=MappingProxyType(
+            {
+                "支付宝-咖啡": "咖啡店",
+                "支付宝-家电": "京东购物",
+            }
+        ),
+        merchant_to_category=MappingProxyType(
+            {
+                "咖啡店": "餐饮美食",
+                "京东购物": "综合购物",
+            }
+        ),
         categories=frozenset({"餐饮美食", "综合购物", "家居家电"}),
         merchants_path=Path("merchants.yaml"),
         categories_path=Path("categories.yaml"),
-        overrides_path=Path("overrides.jsonl"),
     )
 
 
 def cmb(source_id: str, when: str, amount: str, description: str) -> CmbTransaction:
+    """Create one CMB fixture with a stable source ID."""
     return CmbTransaction(source_id, date.fromisoformat(when), Decimal(amount), description, "bill.eml", 1)
 
 
-def manual(source_id: str, when: str, amount: str, *, merchant=None, category=None, note=None, transaction_type="expense"):
+def manual(
+    source_id: str,
+    when: str,
+    amount: str,
+    *,
+    merchant=None,
+    category=None,
+    note=None,
+    transaction_type="expense",
+):
+    """Create one Manual Source fixture while keeping optional legacy source fields explicit."""
     return create_manual_source_entry(
         source_record_id=source_id,
         transaction_type=transaction_type,
@@ -186,7 +208,6 @@ class CrossSourceReconciliationTests(unittest.TestCase):
         )
         self.assertEqual(cmb_link.role, "authoritative")
 
-
     def test_cmb_only_builder_keeps_existing_identity_and_mapping_behavior(self) -> None:
         card = cmb("cmb_1", "2026-08-01", "20", "支付宝-咖啡")
         state = build_household_domain_state((card,), (), mappings())
@@ -213,19 +234,6 @@ class CrossSourceReconciliationTests(unittest.TestCase):
         self.assertEqual(rerun.reconciliation.transactions[0].transaction_date, date(2026, 8, 2))
         self.assertEqual(rerun.reconciliation.transactions[0].amount, Decimal("25"))
         self.assertEqual(rerun.reconciliation.decisions[0].action, "reused")
-
-    def test_legacy_cmb_category_override_stays_bound_after_generalized_pipeline(self) -> None:
-        card = cmb("cmb_1", "2026-08-01", "20", "支付宝-家电")
-        state = build_household_domain_state(
-            (card,),
-            (),
-            mappings(overrides={"cmb_1": "家居家电"}),
-        )
-        transaction = state.reconciliation.transactions[0]
-        enrichment = state.enrichments_by_transaction_id[transaction.id]
-        self.assertNotEqual(transaction.id, "cmb_1")
-        self.assertEqual(enrichment.category, "家居家电")
-        self.assertEqual(enrichment.category_source, "transaction_override")
 
     def test_transaction_order_survives_manual_to_cmb_authority_switch(self) -> None:
         first_entry = manual("manual_first", "2026-08-01", "20", merchant="咖啡店")
@@ -303,7 +311,6 @@ class ManualInputPipelineTests(unittest.TestCase):
                     source_links_path=links_path,
                     merchants_path=root / "merchants.yaml",
                     categories_path=root / "categories.yaml",
-                    overrides_path=root / "overrides.jsonl",
                     output_path=output_path,
                     emails_dir=root / "emails",
                 )

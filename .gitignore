@@ -29,7 +29,6 @@ data/*
 data/mappings/*
 !data/mappings/merchants.yaml
 !data/mappings/categories.yaml
-!data/mappings/transaction_category_overrides.jsonl
 
 # 临时文件
 tmp/

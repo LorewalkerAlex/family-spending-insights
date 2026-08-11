@@ -51,7 +51,6 @@ from family_spending.settings import (
     EMAILS_DIR,
     MERCHANTS_FILE,
     SPENDING_STATISTICS_FILE,
-    TRANSACTION_CATEGORY_OVERRIDES_FILE,
     TRANSACTIONS_FILE,
 )
 from family_spending.source_link_store import (
@@ -103,7 +102,6 @@ class ApplicationPaths:
     enrichment_state: Path = ENRICHMENT_STATE_FILE
     merchants: Path = MERCHANTS_FILE
     categories: Path = CATEGORIES_FILE
-    overrides: Path = TRANSACTION_CATEGORY_OVERRIDES_FILE
     spending_statistics: Path = SPENDING_STATISTICS_FILE
     emails: Path = EMAILS_DIR
 
@@ -150,6 +148,7 @@ class ManualInputView:
     transaction: TransactionView
 
     def to_dict(self) -> dict[str, Any]:
+        """Expose the source identity and reconciled Transaction returned by one Manual Input command."""
         return {
             "source_record_id": self.source_record_id,
             "action": self.action,
@@ -200,7 +199,6 @@ class FamilySpendingApplication:
             transactions_path=self.paths.transactions,
             merchants_path=self.paths.merchants,
             categories_path=self.paths.categories,
-            overrides_path=self.paths.overrides,
             output_path=self.paths.spending_statistics,
             emails_dir=self.paths.emails,
             manual_source_path=self.paths.manual_source,
@@ -213,7 +211,6 @@ class FamilySpendingApplication:
         mappings = load_merchant_mappings(
             self.paths.merchants,
             self.paths.categories,
-            self.paths.overrides,
         )
         return tuple(sorted(mappings.categories))
 
@@ -309,7 +306,6 @@ class FamilySpendingApplication:
             refreshed_mappings = load_merchant_mappings(
                 self.paths.merchants,
                 self.paths.categories,
-                self.paths.overrides,
             )
             for state in plan.enrichment_states:
                 validate_enrichment_state_categories(state, refreshed_mappings.categories)
@@ -335,10 +331,12 @@ class FamilySpendingApplication:
         return plan.preview
 
     def list_transactions(self) -> tuple[TransactionView, ...]:
+        """Return the current joined Transaction views in persisted Transaction order."""
         snapshot = self._load_snapshot()
         return tuple(self._view(snapshot, transaction) for transaction in snapshot.transactions)
 
     def get_transaction(self, transaction_id: str) -> TransactionView:
+        """Return one joined current Transaction view or fail with an Application-level not-found error."""
         snapshot = self._load_snapshot()
         try:
             transaction = snapshot.transactions_by_id[transaction_id]
@@ -396,7 +394,6 @@ class FamilySpendingApplication:
                 source_links_path=self.paths.source_links,
                 merchants_path=self.paths.merchants,
                 categories_path=self.paths.categories,
-                overrides_path=self.paths.overrides,
                 output_path=self.paths.spending_statistics,
                 emails_dir=self.paths.emails,
                 enrichment_state_path=self.paths.enrichment_state,
@@ -500,6 +497,7 @@ class FamilySpendingApplication:
         merchant: object,
         category: object,
     ) -> MappingReviewPlan:
+        """Normalize client values once before delegating deterministic review planning to the domain service."""
         description_value = self._required_text(description, "description")
         merchant_value = self._required_text(merchant, "merchant")
         category_value = self._required_text(category, "category")
@@ -580,7 +578,6 @@ class FamilySpendingApplication:
         mappings = load_merchant_mappings(
             self.paths.merchants,
             self.paths.categories,
-            self.paths.overrides,
         )
         missing = [transaction.id for transaction in transactions if transaction.id not in states_by_id]
         if missing:
@@ -626,6 +623,7 @@ class FamilySpendingApplication:
 
     @staticmethod
     def _required_text(value: object, field: str) -> str:
+        """Require one non-empty textual client value and normalize surrounding whitespace."""
         if not isinstance(value, str) or value.strip() == "":
             raise ApplicationValidationError(f"{field} must be a non-empty string")
         return value.strip()

@@ -36,7 +36,6 @@ from family_spending.settings import (
     EMAILS_DIR,
     MERCHANTS_FILE,
     SPENDING_STATISTICS_FILE,
-    TRANSACTION_CATEGORY_OVERRIDES_FILE,
     TRANSACTIONS_FILE,
 )
 from family_spending.source_link_store import (
@@ -90,10 +89,12 @@ def _parse_decimal(value: str) -> Decimal:
 
 
 def _snapshot_file(path: Path) -> _FileSnapshot:
+    """Capture exact bytes so rollback can restore every persisted participant."""
     return _FileSnapshot(path=path, contents=path.read_bytes() if path.exists() else None)
 
 
 def _restore_file(snapshot: _FileSnapshot) -> None:
+    """Restore one file atomically, or remove it if it did not exist before the command."""
     path = snapshot.path
     if snapshot.contents is None:
         path.unlink(missing_ok=True)
@@ -116,6 +117,7 @@ def _restore_file(snapshot: _FileSnapshot) -> None:
 
 
 def _restore_snapshots(snapshots: tuple[_FileSnapshot, ...], original_error: Exception) -> None:
+    """Restore snapshots in reverse mutation order and surface any secondary storage failure."""
     failures: list[str] = []
     for snapshot in reversed(snapshots):
         try:
@@ -129,7 +131,6 @@ def _restore_snapshots(snapshots: tuple[_FileSnapshot, ...], original_error: Exc
         ) from original_error
 
 
-
 def submit_manual_input(
     entry: ManualSourceEntry,
     *,
@@ -138,7 +139,6 @@ def submit_manual_input(
     source_links_path: Path = TRANSACTION_SOURCE_LINKS_FILE,
     merchants_path: Path = MERCHANTS_FILE,
     categories_path: Path = CATEGORIES_FILE,
-    overrides_path: Path = TRANSACTION_CATEGORY_OVERRIDES_FILE,
     output_path: Path = SPENDING_STATISTICS_FILE,
     emails_dir: Path = EMAILS_DIR,
     enrichment_state_path: Path | None = None,
@@ -150,7 +150,7 @@ def submit_manual_input(
     existing_manual = read_manual_source_entries(manual_source_path)
     existing_links = read_transaction_source_links(source_links_path)
     existing_enrichment_states = read_enrichment_states(enrichment_state_path)
-    mappings = load_merchant_mappings(merchants_path, categories_path, overrides_path)
+    mappings = load_merchant_mappings(merchants_path, categories_path)
     candidate_entries = existing_manual + (entry,)
     state = build_household_domain_state(
         raw_cmb,
@@ -191,7 +191,6 @@ def submit_manual_input(
             transactions_path=transactions_path,
             merchants_path=merchants_path,
             categories_path=categories_path,
-            overrides_path=overrides_path,
             output_path=output_path,
             emails_dir=emails_dir,
             manual_source_path=manual_source_path,

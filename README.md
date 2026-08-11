@@ -26,8 +26,7 @@ data/
 ├── screenshots/
 ├── mappings/
 │   ├── merchants.yaml
-│   ├── categories.yaml
-│   └── transaction_category_overrides.jsonl
+│   └── categories.yaml
 ├── transactions.csv
 ├── manual_source_records.jsonl
 ├── transaction_source_links.jsonl
@@ -42,19 +41,17 @@ data/
 - `transactions.csv`：从全部原始邮件全量重建的 CMB 来源级事实数据；进入统一领域模型后对应 `SourceRecord`，不是系统级 Transaction 存储。
 - `mappings/merchants.yaml`：人工确认的 `merchant_name → descriptions`。
 - `mappings/categories.yaml`：人工确认的 `category → merchant_names`。
-- `mappings/transaction_category_overrides.jsonl`：少量单笔交易的分类覆盖；文件中的 `transaction_id` 保留历史字段名，当前值仍是既有 CMB 来源 ID，运行时再绑定到系统 Transaction。
 - `manual_source_records.jsonl`：Manual Source 的本地来源事实；当前录入保存 `type/date/amount/description/note`，Merchant / Category 由下游 Mapping / Enrichment 决定。
 - `transaction_source_links.jsonl`：当前 Source Record → Transaction 关系。
-- `enrichment_state.jsonl`：当前 Transaction Enrichment authoritative state。
+- `enrichment_state.jsonl`：当前 Transaction Enrichment authoritative state；transaction-only Category exception 也持久化在这里，并通过 `category_source` 区分来源。
 - `reports/spending_statistics.json`：后端生成、可从正式状态重建的消费统计 Projection。
-除三份正式 Mapping 外，`data/` 中的原始邮件、截图、完整交易、运行态 Source/Link/Enrichment 状态、OCR 结果和派生统计默认只保存在本地，不提交到 Git。
+除两份正式 Mapping 外，`data/` 中的原始邮件、截图、完整交易、运行态 Source/Link/Enrichment 状态、OCR 结果和派生统计默认只保存在本地，不提交到 Git。
 
 正式进入 Git 的数据文件只有：
 
 ```text
 data/mappings/merchants.yaml
 data/mappings/categories.yaml
-data/mappings/transaction_category_overrides.jsonl
 ```
 
 `待分类` 是运行时和界面状态，不是正式 category，也不会写入 Mapping。
@@ -157,29 +154,27 @@ currency
 
 正式 Mapping 与交易事实分开维护，不会把标准商户、分类或复核状态写回 `transactions.csv`。
 
-`load_merchant_mappings()` 读取三份正式配置并建立只读索引：
+`load_merchant_mappings()` 读取两份正式配置并建立只读索引：
 
 ```text
 description → merchant_name
 merchant_name → default category
-legacy CMB source id → override category
 ```
 
-为兼容已经人工审核的 `transaction_category_overrides.jsonl`，文件格式暂不迁移。运行时先通过 Source Link 把旧 `transaction_id` 字段中的 CMB Source Record ID 绑定到当前系统 Transaction ID，再应用单笔 category override。
+历史 `transaction_category_overrides.jsonl` 已完成一次性迁移并从正常 runtime 移除。transaction-only Category exception 现在只存在于 persistent Enrichment state；`transaction_override` 继续作为合法的 `category_source` 表达已迁移的历史决定，但 Mapping loader 不再读取或生成这类单笔事实。
 
-运行顺序为：
+新 Transaction 或缺失 Enrichment state 的正常初始化顺序为：
 ```text
 description 匹配 merchant
 → 获得 merchant 默认 category
-→ legacy override 绑定到 system Transaction
-→ 命中 override 时只覆盖该笔最终 category
+→ 生成 merchant_default / unclassified Enrichment
 ```
 
 主要规则：
 
 - 未匹配 description 时，`merchant_name` 保持空值，`display_name` 使用原始 description，category 为运行态 `待分类`；
-- override 只能覆盖已匹配 merchant 的交易，不能代替 Merchant Mapping；
-- override 不修改 merchant 默认分类，也不修改原始交易；
+- Mapping 只定义稳定的 Merchant 与默认 Category，不承载单笔 transaction exception；
+- 已持久化的 `transaction_override` / `manual_override` 不会被普通 Mapping 重建静默覆盖；
 - 默认 category 为 `其他支出` 时会产生非阻断复核信号；
 - 默认 category 为 `综合购物` 且净消费金额达到高额阈值时会产生非阻断复核信号；
 - 复核信号只存在于运行结果中，不写回正式配置。
@@ -204,12 +199,12 @@ Mapping Review 当前规则：
 - Preview token 绑定当前 Mapping 选择和受影响状态；预览后状态发生变化时 Apply 会拒绝旧 token，要求重新预览；
 - Mapping、affected Enrichment 与 Projection 作为同一个 Application mutation 边界处理；失败时恢复命令前快照，避免留下半提交状态。
 
-运行完整 CMB domain snapshot 的只读诊断与 Mapping / override 一致性检查：
+运行完整 CMB domain snapshot 的只读诊断：
 ```powershell
 $env:PYTHONPATH="src"; uv run python -m family_spending.transaction_resolution
 ```
 
-该入口会构建与统计主链一致的 CMB domain snapshot，并执行退款净额计算，以便高额 `综合购物` 复核使用净消费金额；它不写 `spending_statistics.json`，也不修改交易或正式 Mapping。
+该入口会构建与统计主链一致的 CMB domain snapshot，并执行退款净额计算，以便高额 `综合购物` 复核使用净消费金额；它不写 `spending_statistics.json`，也不修改交易或正式 Mapping。fresh CMB-only 诊断只基于当前 Mapping 产生 `merchant_default` / `unclassified`；历史 `transaction_override` 属于 persistent Enrichment，不再由该诊断入口从独立 Mapping 文件恢复。
 ## Manual Source 与跨来源 Reconciliation
 
 当前已经实现第二个正式输入入口 Manual Source，用于补充非信用卡交易，或在信用卡账单到达前先记录交易。
@@ -283,7 +278,7 @@ Enrichment 当前是独立持久化的 authoritative current state，保存在�
 data/enrichment_state.jsonl
 ```
 
-Mapping / Merchant default / 既有 transaction-level override 负责新 Transaction 或缺失状态的初始化；之后的普通统计重建会保留已经存在的 Enrichment 编辑。Transaction Core 仍不包含 Merchant、Category 或 Note。
+Mapping / Merchant default 负责新 Transaction 或缺失状态的初始化；历史 transaction-level override 已迁入同一 persistent Enrichment state。之后的普通统计重建会保留已经存在的 `transaction_override`、`manual_override` 和其他 Enrichment 编辑。Transaction Core 仍不包含 Merchant、Category 或 Note。
 
 本地 Application 提供：
 - 创建 source-native Manual Input，并复用现有 Mapping / Manual Source / Cross-source Reconciliation / downstream Pipeline；
@@ -329,7 +324,7 @@ Application mutation 保持 authoritative state 与可重建 Projection 的提�
 
 ```text
 amount > 0：消费
-amount < 0：退款
+amount < 0：退款 / reversal
 amount = 0：忽略并单独计数
 ```
 
@@ -341,7 +336,7 @@ amount = 0：忽略并单独计数
 4. 无法匹配的剩余退款不进入统计，只记录数量和金额摘要。
 退款只能抵消历史消费，不能抵消未来交易。Merchant 回退只使用当前 Merchant identity，不使用 Category 或 transaction override。
 
-退款归并不会改写 Transaction Core。原始消费保持正数、退款保持负数；下游得到独立的 `NetConsumption(transaction_id, spending)` 派生结果，其中 `spending` 为正的剩余净消费金额。部分退款仍引用原消费 Transaction；完全退款的 Transaction 和 Source Record 继续存在并参与正式 override 一致性校验，但不会产生 NetConsumption，也不进入消费统计笔数。
+退款归并不会改写 Transaction Core。原始消费保持正数、退款保持负数；下游得到独立的 `NetConsumption(transaction_id, spending)` 派生结果，其中 `spending` 为正的剩余净消费金额。部分退款仍引用原消费 Transaction；完全退款的 Transaction 和 Source Record 继续存在于正式领域状态，但不会产生 NetConsumption，也不进入消费统计笔数。
 ## 生成消费统计
 
 ```powershell
@@ -488,7 +483,7 @@ scripts/inspect_mapping_candidates.py
 
 这些文件属于 Rebuild 过程资产，仍在仓库中维护，因此相关 OCR 依赖继续保留。它们不是正式消费统计运行链路，不会被邮件获取、交易重建、退款归并、统计生成或 Dashboard 自动调用。
 
-工具只应读取本地截图、OCR 和交易数据，并把结果写到受 `.gitignore` 保护的本地目录。正式运行时仍只读取三份已审核 Mapping。
+工具只应读取本地截图、OCR 和交易数据，并把结果写到受 `.gitignore` 保护的本地目录。正式运行时只读取两份已审核 Mapping；transaction-only exception 来自 persistent Enrichment state。
 ## 运行测试
 
 完整 Python 测试：
@@ -592,7 +587,6 @@ tests/
 - 最终图表组合收敛；
 - AI 消费报告；
 - 退款分配等更细的诊断明细界面；
-- legacy `transaction_category_overrides.jsonl` → persistent Enrichment 的历史数据迁移，以及迁移完成后的 runtime 依赖移除；
 - 微信小程序正式客户端；
 - 面向公网部署的 API、登录、云同步或多用户；
 - 数据库、增量统计或后台调度；

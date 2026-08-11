@@ -25,7 +25,6 @@ from family_spending.ingestion.cmb_email_transactions import (
 )
 from family_spending.manual_source import read_manual_source_entries
 
-
 MERCHANTS = """\
 测试餐饮:
   - 支付宝-测试餐饮
@@ -42,6 +41,7 @@ CATEGORIES = """\
 
 
 def build_paths(root: Path) -> ApplicationPaths:
+    """Create one isolated Application path set using only the current Mapping inputs."""
     paths = ApplicationPaths(
         transactions=root / "transactions.csv",
         manual_source=root / "manual_source_records.jsonl",
@@ -49,13 +49,11 @@ def build_paths(root: Path) -> ApplicationPaths:
         enrichment_state=root / "enrichment_state.jsonl",
         merchants=root / "merchants.yaml",
         categories=root / "categories.yaml",
-        overrides=root / "transaction_category_overrides.jsonl",
         spending_statistics=root / "reports" / "spending_statistics.json",
         emails=root / "emails",
     )
     paths.merchants.write_text(MERCHANTS, encoding="utf-8")
     paths.categories.write_text(CATEGORIES, encoding="utf-8")
-    paths.overrides.write_text("", encoding="utf-8")
     paths.emails.mkdir()
     for index, statement_date in enumerate(
         ("2025-12-10", "2026-01-10", "2026-02-10"),
@@ -233,6 +231,7 @@ class ManualInputHttpApiTests(unittest.TestCase):
         self.base_url = f"http://{host}:{port}"
 
     def _stop_server(self) -> None:
+        """Stop the local server before the temporary directory is cleaned up."""
         self.server.shutdown()
         self.thread.join(timeout=5)
         self.server.server_close()
@@ -244,6 +243,7 @@ class ManualInputHttpApiTests(unittest.TestCase):
         method: str = "GET",
         payload: dict[str, object] | None = None,
     ) -> tuple[int, dict[str, object]]:
+        """Issue one local JSON request and return a normalized status/body pair."""
         data = None
         headers: dict[str, str] = {}
         if payload is not None:

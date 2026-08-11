@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -15,11 +16,11 @@ from family_spending.application import (
     ApplicationValidationError,
     FamilySpendingApplication,
 )
+from family_spending.enrichment_store import read_enrichment_states, write_enrichment_states
 from family_spending.ingestion.cmb_email_transactions import (
     CmbTransaction,
     write_transactions_csv,
 )
-
 
 MERCHANTS = """\
 餐饮基准:
@@ -42,10 +43,6 @@ CATEGORIES = """\
   - 医疗商户
 """
 
-OVERRIDES = """\
-{"transaction_id":"cmb_target","category":"医疗健康","note":"历史人工例外"}
-"""
-
 
 class MappingReviewApplicationTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -59,13 +56,11 @@ class MappingReviewApplicationTests(unittest.TestCase):
             enrichment_state=root / "enrichment_state.jsonl",
             merchants=root / "merchants.yaml",
             categories=root / "categories.yaml",
-            overrides=root / "transaction_category_overrides.jsonl",
             spending_statistics=root / "reports" / "spending_statistics.json",
             emails=root / "emails",
         )
         self.paths.merchants.write_text(MERCHANTS, encoding="utf-8")
         self.paths.categories.write_text(CATEGORIES, encoding="utf-8")
-        self.paths.overrides.write_text(OVERRIDES, encoding="utf-8")
         self.paths.emails.mkdir()
         for index, statement_date in enumerate(
             ("2025-12-10", "2026-01-10", "2026-02-10"),
@@ -104,8 +99,30 @@ class MappingReviewApplicationTests(unittest.TestCase):
         )
         self.application = FamilySpendingApplication(self.paths)
         self.application.initialize()
+        self._persist_target_transaction_override()
+
+    def _persist_target_transaction_override(self) -> None:
+        """Model the migrated historical exception directly in authoritative Enrichment state."""
+        target = next(
+            view
+            for view in self.application.list_transactions()
+            if view.source_record.id == "cmb_target"
+        )
+        states = read_enrichment_states(self.paths.enrichment_state)
+        changed = tuple(
+            replace(
+                state,
+                category="医疗健康",
+                category_source="transaction_override",
+            )
+            if state.transaction_id == target.transaction.id
+            else state
+            for state in states
+        )
+        write_enrichment_states(changed, self.paths.enrichment_state)
 
     def _transactions_for_description(self, description: str):
+        """Return deterministic current views for one source description."""
         return sorted(
             (
                 view

@@ -49,13 +49,11 @@ class ApplicationTests(unittest.TestCase):
             enrichment_state=root / "enrichment_state.jsonl",
             merchants=root / "merchants.yaml",
             categories=root / "categories.yaml",
-            overrides=root / "transaction_category_overrides.jsonl",
             spending_statistics=root / "reports" / "spending_statistics.json",
             emails=root / "emails",
         )
         self.paths.merchants.write_text(MERCHANTS, encoding="utf-8")
         self.paths.categories.write_text(CATEGORIES, encoding="utf-8")
-        self.paths.overrides.write_text("", encoding="utf-8")
         self.paths.emails.mkdir()
         for index, statement_date in enumerate(
             ("2025-12-10", "2026-01-10", "2026-02-10"),
@@ -155,7 +153,6 @@ class ApplicationTests(unittest.TestCase):
             source_links_path=self.paths.source_links,
             merchants_path=self.paths.merchants,
             categories_path=self.paths.categories,
-            overrides_path=self.paths.overrides,
             output_path=self.paths.spending_statistics,
             emails_dir=self.paths.emails,
             enrichment_state_path=self.paths.enrichment_state,
@@ -194,7 +191,6 @@ class ApplicationTests(unittest.TestCase):
             transactions_path=self.paths.transactions,
             merchants_path=self.paths.merchants,
             categories_path=self.paths.categories,
-            overrides_path=self.paths.overrides,
             output_path=self.paths.spending_statistics,
             emails_dir=self.paths.emails,
             manual_source_path=self.paths.manual_source,

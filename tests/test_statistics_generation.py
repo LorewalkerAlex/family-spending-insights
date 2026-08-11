@@ -3,16 +3,17 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
+from family_spending.enrichment_store import read_enrichment_states, write_enrichment_states
 from family_spending.ingestion.cmb_email_transactions import (
     CmbTransaction,
     write_transactions_csv,
 )
-from family_spending.mapping import MappingResolutionError
 from family_spending.statistics_generation import (
     format_statistics_generation_report,
     generate_spending_statistics,
@@ -43,6 +44,7 @@ def transaction(
     description: str,
     source_index: int,
 ) -> CmbTransaction:
+    """Build one raw CMB fixture with explicit source identity and financial facts."""
     return CmbTransaction(
         transaction_id=transaction_id,
         transaction_date=transaction_date,
@@ -61,9 +63,10 @@ class StatisticsGenerationTests(unittest.TestCase):
         self.transactions_path = self.root / "transactions.csv"
         self.merchants_path = self.root / "merchants.yaml"
         self.categories_path = self.root / "categories.yaml"
-        self.overrides_path = self.root / "transaction_category_overrides.jsonl"
         self.output_path = self.root / "reports" / "spending_statistics.json"
         self.emails_dir = self.root / "emails"
+        self.source_links_path = self.root / "transaction_source_links.jsonl"
+        self.enrichment_state_path = self.root / "enrichment_state.jsonl"
         self.emails_dir.mkdir()
         self.merchants_path.write_text(MERCHANTS, encoding="utf-8")
         self.categories_path.write_text(CATEGORIES, encoding="utf-8")
@@ -75,19 +78,44 @@ class StatisticsGenerationTests(unittest.TestCase):
             (self.emails_dir / f"{statement_date}_{digest}.eml").write_bytes(b"test")
 
     def generate(self):
+        """Run production generation with every derived state file isolated in the temporary root."""
         return generate_spending_statistics(
-            self.transactions_path,
-            self.merchants_path,
-            self.categories_path,
-            self.overrides_path,
-            self.output_path,
-            self.emails_dir,
+            transactions_path=self.transactions_path,
+            merchants_path=self.merchants_path,
+            categories_path=self.categories_path,
+            output_path=self.output_path,
+            emails_dir=self.emails_dir,
+            source_links_path=self.source_links_path,
+            enrichment_state_path=self.enrichment_state_path,
         )
 
-    def test_full_pipeline_reconciles_refunds_maps_and_writes_statistics(self) -> None:
+    def _persist_transaction_override(self, source_id: str, category: str) -> str:
+        """Convert one initialized current state into a historical-style persistent transaction exception."""
+        states = read_enrichment_states(self.enrichment_state_path)
+        source_to_transaction: dict[str, str] = {}
+        for line in self.source_links_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            payload = json.loads(line)
+            source_to_transaction[payload["source_record_id"]] = payload["transaction_id"]
+        transaction_id = source_to_transaction[source_id]
+        changed = tuple(
+            replace(
+                state,
+                category=category,
+                category_source="transaction_override",
+            )
+            if state.transaction_id == transaction_id
+            else state
+            for state in states
+        )
+        write_enrichment_states(changed, self.enrichment_state_path)
+        return transaction_id
+
+    def test_full_pipeline_preserves_persisted_transaction_override_and_writes_statistics(self) -> None:
         transactions = (
             transaction(
-                "cmb_partial_override",
+                "cmb_partial_exception",
                 "3000",
                 transaction_date=date(2025, 12, 1),
                 description="支付宝-测试家电",
@@ -116,12 +144,12 @@ class StatisticsGenerationTests(unittest.TestCase):
             ),
         )
         write_transactions_csv(transactions, self.transactions_path)
-        self.overrides_path.write_text(
-            '{"transaction_id":"cmb_partial_override","category":"餐饮美食","note":"测试覆盖"}\n',
-            encoding="utf-8",
-        )
+
+        self.generate()
+        self._persist_transaction_override("cmb_partial_exception", "餐饮美食")
         summary = self.generate()
         payload = json.loads(self.output_path.read_text(encoding="utf-8"))
+
         self.assertEqual(summary.raw_transactions, 4)
         self.assertEqual(summary.refund_transactions, 1)
         self.assertEqual(summary.net_consumption_transactions, 3)
@@ -131,14 +159,8 @@ class StatisticsGenerationTests(unittest.TestCase):
         self.assertEqual(summary.shown_months, 2)
         self.assertEqual(summary.shown_net_spending, Decimal("2050"))
         self.assertEqual(payload["schema_version"], 2)
-        self.assertEqual(
-            payload["summary"]["all_data"]["total_spending_minor"],
-            205000,
-        )
-        self.assertEqual(
-            payload["summary"]["shown_data"]["total_spending_minor"],
-            205000,
-        )
+        self.assertEqual(payload["summary"]["all_data"]["total_spending_minor"], 205000)
+        self.assertEqual(payload["summary"]["shown_data"]["total_spending_minor"], 205000)
         self.assertEqual(
             tuple(month["month"] for month in payload["months"]),
             ("2026-01", "2025-12"),
@@ -154,13 +176,13 @@ class StatisticsGenerationTests(unittest.TestCase):
             {item["category"] for item in january["categories"]},
             {"餐饮美食", "待分类"},
         )
-        unknown = next(
-            item
-            for item in january["merchants"]
-            if item["is_unclassified"]
-        )
+        unknown = next(item for item in january["merchants"] if item["is_unclassified"])
         self.assertIsNone(unknown["merchant_name"])
         self.assertEqual(unknown["display_name"], "支付宝-未知商户")
+        persisted = {
+            state.transaction_id: state for state in read_enrichment_states(self.enrichment_state_path)
+        }
+        self.assertIn("transaction_override", {state.category_source for state in persisted.values()})
 
     def test_incomplete_month_stays_in_all_data_but_not_shown_data(self) -> None:
         write_transactions_csv(
@@ -175,7 +197,6 @@ class StatisticsGenerationTests(unittest.TestCase):
             ),
             self.transactions_path,
         )
-        self.overrides_path.write_text("", encoding="utf-8")
         summary = self.generate()
         payload = json.loads(self.output_path.read_text(encoding="utf-8"))
         self.assertEqual(summary.months, 1)
@@ -207,7 +228,6 @@ class StatisticsGenerationTests(unittest.TestCase):
             ),
             self.transactions_path,
         )
-        self.overrides_path.write_text("", encoding="utf-8")
         summary = self.generate()
         payload = json.loads(self.output_path.read_text(encoding="utf-8"))
         self.assertEqual(summary.same_merchant_refund_matches, 1)
@@ -240,7 +260,6 @@ class StatisticsGenerationTests(unittest.TestCase):
             ),
             self.transactions_path,
         )
-        self.overrides_path.write_text("", encoding="utf-8")
         summary = self.generate()
         payload = json.loads(self.output_path.read_text(encoding="utf-8"))
         self.assertEqual(summary.raw_transactions, 2)
@@ -255,11 +274,11 @@ class StatisticsGenerationTests(unittest.TestCase):
             format_statistics_generation_report(summary),
         )
 
-    def test_fully_refunded_override_is_valid_but_absent_from_statistics(self) -> None:
+    def test_fully_refunded_persisted_override_is_valid_but_absent_from_statistics(self) -> None:
         write_transactions_csv(
             (
                 transaction(
-                    "cmb_override",
+                    "cmb_exception",
                     "100",
                     transaction_date=date(2026, 1, 1),
                     description="支付宝-测试家电",
@@ -275,63 +294,13 @@ class StatisticsGenerationTests(unittest.TestCase):
             ),
             self.transactions_path,
         )
-        self.overrides_path.write_text(
-            '{"transaction_id":"cmb_override","category":"餐饮美食"}\n',
-            encoding="utf-8",
-        )
+        self.generate()
+        self._persist_transaction_override("cmb_exception", "餐饮美食")
         summary = self.generate()
         payload = json.loads(self.output_path.read_text(encoding="utf-8"))
         self.assertEqual(summary.fully_refunded_transactions, 1)
         self.assertEqual(summary.net_consumption_transactions, 0)
         self.assertEqual(payload["months"], [])
-
-    def test_missing_override_id_still_fails_against_raw_transactions(self) -> None:
-        write_transactions_csv(
-            (
-                transaction(
-                    "cmb_food",
-                    "20",
-                    transaction_date=date(2026, 1, 1),
-                    description="支付宝-测试餐饮",
-                    source_index=1,
-                ),
-            ),
-            self.transactions_path,
-        )
-        self.overrides_path.write_text(
-            '{"transaction_id":"cmb_missing","category":"餐饮美食"}\n',
-            encoding="utf-8",
-        )
-        with self.assertRaisesRegex(
-            TransactionResolutionError,
-            "cmb_missing",
-        ):
-            self.generate()
-        self.assertFalse(self.output_path.exists())
-
-    def test_unmapped_override_transaction_still_fails(self) -> None:
-        write_transactions_csv(
-            (
-                transaction(
-                    "cmb_override",
-                    "20",
-                    transaction_date=date(2026, 1, 1),
-                    description="支付宝-未知商户",
-                    source_index=1,
-                ),
-            ),
-            self.transactions_path,
-        )
-        self.overrides_path.write_text(
-            '{"transaction_id":"cmb_override","category":"餐饮美食"}\n',
-            encoding="utf-8",
-        )
-        with self.assertRaisesRegex(
-            MappingResolutionError,
-            "description is not mapped",
-        ):
-            self.generate()
-        self.assertFalse(self.output_path.exists())
 
     def test_report_contains_all_and_shown_aggregates_without_transaction_details(self) -> None:
         write_transactions_csv(
@@ -346,7 +315,6 @@ class StatisticsGenerationTests(unittest.TestCase):
             ),
             self.transactions_path,
         )
-        self.overrides_path.write_text("", encoding="utf-8")
         report = format_statistics_generation_report(self.generate())
         self.assertIn("Raw transactions: 1", report)
         self.assertIn("Total net spending: 20", report)
@@ -356,13 +324,14 @@ class StatisticsGenerationTests(unittest.TestCase):
         self.assertNotIn("支付宝-测试餐饮", report)
 
     def test_main_converts_known_errors_to_clean_cli_failure(self) -> None:
+        """Known domain failures stay user-facing CLI errors after removing the legacy input path."""
         with patch(
             "family_spending.statistics_generation.generate_spending_statistics",
-            side_effect=TransactionResolutionError("bad override"),
+            side_effect=TransactionResolutionError("bad current state"),
         ):
             with self.assertRaisesRegex(
                 SystemExit,
-                "Spending statistics generation failed.*bad override",
+                "Spending statistics generation failed.*bad current state",
             ):
                 main()
 

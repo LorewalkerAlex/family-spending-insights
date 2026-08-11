@@ -17,14 +17,12 @@ from family_spending.ingestion.cmb_email_transactions import (
     write_transactions_csv,
 )
 
-
 MERCHANTS = """\
 测试餐饮:
   - 支付宝-测试餐饮
 测试购物:
   - 支付宝-测试购物
 """
-
 CATEGORIES = """\
 餐饮美食:
   - 测试餐饮
@@ -45,13 +43,11 @@ class MappingReviewHttpApiTests(unittest.TestCase):
             enrichment_state=root / "enrichment_state.jsonl",
             merchants=root / "merchants.yaml",
             categories=root / "categories.yaml",
-            overrides=root / "transaction_category_overrides.jsonl",
             spending_statistics=root / "reports" / "spending_statistics.json",
             emails=root / "emails",
         )
         paths.merchants.write_text(MERCHANTS, encoding="utf-8")
         paths.categories.write_text(CATEGORIES, encoding="utf-8")
-        paths.overrides.write_text("", encoding="utf-8")
         paths.emails.mkdir()
         for index, statement_date in enumerate(
             ("2025-12-10", "2026-01-10", "2026-02-10"),
@@ -82,6 +78,7 @@ class MappingReviewHttpApiTests(unittest.TestCase):
         self.base_url = f"http://{host}:{port}"
 
     def _stop_server(self) -> None:
+        """Stop the background HTTP server so the temporary root can close cleanly."""
         self.server.shutdown()
         self.thread.join(timeout=5)
         self.server.server_close()
@@ -93,6 +90,7 @@ class MappingReviewHttpApiTests(unittest.TestCase):
         method: str = "GET",
         payload: dict[str, object] | None = None,
     ) -> tuple[int, dict[str, object]]:
+        """Issue one local Mapping Review request and normalize HTTP errors into JSON results."""
         data = None
         headers: dict[str, str] = {}
         if payload is not None:

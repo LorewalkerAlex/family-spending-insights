@@ -12,11 +12,7 @@ from family_spending.enrichment import (
     UNCLASSIFIED_CATEGORY,
 )
 from family_spending.ingestion.cmb_email_transactions import CmbTransaction
-from family_spending.mapping import (
-    MappingDataError,
-    MappingResolutionError,
-    load_merchant_mappings,
-)
+from family_spending.mapping import MappingDataError, load_merchant_mappings
 from family_spending.transaction_resolution import build_cmb_domain_state
 
 BASE_MERCHANTS = """\
@@ -34,17 +30,7 @@ BASE_CATEGORIES = """\
   - 测试其他
 综合购物:
   - 测试购物
-家居家电:
-  - 测试家电
 """
-BASE_MERCHANTS_WITH_APPLIANCE = BASE_MERCHANTS + """\
-测试家电:
-  - 支付宝-测试家电
-"""
-BASE_OVERRIDE = (
-    '{"transaction_id":"cmb_override","category":"家居家电",'
-    '"note":"单笔分类覆盖"}\n'
-)
 
 
 def make_transaction(
@@ -53,7 +39,7 @@ def make_transaction(
     amount: str = "10.00",
     description: str = "支付宝-测试餐饮",
 ) -> CmbTransaction:
-    """Use raw CMB amount direction because Mapping now runs against Source Records before refund-derived analytics."""
+    """Use raw CMB amount direction because Mapping resolves Source Records before refund-derived analytics."""
     return CmbTransaction(
         transaction_id=transaction_id,
         transaction_date=date(2026, 8, 1),
@@ -69,37 +55,37 @@ class MappingTestCase(unittest.TestCase):
         self,
         root: Path,
         *,
-        merchants: str = BASE_MERCHANTS_WITH_APPLIANCE,
+        merchants: str = BASE_MERCHANTS,
         categories: str = BASE_CATEGORIES,
-        overrides: str = BASE_OVERRIDE,
-    ) -> tuple[Path, Path, Path]:
-        """Write independent reviewed inputs so each contract failure identifies the exact file boundary."""
+    ) -> tuple[Path, Path]:
+        """Write the two reviewed Mapping inputs so every failure identifies its exact file boundary."""
         merchants_path = root / "merchants.yaml"
         categories_path = root / "categories.yaml"
-        overrides_path = root / "transaction_category_overrides.jsonl"
         merchants_path.write_text(merchants, encoding="utf-8")
         categories_path.write_text(categories, encoding="utf-8")
-        overrides_path.write_text(overrides, encoding="utf-8")
-        return merchants_path, categories_path, overrides_path
+        return merchants_path, categories_path
 
-    def load_fixture(self, root: Path, **overrides: str):
+    def load_fixture(self, root: Path, **changes: str):
         """Reuse the production loader so resolution tests cannot bypass reviewed-file validation."""
-        paths = self.write_mapping_files(root, **overrides)
+        paths = self.write_mapping_files(root, **changes)
         return load_merchant_mappings(*paths)
 
 
 class MappingLoaderTests(MappingTestCase):
-    def test_loads_reverse_indexes_and_override_categories(self) -> None:
-        """The migration must not change the formal Mapping file contract or reverse indexes."""
+    def test_loads_reverse_indexes_without_transaction_fact_inputs(self) -> None:
+        """Mapping owns Merchant/default Category rules only; transaction-specific facts live in Enrichment state."""
         with tempfile.TemporaryDirectory() as temp_dir:
             mappings = self.load_fixture(Path(temp_dir))
         self.assertEqual(mappings.description_to_merchant["支付宝-测试餐饮"], "测试餐饮")
         self.assertEqual(mappings.merchant_to_category["测试购物"], GENERAL_SHOPPING_CATEGORY)
-        self.assertEqual(mappings.transaction_category_overrides["cmb_override"], "家居家电")
         self.assertNotIn(UNCLASSIFIED_CATEGORY, mappings.categories)
+        self.assertEqual(
+            set(type(mappings).__dataclass_fields__),
+            {"description_to_merchant", "merchant_to_category", "categories", "merchants_path", "categories_path"},
+        )
 
     def test_official_mapping_files_satisfy_contract(self) -> None:
-        """Keep the real reviewed Mapping files under the same loader contract after the architecture migration."""
+        """Keep the real reviewed Mapping files under the same loader contract after retiring the historical transaction-specific Mapping input."""
         mappings = load_merchant_mappings()
         self.assertGreater(len(mappings.description_to_merchant), 0)
         self.assertGreater(len(mappings.merchant_to_category), 0)
@@ -107,7 +93,7 @@ class MappingLoaderTests(MappingTestCase):
         self.assertNotIn(UNCLASSIFIED_CATEGORY, mappings.categories)
 
     def test_duplicate_yaml_key_fails_with_file_and_value(self) -> None:
-        """Duplicate reviewed keys must still fail rather than silently selecting one authoritative rule."""
+        """Duplicate reviewed keys must fail rather than silently selecting one authoritative rule."""
         merchants = """\
 重复商户:
   - 支付宝-第一条
@@ -119,12 +105,12 @@ class MappingLoaderTests(MappingTestCase):
   - 重复商户
 """
         with tempfile.TemporaryDirectory() as temp_dir:
-            paths = self.write_mapping_files(Path(temp_dir), merchants=merchants, categories=categories, overrides="")
+            paths = self.write_mapping_files(Path(temp_dir), merchants=merchants, categories=categories)
             with self.assertRaisesRegex(MappingDataError, r"(?s)merchants\.yaml.*duplicate key '重复商户'"):
                 load_merchant_mappings(*paths)
 
     def test_duplicate_description_across_merchants_fails(self) -> None:
-        """One description cannot imply two Merchants because refund evidence and Enrichment both require deterministic identity."""
+        """One description cannot imply two Merchants because refund evidence and Enrichment require deterministic identity."""
         merchants = """\
 商户甲:
   - 支付宝-重复描述
@@ -137,7 +123,7 @@ class MappingLoaderTests(MappingTestCase):
   - 商户乙
 """
         with tempfile.TemporaryDirectory() as temp_dir:
-            paths = self.write_mapping_files(Path(temp_dir), merchants=merchants, categories=categories, overrides="")
+            paths = self.write_mapping_files(Path(temp_dir), merchants=merchants, categories=categories)
             with self.assertRaisesRegex(MappingDataError, "Duplicate description.*支付宝-重复描述"):
                 load_merchant_mappings(*paths)
 
@@ -154,7 +140,7 @@ class MappingLoaderTests(MappingTestCase):
   - 重复商户
 """
         with tempfile.TemporaryDirectory() as temp_dir:
-            paths = self.write_mapping_files(Path(temp_dir), merchants=merchants, categories=categories, overrides="")
+            paths = self.write_mapping_files(Path(temp_dir), merchants=merchants, categories=categories)
             with self.assertRaisesRegex(MappingDataError, "Duplicate merchant.*重复商户"):
                 load_merchant_mappings(*paths)
 
@@ -169,7 +155,7 @@ class MappingLoaderTests(MappingTestCase):
   - 仅分类文件
 """
         with tempfile.TemporaryDirectory() as temp_dir:
-            paths = self.write_mapping_files(Path(temp_dir), merchants=merchants, categories=categories, overrides="")
+            paths = self.write_mapping_files(Path(temp_dir), merchants=merchants, categories=categories)
             with self.assertRaisesRegex(
                 MappingDataError,
                 r"merchants\.yaml.*categories\.yaml.*missing categories.*unknown merchants",
@@ -183,7 +169,6 @@ class MappingLoaderTests(MappingTestCase):
                 Path(temp_dir),
                 merchants="空商户: []\n",
                 categories="其他支出:\n  - 空商户\n",
-                overrides="",
             )
             with self.assertRaisesRegex(MappingDataError, "non-empty description list"):
                 load_merchant_mappings(*paths)
@@ -195,7 +180,6 @@ class MappingLoaderTests(MappingTestCase):
                 Path(temp_dir),
                 merchants='"":\n  - 支付宝-空商户\n',
                 categories='其他支出:\n  - ""\n',
-                overrides="",
             )
             with self.assertRaisesRegex(MappingDataError, "Invalid merchant name"):
                 load_merchant_mappings(*paths)
@@ -207,7 +191,6 @@ class MappingLoaderTests(MappingTestCase):
                 Path(temp_dir),
                 merchants="测试商户:\n  - 支付宝-测试商户\n",
                 categories='"":\n  - 测试商户\n',
-                overrides="",
             )
             with self.assertRaisesRegex(MappingDataError, "Invalid category"):
                 load_merchant_mappings(*paths)
@@ -215,7 +198,7 @@ class MappingLoaderTests(MappingTestCase):
     def test_invalid_yaml_reports_file(self) -> None:
         """Parsing errors must retain the reviewed input path so a failed rebuild is actionable."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            paths = self.write_mapping_files(Path(temp_dir), merchants="测试商户: [\n", overrides="")
+            paths = self.write_mapping_files(Path(temp_dir), merchants="测试商户: [\n")
             with self.assertRaisesRegex(MappingDataError, r"merchants\.yaml"):
                 load_merchant_mappings(*paths)
 
@@ -226,57 +209,24 @@ class MappingLoaderTests(MappingTestCase):
                 Path(temp_dir),
                 merchants="测试商户:\n  - 支付宝-测试商户\n",
                 categories="待分类:\n  - 测试商户\n",
-                overrides="",
             )
             with self.assertRaisesRegex(MappingDataError, "must not be defined as a formal category"):
-                load_merchant_mappings(*paths)
-
-    def test_duplicate_override_transaction_id_fails(self) -> None:
-        """Reviewed overrides remain one-per-legacy-source identity during the compatibility period."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            paths = self.write_mapping_files(Path(temp_dir), overrides=BASE_OVERRIDE + BASE_OVERRIDE)
-            with self.assertRaisesRegex(MappingDataError, "Duplicate override transaction_id.*cmb_override"):
-                load_merchant_mappings(*paths)
-
-    def test_override_unknown_category_fails(self) -> None:
-        """An override cannot introduce a Category outside the reviewed Category set."""
-        overrides = '{"transaction_id":"cmb_unknown","category":"不存在分类"}\n'
-        with tempfile.TemporaryDirectory() as temp_dir:
-            paths = self.write_mapping_files(Path(temp_dir), overrides=overrides)
-            with self.assertRaisesRegex(MappingDataError, "references unknown category.*不存在分类"):
-                load_merchant_mappings(*paths)
-
-    def test_override_unknown_field_fails(self) -> None:
-        """Reject typo fields so reviewed JSONL never contains silently ignored operator intent."""
-        overrides = '{"transaction_id":"cmb_unknown","category":"家居家电","memo":"typo"}\n'
-        with tempfile.TemporaryDirectory() as temp_dir:
-            paths = self.write_mapping_files(Path(temp_dir), overrides=overrides)
-            with self.assertRaisesRegex(MappingDataError, "unknown fields.*memo"):
-                load_merchant_mappings(*paths)
-
-    def test_invalid_jsonl_reports_line_number(self) -> None:
-        """Line numbers keep manual repair practical when a reviewed override file is malformed."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            paths = self.write_mapping_files(Path(temp_dir), overrides=BASE_OVERRIDE + "not-json\n")
-            with self.assertRaisesRegex(MappingDataError, r"line 2"):
                 load_merchant_mappings(*paths)
 
 
 class MappingResolutionTests(MappingTestCase):
     def setUp(self) -> None:
-        """Load real Mapping files because legacy override binding is part of the migration behavior under test."""
+        """Load reviewed Mapping files once because fresh Enrichment resolution now uses only Mapping defaults."""
         self.temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp_dir.cleanup)
-        root = Path(self.temp_dir.name)
-        self.mappings = self.load_fixture(root, overrides="")
-        self.override_mappings = self.load_fixture(root, overrides=BASE_OVERRIDE)
+        self.mappings = self.load_fixture(Path(self.temp_dir.name))
 
     def resolve(self, transaction: CmbTransaction):
-        """Run the complete CMB domain snapshot so tests exercise SourceRecord-to-Transaction override binding."""
+        """Run the complete CMB domain snapshot so tests cover the real SourceRecord-to-Enrichment path."""
         return build_cmb_domain_state((transaction,), self.mappings).enrichments[0]
 
     def test_uses_merchant_default_category(self) -> None:
-        """Default Merchant Category remains the normal Enrichment path after splitting Transaction Core."""
+        """Default Merchant Category remains the normal Enrichment initialization path."""
         result = self.resolve(make_transaction())
         self.assertEqual(result.merchant_name, "测试餐饮")
         self.assertEqual(result.display_name, "测试餐饮")
@@ -287,7 +237,7 @@ class MappingResolutionTests(MappingTestCase):
         self.assertEqual(result.review_signals, ())
 
     def test_unmatched_description_keeps_original_display_name(self) -> None:
-        """Unclassified UI output still needs the source description even though it no longer lives on Transaction Core."""
+        """Unclassified UI output still needs the source description even though it does not live on Transaction Core."""
         result = self.resolve(make_transaction(description="支付宝-未知商户"))
         self.assertIsNone(result.merchant_name)
         self.assertEqual(result.display_name, "支付宝-未知商户")
@@ -296,38 +246,6 @@ class MappingResolutionTests(MappingTestCase):
         self.assertEqual(result.category_source, "unclassified")
         self.assertTrue(result.is_unclassified)
         self.assertEqual(result.review_signals, ())
-
-    def test_override_changes_only_final_category_and_uses_system_transaction_id(self) -> None:
-        """Legacy JSONL identity must bind to the new system Transaction while leaving Merchant/default Category intact."""
-        state = build_cmb_domain_state(
-            (
-                make_transaction(
-                    transaction_id="cmb_override",
-                    amount="2000",
-                    description="支付宝-测试购物",
-                ),
-            ),
-            self.override_mappings,
-        )
-        result = state.enrichments[0]
-        self.assertNotEqual(result.transaction_id, "cmb_override")
-        self.assertEqual(result.merchant_name, "测试购物")
-        self.assertEqual(result.default_category, GENERAL_SHOPPING_CATEGORY)
-        self.assertEqual(result.category, "家居家电")
-        self.assertEqual(result.category_source, "transaction_override")
-        self.assertEqual(result.review_signals, ())
-
-    def test_override_without_merchant_mapping_fails_consistently(self) -> None:
-        """Transaction override cannot substitute for a missing description-to-Merchant relationship."""
-        transaction = make_transaction(
-            transaction_id="cmb_override",
-            description="支付宝-未知商户",
-        )
-        with self.assertRaisesRegex(
-            MappingResolutionError,
-            r"transaction_category_overrides\.jsonl.*merchants\.yaml.*支付宝-未知商户.*家居家电",
-        ):
-            build_cmb_domain_state((transaction,), self.override_mappings)
 
     def test_other_expense_generates_non_blocking_review_signal(self) -> None:
         """Category-only review intent remains attached to Enrichment because it does not depend on net spending."""
