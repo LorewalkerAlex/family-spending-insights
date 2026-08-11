@@ -26,10 +26,16 @@ from family_spending.enrichment_store import (
 )
 from family_spending.ingestion.cmb_email_transactions import read_transactions_csv
 from family_spending.ingestion.cmb_source_adapter import CmbSourceAdapter
-from family_spending.manual_input import submit_manual_input
+from family_spending.manual_input import (
+    delete_manual_input as delete_manual_input_command,
+    replace_manual_input as replace_manual_input_command,
+    submit_manual_input,
+)
 from family_spending.manual_source import (
     MANUAL_SOURCE_RECORDS_FILE,
     ManualSourceAdapter,
+    ManualSourceDataError,
+    ManualSourceEntry,
     create_manual_source_entry,
     read_manual_source_entries,
 )
@@ -157,6 +163,57 @@ class ManualInputView:
 
 
 @dataclass(frozen=True)
+class ManualInputRecordView:
+    entry: ManualSourceEntry
+    transaction_id: str
+    source_role: str
+    transaction: TransactionView
+
+    def to_dict(self) -> dict[str, Any]:
+        """Expose editable Manual Source facts alongside their current Transaction relation."""
+        return {
+            "source_record_id": self.entry.id,
+            "transaction_id": self.transaction_id,
+            "source_role": self.source_role,
+            "type": self.entry.transaction_type,
+            "date": self.entry.transaction_date.isoformat(),
+            "amount": format(self.entry.amount, "f"),
+            "currency": self.entry.currency,
+            "description": self.entry.description,
+            "note": self.entry.note,
+            "transaction": self.transaction.to_dict(),
+        }
+
+
+@dataclass(frozen=True)
+class ManualInputCorrectionView:
+    replaced_source_record_id: str
+    manual_input: ManualInputView
+
+    def to_dict(self) -> dict[str, Any]:
+        """Make the source-identity replacement explicit to clients."""
+        return {
+            "replaced_source_record_id": self.replaced_source_record_id,
+            "manual_input": self.manual_input.to_dict(),
+        }
+
+
+@dataclass(frozen=True)
+class ManualInputDeletionView:
+    source_record_id: str
+    transaction_id: str
+    transaction_removed: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        """Report whether deleting the Manual Source also removed its now-unbacked Transaction."""
+        return {
+            "source_record_id": self.source_record_id,
+            "transaction_id": self.transaction_id,
+            "transaction_removed": self.transaction_removed,
+        }
+
+
+@dataclass(frozen=True)
 class MappingReviewWorkspaceView:
     items: tuple[MappingReviewItem, ...]
     merchants: tuple[MerchantMappingOption, ...]
@@ -224,6 +281,35 @@ class FamilySpendingApplication:
             seen.add(entry.description)
             descriptions.append(entry.description)
         return tuple(descriptions)
+
+    def list_manual_inputs(self) -> tuple[ManualInputRecordView, ...]:
+        """Return current Manual Source facts newest first without flattening them into Transaction Core."""
+        snapshot = self._load_snapshot()
+        links_by_source = {
+            link.source_record_id: link
+            for link in read_transaction_source_links(self.paths.source_links)
+        }
+        views: list[ManualInputRecordView] = []
+        for entry in reversed(read_manual_source_entries(self.paths.manual_source)):
+            link = links_by_source.get(entry.id)
+            if link is None:
+                raise ApplicationStateError(
+                    f"Manual source record {entry.id!r} has no current Transaction link; run application.initialize()"
+                )
+            transaction = snapshot.transactions_by_id.get(link.transaction_id)
+            if transaction is None:
+                raise ApplicationStateError(
+                    f"Manual source record {entry.id!r} links to missing Transaction {link.transaction_id!r}"
+                )
+            views.append(
+                ManualInputRecordView(
+                    entry=entry,
+                    transaction_id=link.transaction_id,
+                    source_role=link.role,
+                    transaction=self._view(snapshot, transaction),
+                )
+            )
+        return tuple(views)
 
     def get_mapping_review_workspace(self) -> MappingReviewWorkspaceView:
         """Aggregate unmapped CMB and Manual descriptions from the current reconciled snapshot."""
@@ -356,28 +442,12 @@ class FamilySpendingApplication:
         note: object = None,
     ) -> ManualInputView:
         """Persist one source-native Manual description and run the shared Mapping/Reconciliation pipeline."""
-        type_value = self._required_text(transaction_type, "type")
-        if type_value not in {"income", "expense"}:
-            raise ApplicationValidationError("type must be either 'income' or 'expense'")
-        date_value = self._required_text(transaction_date, "date")
-        try:
-            parsed_date = date.fromisoformat(date_value)
-        except ValueError as exc:
-            raise ApplicationValidationError(
-                f"date must use YYYY-MM-DD format, got {date_value!r}"
-            ) from exc
-        amount_value = self._required_text(amount, "amount")
-        try:
-            parsed_amount = Decimal(amount_value)
-        except (InvalidOperation, ValueError) as exc:
-            raise ApplicationValidationError(
-                f"amount must be a decimal string, got {amount_value!r}"
-            ) from exc
-        if not parsed_amount.is_finite():
-            raise ApplicationValidationError(
-                f"amount must be a finite decimal string, got {amount_value!r}"
-            )
-        description_value = self._required_text(description, "description")
+        type_value, parsed_date, parsed_amount, description_value = self._manual_source_values(
+            transaction_type=transaction_type,
+            transaction_date=transaction_date,
+            amount=amount,
+            description=description,
+        )
         note_value = self._optional_text(note, "note")
         entry = create_manual_source_entry(
             transaction_type=type_value,
@@ -404,6 +474,109 @@ class FamilySpendingApplication:
             source_record_id=result.source_record_id,
             action=result.action,
             transaction=self.get_transaction(result.transaction_id),
+        )
+
+    def correct_manual_input(
+        self,
+        source_record_id: str,
+        *,
+        transaction_type: object,
+        transaction_date: object,
+        amount: object,
+        description: object,
+        note: object = _UNSET,
+    ) -> ManualInputCorrectionView:
+        """Replace one Manual Source record with a new identity instead of mutating Transaction Core in place."""
+        current = next(
+            (
+                entry
+                for entry in read_manual_source_entries(self.paths.manual_source)
+                if entry.id == source_record_id
+            ),
+            None,
+        )
+        if current is None:
+            raise ApplicationNotFoundError(
+                f"Manual source record {source_record_id!r} does not exist"
+            )
+        type_value, parsed_date, parsed_amount, description_value = self._manual_source_values(
+            transaction_type=transaction_type,
+            transaction_date=transaction_date,
+            amount=amount,
+            description=description,
+        )
+        update_note = note is not _UNSET
+        note_value = (
+            current.note
+            if not update_note
+            else self._optional_text(note, "note")
+        )
+        replacement = create_manual_source_entry(
+            transaction_type=type_value,
+            transaction_date=parsed_date,
+            amount=parsed_amount,
+            description=description_value,
+            merchant_name=current.merchant_name,
+            category=current.category,
+            note=note_value,
+            currency=current.currency,
+        )
+        try:
+            result = replace_manual_input_command(
+                source_record_id,
+                replacement,
+                transactions_path=self.paths.transactions,
+                manual_source_path=self.paths.manual_source,
+                source_links_path=self.paths.source_links,
+                merchants_path=self.paths.merchants,
+                categories_path=self.paths.categories,
+                output_path=self.paths.spending_statistics,
+                emails_dir=self.paths.emails,
+                enrichment_state_path=self.paths.enrichment_state,
+                update_note=update_note,
+            )
+        except ReconciliationError as exc:
+            raise ApplicationConflictError(str(exc)) from exc
+        except ManualSourceDataError as exc:
+            raise ApplicationStateError(str(exc)) from exc
+        return ManualInputCorrectionView(
+            replaced_source_record_id=source_record_id,
+            manual_input=ManualInputView(
+                source_record_id=result.source_record_id,
+                action=result.action,
+                transaction=self.get_transaction(result.transaction_id),
+            ),
+        )
+
+    def delete_manual_input(self, source_record_id: str) -> ManualInputDeletionView:
+        """Delete one Manual Source record while preserving any Transaction still backed by another source."""
+        if not any(
+            entry.id == source_record_id
+            for entry in read_manual_source_entries(self.paths.manual_source)
+        ):
+            raise ApplicationNotFoundError(
+                f"Manual source record {source_record_id!r} does not exist"
+            )
+        try:
+            result = delete_manual_input_command(
+                source_record_id,
+                transactions_path=self.paths.transactions,
+                manual_source_path=self.paths.manual_source,
+                source_links_path=self.paths.source_links,
+                merchants_path=self.paths.merchants,
+                categories_path=self.paths.categories,
+                output_path=self.paths.spending_statistics,
+                emails_dir=self.paths.emails,
+                enrichment_state_path=self.paths.enrichment_state,
+            )
+        except ReconciliationError as exc:
+            raise ApplicationConflictError(str(exc)) from exc
+        except ManualSourceDataError as exc:
+            raise ApplicationStateError(str(exc)) from exc
+        return ManualInputDeletionView(
+            source_record_id=result.source_record_id,
+            transaction_id=result.transaction_id,
+            transaction_removed=result.transaction_removed,
         )
 
     def update_enrichment(
@@ -620,6 +793,39 @@ class FamilySpendingApplication:
             source_record=snapshot.source_records_by_transaction_id[transaction.id],
             enrichment=snapshot.enrichments_by_transaction_id[transaction.id],
         )
+
+    def _manual_source_values(
+        self,
+        *,
+        transaction_type: object,
+        transaction_date: object,
+        amount: object,
+        description: object,
+    ) -> tuple[str, date, Decimal, str]:
+        """Normalize the source-native fields shared by Manual create and correction commands."""
+        type_value = self._required_text(transaction_type, "type")
+        if type_value not in {"income", "expense"}:
+            raise ApplicationValidationError("type must be either 'income' or 'expense'")
+        date_value = self._required_text(transaction_date, "date")
+        try:
+            parsed_date = date.fromisoformat(date_value)
+        except ValueError as exc:
+            raise ApplicationValidationError(
+                f"date must use YYYY-MM-DD format, got {date_value!r}"
+            ) from exc
+        amount_value = self._required_text(amount, "amount")
+        try:
+            parsed_amount = Decimal(amount_value)
+        except (InvalidOperation, ValueError) as exc:
+            raise ApplicationValidationError(
+                f"amount must be a decimal string, got {amount_value!r}"
+            ) from exc
+        if not parsed_amount.is_finite():
+            raise ApplicationValidationError(
+                f"amount must be a finite decimal string, got {amount_value!r}"
+            )
+        description_value = self._required_text(description, "description")
+        return type_value, parsed_date, parsed_amount, description_value
 
     @staticmethod
     def _required_text(value: object, field: str) -> str:

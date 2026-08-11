@@ -215,6 +215,289 @@ class ManualInputApplicationTests(unittest.TestCase):
         self.assertEqual(self.paths.enrichment_state.read_bytes(), enrichment_before)
         self.assertEqual(self.paths.spending_statistics.read_bytes(), projection_before)
 
+    def test_lists_manual_inputs_with_source_relation_and_current_transaction(self) -> None:
+        created = self.application.create_manual_input(
+            transaction_type="expense",
+            transaction_date="2026-01-03",
+            amount="35.50",
+            description="现金早餐",
+            note="现金",
+        )
+        matched = self.application.create_manual_input(
+            transaction_type="expense",
+            transaction_date="2026-01-02",
+            amount="20",
+            description="支付宝-测试餐饮",
+        )
+
+        items = self.application.list_manual_inputs()
+        self.assertEqual([item.entry.id for item in items], [matched.source_record_id, created.source_record_id])
+        self.assertEqual(items[0].source_role, "supporting")
+        self.assertEqual(items[0].transaction_id, self.cmb_transaction_id)
+        self.assertEqual(items[1].source_role, "authoritative")
+        self.assertEqual(items[1].entry.description, "现金早餐")
+
+    def test_correct_manual_input_replaces_source_identity_and_rebuilds_manual_only_transaction(self) -> None:
+        created = self.application.create_manual_input(
+            transaction_type="expense",
+            transaction_date="2026-01-03",
+            amount="35.50",
+            description="现金早餐",
+            note="旧 Note",
+        )
+        old_transaction_id = created.transaction.transaction.id
+
+        corrected = self.application.correct_manual_input(
+            created.source_record_id,
+            transaction_type="expense",
+            transaction_date="2026-01-04",
+            amount="42.00",
+            description="现金早午餐",
+            note="新 Note",
+        )
+
+        self.assertEqual(corrected.replaced_source_record_id, created.source_record_id)
+        self.assertNotEqual(corrected.manual_input.source_record_id, created.source_record_id)
+        self.assertEqual(corrected.manual_input.transaction.transaction.id, old_transaction_id)
+        self.assertEqual(corrected.manual_input.transaction.transaction.amount, Decimal("42.00"))
+        self.assertEqual(corrected.manual_input.transaction.source_record.description, "现金早午餐")
+        self.assertEqual(corrected.manual_input.transaction.enrichment.note, "新 Note")
+        entries = read_manual_source_entries(self.paths.manual_source)
+        self.assertEqual([item.id for item in entries], [corrected.manual_input.source_record_id])
+        self.assertIn(old_transaction_id, [item.transaction.id for item in self.application.list_transactions()])
+
+        projection = json.loads(self.paths.spending_statistics.read_text(encoding="utf-8"))
+        january = next(month for month in projection["months"] if month["month"] == "2026-01")
+        self.assertEqual(january["total_spending_minor"], 6200)
+
+
+    def test_manual_only_correction_preserves_existing_transaction_enrichment_when_identity_stays_same(self) -> None:
+        created = self.application.create_manual_input(
+            transaction_type="expense",
+            transaction_date="2026-01-03",
+            amount="35.50",
+            description="现金早餐",
+        )
+        transaction_id = created.transaction.transaction.id
+        self.application.update_enrichment(
+            transaction_id,
+            category="家居家电",
+            note="Transaction Workspace Note",
+        )
+
+        corrected = self.application.correct_manual_input(
+            created.source_record_id,
+            transaction_type="expense",
+            transaction_date="2026-01-04",
+            amount="42.00",
+            description="现金早午餐",
+        )
+
+        self.assertEqual(corrected.manual_input.action, "reused")
+        self.assertEqual(corrected.manual_input.transaction.transaction.id, transaction_id)
+        self.assertEqual(corrected.manual_input.transaction.enrichment.category, "家居家电")
+        self.assertEqual(
+            corrected.manual_input.transaction.enrichment.note,
+            "Transaction Workspace Note",
+        )
+        self.assertEqual(
+            corrected.manual_input.transaction.enrichment.category_source,
+            "manual_override",
+        )
+
+
+    def test_manual_only_correction_reapplies_description_mapping_when_enrichment_still_follows_it(self) -> None:
+        created = self.application.create_manual_input(
+            transaction_type="expense",
+            transaction_date="2026-01-03",
+            amount="35.50",
+            description="支付宝-测试家电",
+        )
+        transaction_id = created.transaction.transaction.id
+
+        corrected = self.application.correct_manual_input(
+            created.source_record_id,
+            transaction_type="expense",
+            transaction_date="2026-01-04",
+            amount="42.00",
+            description="支付宝-测试餐饮",
+        )
+
+        self.assertEqual(corrected.manual_input.transaction.transaction.id, transaction_id)
+        self.assertEqual(corrected.manual_input.transaction.enrichment.merchant_name, "测试餐饮")
+        self.assertEqual(corrected.manual_input.transaction.enrichment.default_category, "餐饮美食")
+        self.assertEqual(corrected.manual_input.transaction.enrichment.category, "餐饮美食")
+        self.assertEqual(
+            corrected.manual_input.transaction.enrichment.category_source,
+            "merchant_default",
+        )
+
+    def test_manual_only_correction_preserves_explicit_merchant_exception(self) -> None:
+        created = self.application.create_manual_input(
+            transaction_type="expense",
+            transaction_date="2026-01-03",
+            amount="35.50",
+            description="现金早餐",
+        )
+        transaction_id = created.transaction.transaction.id
+        self.application.update_enrichment(transaction_id, merchant="测试家电")
+
+        corrected = self.application.correct_manual_input(
+            created.source_record_id,
+            transaction_type="expense",
+            transaction_date="2026-01-04",
+            amount="42.00",
+            description="支付宝-测试餐饮",
+        )
+
+        self.assertEqual(corrected.manual_input.transaction.transaction.id, transaction_id)
+        self.assertEqual(corrected.manual_input.transaction.enrichment.merchant_name, "测试家电")
+        self.assertEqual(corrected.manual_input.transaction.enrichment.category, "家居家电")
+
+    def test_correct_manual_input_can_reconcile_new_source_to_existing_cmb_transaction(self) -> None:
+        created = self.application.create_manual_input(
+            transaction_type="expense",
+            transaction_date="2026-01-08",
+            amount="35.50",
+            description="现金早餐",
+        )
+
+        corrected = self.application.correct_manual_input(
+            created.source_record_id,
+            transaction_type="expense",
+            transaction_date="2026-01-02",
+            amount="20",
+            description="支付宝-测试餐饮",
+            note="已核对信用卡",
+        )
+
+        self.assertEqual(corrected.manual_input.action, "matched")
+        self.assertEqual(corrected.manual_input.transaction.transaction.id, self.cmb_transaction_id)
+        self.assertEqual(len(self.application.list_transactions()), 1)
+        listed = self.application.list_manual_inputs()
+        self.assertEqual(listed[0].source_role, "supporting")
+        self.assertEqual(listed[0].transaction_id, self.cmb_transaction_id)
+
+    def test_correction_without_note_does_not_overwrite_current_enrichment_note(self) -> None:
+        matched = self.application.create_manual_input(
+            transaction_type="expense",
+            transaction_date="2026-01-02",
+            amount="20",
+            description="支付宝-测试餐饮",
+            note="初始 Note",
+        )
+        self.application.update_enrichment(
+            self.cmb_transaction_id,
+            note="Transaction Workspace Note",
+        )
+
+        corrected = self.application.correct_manual_input(
+            matched.source_record_id,
+            transaction_type="expense",
+            transaction_date="2026-01-02",
+            amount="20",
+            description="支付宝-测试餐饮",
+        )
+
+        self.assertEqual(corrected.manual_input.transaction.transaction.id, self.cmb_transaction_id)
+        self.assertEqual(
+            corrected.manual_input.transaction.enrichment.note,
+            "Transaction Workspace Note",
+        )
+        source_entry = read_manual_source_entries(self.paths.manual_source)[0]
+        self.assertEqual(source_entry.note, "初始 Note")
+
+    def test_delete_manual_only_input_removes_unbacked_transaction_and_projection_amount(self) -> None:
+        created = self.application.create_manual_input(
+            transaction_type="expense",
+            transaction_date="2026-01-03",
+            amount="35.50",
+            description="现金早餐",
+        )
+
+        deletion = self.application.delete_manual_input(created.source_record_id)
+
+        self.assertTrue(deletion.transaction_removed)
+        self.assertEqual(deletion.transaction_id, created.transaction.transaction.id)
+        self.assertEqual(len(self.application.list_transactions()), 1)
+        self.assertEqual(self.application.list_manual_inputs(), ())
+        self.assertFalse(self.paths.manual_source.exists())
+        projection = json.loads(self.paths.spending_statistics.read_text(encoding="utf-8"))
+        january = next(month for month in projection["months"] if month["month"] == "2026-01")
+        self.assertEqual(january["total_spending_minor"], 2000)
+
+    def test_delete_supporting_manual_input_preserves_cmb_transaction(self) -> None:
+        matched = self.application.create_manual_input(
+            transaction_type="expense",
+            transaction_date="2026-01-02",
+            amount="20",
+            description="支付宝-测试餐饮",
+            note="先前手工记录",
+        )
+
+        deletion = self.application.delete_manual_input(matched.source_record_id)
+
+        self.assertFalse(deletion.transaction_removed)
+        self.assertEqual(deletion.transaction_id, self.cmb_transaction_id)
+        self.assertEqual(len(self.application.list_transactions()), 1)
+        self.assertEqual(self.application.list_manual_inputs(), ())
+
+    def test_failed_manual_correction_rolls_back_source_links_enrichment_and_projection(self) -> None:
+        created = self.application.create_manual_input(
+            transaction_type="expense",
+            transaction_date="2026-01-03",
+            amount="35.50",
+            description="现金早餐",
+        )
+        manual_before = self.paths.manual_source.read_bytes()
+        links_before = self.paths.source_links.read_bytes()
+        enrichment_before = self.paths.enrichment_state.read_bytes()
+        projection_before = self.paths.spending_statistics.read_bytes()
+
+        with patch(
+            "family_spending.manual_input.generate_spending_statistics",
+            side_effect=OSError("correction projection failed"),
+        ):
+            with self.assertRaisesRegex(OSError, "correction projection failed"):
+                self.application.correct_manual_input(
+                    created.source_record_id,
+                    transaction_type="expense",
+                    transaction_date="2026-01-04",
+                    amount="42",
+                    description="修正早餐",
+                )
+
+        self.assertEqual(self.paths.manual_source.read_bytes(), manual_before)
+        self.assertEqual(self.paths.source_links.read_bytes(), links_before)
+        self.assertEqual(self.paths.enrichment_state.read_bytes(), enrichment_before)
+        self.assertEqual(self.paths.spending_statistics.read_bytes(), projection_before)
+
+
+    def test_failed_manual_deletion_rolls_back_source_links_enrichment_and_projection(self) -> None:
+        created = self.application.create_manual_input(
+            transaction_type="expense",
+            transaction_date="2026-01-03",
+            amount="35.50",
+            description="现金早餐",
+        )
+        manual_before = self.paths.manual_source.read_bytes()
+        links_before = self.paths.source_links.read_bytes()
+        enrichment_before = self.paths.enrichment_state.read_bytes()
+        projection_before = self.paths.spending_statistics.read_bytes()
+
+        with patch(
+            "family_spending.manual_input.generate_spending_statistics",
+            side_effect=OSError("deletion projection failed"),
+        ):
+            with self.assertRaisesRegex(OSError, "deletion projection failed"):
+                self.application.delete_manual_input(created.source_record_id)
+
+        self.assertEqual(self.paths.manual_source.read_bytes(), manual_before)
+        self.assertEqual(self.paths.source_links.read_bytes(), links_before)
+        self.assertEqual(self.paths.enrichment_state.read_bytes(), enrichment_before)
+        self.assertEqual(self.paths.spending_statistics.read_bytes(), projection_before)
+
+
 
 class ManualInputHttpApiTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -356,6 +639,61 @@ class ManualInputHttpApiTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("missing required fields", body["error"])
         self.assertIn("description", body["error"])
+
+    def test_manual_input_management_endpoints_list_correct_and_delete(self) -> None:
+        created = self.server.application.create_manual_input(
+            transaction_type="expense",
+            transaction_date="2026-01-03",
+            amount="35.50",
+            description="现金早餐",
+            note="旧 Note",
+        )
+
+        status, body = self._json_request("/api/manual-inputs")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(body["manual_inputs"]), 1)
+        self.assertEqual(body["manual_inputs"][0]["source_record_id"], created.source_record_id)
+        self.assertEqual(body["manual_inputs"][0]["source_role"], "authoritative")
+
+        status, body = self._json_request(
+            f"/api/manual-inputs/{created.source_record_id}/corrections",
+            method="POST",
+            payload={
+                "type": "expense",
+                "date": "2026-01-04",
+                "amount": "42.00",
+                "description": "修正早餐",
+                "note": "新 Note",
+            },
+        )
+        self.assertEqual(status, 200)
+        correction = body["manual_input_correction"]
+        self.assertEqual(correction["replaced_source_record_id"], created.source_record_id)
+        new_source_id = correction["manual_input"]["source_record_id"]
+        self.assertNotEqual(new_source_id, created.source_record_id)
+
+        status, body = self._json_request(
+            f"/api/manual-inputs/{new_source_id}",
+            method="DELETE",
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(body["manual_input_deletion"]["transaction_removed"])
+        self.assertEqual(read_manual_source_entries(self.paths.manual_source), ())
+        self.assertFalse(self.paths.manual_source.exists())
+
+    def test_manual_input_correction_returns_404_for_missing_source_record(self) -> None:
+        status, body = self._json_request(
+            "/api/manual-inputs/manual_missing/corrections",
+            method="POST",
+            payload={
+                "type": "expense",
+                "date": "2026-01-04",
+                "amount": "42.00",
+                "description": "修正早餐",
+            },
+        )
+        self.assertEqual(status, 404)
+        self.assertIn("does not exist", body["error"])
 
 
 if __name__ == "__main__":

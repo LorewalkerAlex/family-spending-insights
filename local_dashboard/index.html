@@ -24,7 +24,7 @@
         <p class="eyebrow">Family Spending Insights</p>
         <h1>家庭消费统计</h1>
         <p class="page-header__description">
-          查看后端生成的净消费统计，通过本地 Application/API 手工录入收入/支出、审核未匹配 description 的 Mapping，并浏览逐笔 Transaction 例外。业务统计、Reconciliation 和写回规则仍全部由后端负责。
+          查看后端生成的净消费统计，通过本地 Application/API 手工录入及纠错收入/支出、审核未匹配 description 的 Mapping，并浏览逐笔 Transaction 例外。业务统计、Reconciliation 和写回规则仍全部由后端负责。
         </p>
       </header>
       <p class="state-message" data-state="loading">正在读取消费统计…</p>
@@ -100,6 +100,70 @@
               <p class="manual-entry-form__status" role="status" aria-live="polite" data-manual-status></p>
             </div>
           </form>
+
+          <div class="manual-input-management" data-manual-input-management>
+            <div class="manual-input-management__heading">
+              <div>
+                <h3>已录入 Manual Inputs</h3>
+                <p>这里修改的是 Manual Source 事实，不直接编辑 Transaction Core。保存更正时会删除旧 Source Record、生成新的 Source ID，并重新执行 Reconciliation；若没有匹配到其他 Transaction，会保留原系统 Transaction identity 与已有单笔 Enrichment。删除时只有失去所有来源支撑的 Transaction 才会消失。</p>
+              </div>
+              <div class="manual-input-management__summary">
+                <span><span data-manual-input-count>—</span> 条</span>
+                <button class="secondary-button" type="button" data-action="retry-manual-inputs">刷新</button>
+              </div>
+            </div>
+            <p class="manual-input-management__state" data-manual-input-loading>正在读取 Manual Inputs…</p>
+            <div class="manual-input-management__error" data-manual-input-error hidden>
+              <p data-manual-input-error-message>无法读取 Manual Inputs。</p>
+            </div>
+            <p class="manual-input-management__empty" data-manual-input-empty hidden>当前还没有 Manual Input。</p>
+            <div class="manual-input-management__grid">
+              <ul class="manual-input-list" data-manual-input-list></ul>
+              <div class="manual-input-detail">
+                <p class="manual-input-detail__empty" data-manual-input-detail-empty>选择一条 Manual Input 后可以更正 Source 事实或删除该 Source Record。</p>
+                <div data-manual-input-detail hidden>
+                  <div class="manual-input-detail__heading">
+                    <h4 data-manual-input-detail-title>—</h4>
+                    <p data-manual-input-detail-meta>—</p>
+                  </div>
+                  <form class="manual-entry-form manual-correction-form" data-manual-correction-form>
+                    <div class="manual-entry-form__grid">
+                      <div class="manual-entry-form__field">
+                        <label for="manual-edit-type">类型</label>
+                        <select id="manual-edit-type" data-manual-edit-type required>
+                          <option value="expense">支出</option>
+                          <option value="income">收入</option>
+                        </select>
+                      </div>
+                      <div class="manual-entry-form__field">
+                        <label for="manual-edit-date">日期</label>
+                        <input id="manual-edit-date" type="date" data-manual-edit-date required />
+                      </div>
+                      <div class="manual-entry-form__field">
+                        <label for="manual-edit-amount">金额</label>
+                        <input id="manual-edit-amount" type="text" inputmode="decimal" autocomplete="off" data-manual-edit-amount required />
+                      </div>
+                      <div class="manual-entry-form__field manual-entry-form__field--full">
+                        <label for="manual-edit-description">交易描述</label>
+                        <input id="manual-edit-description" type="text" autocomplete="off" data-manual-edit-description required />
+                        <p class="manual-entry-form__hint">Merchant / Category 不在这里修改：稳定规则走 Mapping Review，真实单笔例外走 Transaction Workspace。</p>
+                      </div>
+                      <div class="manual-entry-form__field manual-entry-form__field--full">
+                        <label for="manual-edit-note">当前 Note</label>
+                        <textarea id="manual-edit-note" data-manual-edit-note></textarea>
+                        <p class="manual-entry-form__hint">Note 属于当前 Enrichment。这里显示当前值；保存更正时会把它同步到新的 Manual Source 记录，不会用旧 Source Note 静默覆盖后续编辑。</p>
+                      </div>
+                    </div>
+                    <div class="manual-entry-form__actions">
+                      <button class="primary-button" type="submit" data-action="correct-manual-input">保存为更正记录</button>
+                      <button class="danger-button" type="button" data-action="delete-manual-input">删除 Manual Input</button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            </div>
+            <p class="manual-entry-form__status" role="status" aria-live="polite" data-manual-input-status></p>
+          </div>
         </section>
         <section class="mapping-review-card" data-mapping-review aria-labelledby="mapping-review-title">
           <div class="mapping-review-card__heading">

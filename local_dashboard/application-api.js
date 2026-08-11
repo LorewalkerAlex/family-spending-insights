@@ -21,6 +21,7 @@
     "unclassified",
   ]);
   const MANUAL_INPUT_ACTIONS = new Set(["created", "matched", "reused"]);
+  const SOURCE_ROLES = new Set(["authoritative", "supporting"]);
 
   class ApplicationApiError extends Error {
     constructor(code, message, options = {}) {
@@ -184,6 +185,62 @@
       ),
       action,
       transaction: validateTransaction(result.transaction, `${path}.transaction`),
+    });
+  }
+
+  function validateManualInputRecord(value, path = "manual_inputs[]") {
+    const item = requireRecord(value, path);
+    const role = requireString(item.source_role, `${path}.source_role`);
+    if (!SOURCE_ROLES.has(role)) {
+      fail("invalid_data", `${path}.source_role 包含未知值 ${role}。`, `${path}.source_role`);
+    }
+    const type = requireString(item.type, `${path}.type`);
+    if (type !== "income" && type !== "expense") {
+      fail("invalid_data", `${path}.type 必须是 income 或 expense。`, `${path}.type`);
+    }
+    return Object.freeze({
+      sourceRecordId: requireString(item.source_record_id, `${path}.source_record_id`),
+      transactionId: requireString(item.transaction_id, `${path}.transaction_id`),
+      sourceRole: role,
+      type,
+      date: requireString(item.date, `${path}.date`),
+      amount: requireAmountString(item.amount, `${path}.amount`),
+      currency: requireString(item.currency, `${path}.currency`),
+      description: requireNullableString(item.description, `${path}.description`),
+      note: requireNullableString(item.note, `${path}.note`),
+      transaction: validateTransaction(item.transaction, `${path}.transaction`),
+    });
+  }
+
+  function validateManualInputCorrection(value, path = "manual_input_correction") {
+    const correction = requireRecord(value, path);
+    return Object.freeze({
+      replacedSourceRecordId: requireString(
+        correction.replaced_source_record_id,
+        `${path}.replaced_source_record_id`,
+      ),
+      manualInput: validateManualInputResult(
+        correction.manual_input,
+        `${path}.manual_input`,
+      ),
+    });
+  }
+
+  function validateManualInputDeletion(value, path = "manual_input_deletion") {
+    const deletion = requireRecord(value, path);
+    return Object.freeze({
+      sourceRecordId: requireString(
+        deletion.source_record_id,
+        `${path}.source_record_id`,
+      ),
+      transactionId: requireString(
+        deletion.transaction_id,
+        `${path}.transaction_id`,
+      ),
+      transactionRemoved: requireBoolean(
+        deletion.transaction_removed,
+        `${path}.transaction_removed`,
+      ),
     });
   }
 
@@ -372,6 +429,39 @@
     return base.replace(/\/+$/, "");
   }
 
+  function manualInputCommand(command, path) {
+    const input = requireRecord(command, path);
+    const allowed = new Set(["type", "date", "amount", "description", "note"]);
+    const keys = Object.keys(input);
+    const unknown = keys.filter((key) => !allowed.has(key));
+    if (unknown.length > 0) {
+      throw new TypeError(`Manual Input 包含未知字段：${unknown.join(", ")}`);
+    }
+    for (const required of ["type", "date", "amount", "description"]) {
+      if (!Object.prototype.hasOwnProperty.call(input, required)) {
+        throw new TypeError(`Manual Input 缺少必填字段：${required}`);
+      }
+    }
+    const type = requireString(input.type, `${path}.type`);
+    if (type !== "income" && type !== "expense") {
+      throw new TypeError("Manual Input type 必须是 income 或 expense。");
+    }
+    const date = requireString(input.date, `${path}.date`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      throw new TypeError("Manual Input date 必须使用 YYYY-MM-DD 格式。");
+    }
+    const body = {
+      type,
+      date,
+      amount: requireAmountString(input.amount, `${path}.amount`),
+      description: requireString(input.description, `${path}.description`).trim(),
+    };
+    if (Object.prototype.hasOwnProperty.call(input, "note")) {
+      body.note = requireNullableString(input.note, `${path}.note`);
+    }
+    return body;
+  }
+
   function createApplicationService(options = {}) {
     const baseUrl = normalizeBaseUrl(options.baseUrl);
     const fetchImpl =
@@ -455,6 +545,14 @@
       return Object.freeze(descriptions);
     }
 
+    async function getManualInputs() {
+      const payload = await request("/manual-inputs");
+      const items = requireArray(payload.manual_inputs, "manual_inputs").map(
+        (item, index) => validateManualInputRecord(item, `manual_inputs[${index}]`),
+      );
+      return Object.freeze(items);
+    }
+
     async function getMappingReviews() {
       const payload = await request("/mapping-reviews");
       return validateMappingReviewWorkspace(payload.mapping_review);
@@ -475,37 +573,27 @@
     }
 
     async function createManualInput(command) {
-      const input = requireRecord(command, "manualInput");
-      const allowed = new Set(["type", "date", "amount", "description", "note"]);
-      const keys = Object.keys(input);
-      const unknown = keys.filter((key) => !allowed.has(key));
-      if (unknown.length > 0) {
-        throw new TypeError(`Manual Input 包含未知字段：${unknown.join(", ")}`);
-      }
-      for (const required of ["type", "date", "amount", "description"]) {
-        if (!Object.prototype.hasOwnProperty.call(input, required)) {
-          throw new TypeError(`Manual Input 缺少必填字段：${required}`);
-        }
-      }
-      const type = requireString(input.type, "manualInput.type");
-      if (type !== "income" && type !== "expense") {
-        throw new TypeError("Manual Input type 必须是 income 或 expense。");
-      }
-      const date = requireString(input.date, "manualInput.date");
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-        throw new TypeError("Manual Input date 必须使用 YYYY-MM-DD 格式。");
-      }
-      const body = {
-        type,
-        date,
-        amount: requireAmountString(input.amount, "manualInput.amount"),
-        description: requireString(input.description, "manualInput.description").trim(),
-      };
-      if (Object.prototype.hasOwnProperty.call(input, "note")) {
-        body.note = requireNullableString(input.note, "manualInput.note");
-      }
+      const body = manualInputCommand(command, "manualInput");
       const payload = await request("/manual-inputs", { method: "POST", body });
       return validateManualInputResult(payload.manual_input);
+    }
+
+    async function correctManualInput(sourceRecordId, command) {
+      const id = requireString(sourceRecordId, "sourceRecordId");
+      const body = manualInputCommand(command, "manualInputCorrection");
+      const payload = await request(
+        `/manual-inputs/${encodeURIComponent(id)}/corrections`,
+        { method: "POST", body },
+      );
+      return validateManualInputCorrection(payload.manual_input_correction);
+    }
+
+    async function deleteManualInput(sourceRecordId) {
+      const id = requireString(sourceRecordId, "sourceRecordId");
+      const payload = await request(`/manual-inputs/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+      return validateManualInputDeletion(payload.manual_input_deletion);
     }
 
     function mappingReviewCommand(command, path) {
@@ -607,10 +695,13 @@
       getHealth,
       getCategories,
       getManualDescriptions,
+      getManualInputs,
       getMappingReviews,
       getTransactions,
       getTransaction,
       createManualInput,
+      correctManualInput,
+      deleteManualInput,
       previewMappingReview,
       applyMappingReview,
       updateEnrichment,
@@ -627,6 +718,9 @@
     findSimilarMerchantNames,
     validateTransaction,
     validateManualInputResult,
+    validateManualInputRecord,
+    validateManualInputCorrection,
+    validateManualInputDeletion,
     validateMappingReviewItem,
     validateMappingReviewWorkspace,
     validateMappingReviewPreview,

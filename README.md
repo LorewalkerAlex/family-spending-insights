@@ -16,7 +16,7 @@ CMB Email / Manual Input
 → Application / local JSON API
 → local_dashboard/
 ```
-项目当前已经实现邮件获取、CMB Source Record / Transaction 身份分离、Manual Source 与跨来源 Reconciliation、正式 Merchant Mapping、按 description 聚合的 Mapping Review / Mapping Correction、独立持久化的当前 Enrichment、退款归并、消费统计 Projection、本地 JSON Application/API，以及支持 source-native Manual Input、Mapping Review、逐笔 Transaction 浏览和 transaction-only Enrichment exception 的本地 HTML Dashboard。增长率/环比分析、AI 报告、面向公网部署与认证的远程 API、正式微信小程序等仍不在当前实现范围内。
+项目当前已经实现邮件获取、CMB Source Record / Transaction 身份分离、Manual Source 与跨来源 Reconciliation、Manual Input 查询 / 更正 / 删除生命周期、正式 Merchant Mapping、按 description 聚合的 Mapping Review / Mapping Correction、独立持久化的当前 Enrichment、退款归并、消费统计 Projection、本地 JSON Application/API，以及支持 source-native Manual Input 管理、Mapping Review、逐笔 Transaction 浏览和 transaction-only Enrichment exception 的本地 HTML Dashboard。增长率/环比分析、AI 报告、面向公网部署与认证的远程 API、正式微信小程序等仍不在当前实现范围内。
 ## 数据与隐私边界
 
 ```text
@@ -41,7 +41,7 @@ data/
 - `transactions.csv`：从全部原始邮件全量重建的 CMB 来源级事实数据；进入统一领域模型后对应 `SourceRecord`，不是系统级 Transaction 存储。
 - `mappings/merchants.yaml`：人工确认的 `merchant_name → descriptions`。
 - `mappings/categories.yaml`：人工确认的 `category → merchant_names`。
-- `manual_source_records.jsonl`：Manual Source 的本地来源事实；当前录入保存 `type/date/amount/description/note`，Merchant / Category 由下游 Mapping / Enrichment 决定。
+- `manual_source_records.jsonl`：Manual Source 的本地来源事实；当前录入保存 `type/date/amount/description/note`，Merchant / Category 由下游 Mapping / Enrichment 决定。更正会以新 Source Record 替换旧记录；删除最后一条 Manual Source 后文件会被移除，缺失文件表示空 Manual Source。
 - `transaction_source_links.jsonl`：当前 Source Record → Transaction 关系。
 - `enrichment_state.jsonl`：当前 Transaction Enrichment authoritative state；transaction-only Category exception 也持久化在这里，并通过 `category_source` 区分来源。
 - `reports/spending_statistics.json`：后端生成、可从正式状态重建的消费统计 Projection。
@@ -260,6 +260,15 @@ Manual Input
 - CMB 后续到达并匹配 manual-only Transaction 时，复用同一个 Transaction identity，并由 CMB 成为该信用卡交易核心财务事实的 authoritative Source。
 - Manual `description` 属于 Source Record 原始事实；Merchant / Category 仍由共享 Mapping / Enrichment 路径决定。Manual `note` 作为用户补充信息进入当前 Enrichment，但不进入 Transaction Core。
 - Manual Input 在真正写入前先完成校验与 Reconciliation；写入 Manual Source、Source Link、Enrichment 或 Projection 任一步失败时，会恢复本次命令前的相关文件状态，避免正常故障路径留下半提交。
+
+Manual Source 现在也支持显式查询、更正与删除，并保持 Source 生命周期与 Transaction / Enrichment 边界分离：
+- 更正不是通用 Transaction Core PATCH，而是用一个**新的 Manual Source Record ID**替换旧 Source Record，然后重新执行 Reconciliation 与全部必要下游处理。
+- 如果更正后的 Source Record 没有匹配到另一个既有 Transaction，系统把它视为同一真实交易的来源事实纠错，保留原系统 Transaction ID；已有 transaction-level Enrichment 也随同该 Transaction identity 保留。
+- 在保留 Transaction identity 时，如果当前 Merchant 仍跟随旧 description 的正式 Mapping，会按更正后的 description 重新应用 Mapping；显式 transaction-level Merchant 例外和 Category override 不会被静默覆盖。
+- 如果更正后的 Source Record 唯一匹配到另一个既有 Transaction，则按正常 Reconciliation 复用目标 Transaction，不强行保留旧 manual-only Transaction identity，也不会把旧 Transaction 的 Merchant / Category 单笔例外静默复制到目标 Transaction。
+- 更正命令显式提供 `note` 时会更新当前 Enrichment Note；Dashboard 编辑器展示并提交的是当前 Transaction Enrichment Note，避免旧 Source note 覆盖后来做过的 Note 修改。
+- 删除只删除指定 Manual Source。若 Transaction 还有 CMB 或其他 Source 支撑，则 Transaction 保留；若它只由该 Manual Source 支撑，则重建后该 Transaction 与不再需要的 Enrichment / Source Link 一并退出当前状态。
+- 创建、更正、删除都以 Manual Source、Source Link、Enrichment 与 Projection 为同一个 Application mutation 边界；失败时恢复命令前相关文件状态。
 本地运行状态包括：
 
 ~~~text
@@ -282,6 +291,9 @@ Mapping / Merchant default 负责新 Transaction 或缺失状态的初始化；�
 
 本地 Application 提供：
 - 创建 source-native Manual Input，并复用现有 Mapping / Manual Source / Cross-source Reconciliation / downstream Pipeline；
+- 查询当前 Manual Inputs 及其 Source role、关联 Transaction 与当前 Enrichment；
+- 更正 Manual Source：替换 Source identity、重新 Reconciliation，并按实际匹配结果保留原 Transaction identity 或收敛到另一个既有 Transaction；
+- 删除 Manual Source，并根据是否仍有其他 Source 支撑决定 Transaction 是否保留；
 - 查询历史 Manual description，供录入时做轻量复用提示；
 - 查询当前 Transaction + Source identity + Enrichment；
 - 查询正式 Category 列表；
@@ -305,17 +317,20 @@ $env:PYTHONPATH="src"; uv run --frozen python -m family_spending.http_api
 GET   /api/health
 GET   /api/categories
 GET   /api/manual-descriptions
+GET   /api/manual-inputs
 GET   /api/mapping-reviews
 GET   /api/transactions
 GET   /api/transactions/{transaction_id}
 POST  /api/manual-inputs
+POST  /api/manual-inputs/{source_record_id}/corrections
+DELETE /api/manual-inputs/{source_record_id}
 POST  /api/mapping-reviews/preview
 POST  /api/mapping-reviews/apply
 PATCH /api/transactions/{transaction_id}/enrichment
 ```
 API 启动时会先执行 `Application.initialize()`，同步当前 Source / Reconciliation / Enrichment 状态并重建最新 Projection。Source 在初始化后发生变化时，旧 Application snapshot 不会静默继续使用失效 links；应重新启动或重新初始化 Application，使上游 Source / Reconciliation 先收敛。
 
-Application mutation 保持 authoritative state 与可重建 Projection 的提交边界。Enrichment PATCH 不得留下 Enrichment 已更新而 Projection 仍旧的半提交状态；Manual Input 会在跨 Manual Source / Source Link / Enrichment / Projection 写入失败时恢复本次命令前状态；Mapping Review Apply 同样会快照并协调 Mapping、affected Enrichment 与 Projection，任一步失败时恢复本次命令前状态。
+Application mutation 保持 authoritative state 与可重建 Projection 的提交边界。Enrichment PATCH 不得留下 Enrichment 已更新而 Projection 仍旧的半提交状态；Manual Input 的创建、更正和删除都会在跨 Manual Source / Source Link / Enrichment / Projection 写入失败时恢复本次命令前状态；Mapping Review Apply 同样会快照并协调 Mapping、affected Enrichment 与 Projection，任一步失败时恢复本次命令前状态。
 ## 退款归并
 
 正式统计在 Source Record → Transaction → Enrichment 建立后调用 `reconcile_refunds()`。退款匹配会读取 authoritative Source Record 的 description，并可使用当前 Merchant identity 作为辅助证据；Category 和 transaction override 不参与退款身份判断。
@@ -439,7 +454,11 @@ Manual Input、Mapping Review 与逐笔 Transaction / Enrichment 都通过本地
 - 展示后端已经排序的 category 和 merchant/display 汇总；
 - 显示待分类项目且不遗漏金额；
 - Manual Input 表单支持录入 `type / date / amount / description` 以及可选 `note`；description 先作为 Manual Source 原始事实保存，输入时只从历史 Manual description 提供轻量复用候选；
-- Manual Input 成功后由后端完成 Reconciliation 与 Projection 刷新，Dashboard 再重新读取统计与 Transaction Workspace；
+- Manual Input 管理区列出当前 Manual Source、其 authoritative/supporting role、关联 Transaction identity 与当前 Enrichment，并可选中现有记录执行 Source-level 更正或删除；
+- 更正会明确生成新的 Manual Source ID；普通 manual-only 事实纠错在未匹配其他 Transaction 时保留原 Transaction ID，而真正匹配到已有 Transaction 时按 Reconciliation 收敛到该 Transaction；
+- 更正编辑器使用当前 Transaction Enrichment Note；Merchant / Category 的稳定 Mapping 修改继续走 Mapping Review，transaction-only Merchant / Category 例外继续走 Transaction Workspace，不混入 Source correction；
+- 删除 Manual Source 后，如果没有其他 Source 支撑原 Transaction，则该 Transaction 从当前领域状态移除；若仍有 CMB 等来源支撑，则 Transaction 保留；
+- Manual Input 创建、更正或删除成功后由后端完成 Reconciliation 与 Projection 刷新，Dashboard 再重新读取 Manual Input 列表、Mapping Review、Transaction Workspace 与统计；
 - Transaction Workspace 跟随当前月份列出 Transaction，并展示其 Source description 与当前 Enrichment；
 - Mapping Review Workspace 按未匹配 description 聚合 CMB 与 Manual Source 交易，并显示笔数、总金额和来源类型；
 - Review 时可以搜索/选择已有 Merchant 或明确新建 Merchant，并选择正式默认 Category；Merchant 相似候选只做提示，不会自动合并；
@@ -469,7 +488,7 @@ Category 趋势图补齐缺失月份时使用 0，仅作为已有月度 category
 Chart.js 固定在项目的 npm 依赖中，并由页面加载本地 `node_modules/chart.js/dist/chart.umd.js`；运行 Dashboard 时不使用 CDN，也不发起其他外部网络请求。Chart.js 内置图例交互用于隐藏/恢复 category 系列。
 每张图表独立创建和捕获失败。某一图表初始化或渲染失败时，只在该图表卡片显示错误，不影响总览、月份切换、category/merchant 表格或其他图表。
 
-`local_dashboard/api.js` 负责加载统计 Projection、schema 校验、金额/笔数对账和 view model；`local_dashboard/charts.js` 负责纯图表配置与图表实例生命周期；`local_dashboard/app.js` 负责统计 DOM 状态、月份交互以及将 service 数据交给图表层；`local_dashboard/application-api.js` 负责本地 JSON API contract、Mapping Review transport 和错误边界；`local_dashboard/manual-entry.js` 负责 Manual Input 表单提交；`local_dashboard/mapping-review.js` 负责 Mapping Review workspace、Preview 与 Apply 交互；`local_dashboard/transactions.js` 负责 Transaction Workspace 的浏览与单笔例外编辑。前端不重新实现 Reconciliation、Mapping propagation、Enrichment 规则或消费聚合。
+`local_dashboard/api.js` 负责加载统计 Projection、schema 校验、金额/笔数对账和 view model；`local_dashboard/charts.js` 负责纯图表配置与图表实例生命周期；`local_dashboard/app.js` 负责统计 DOM 状态、月份交互以及将 service 数据交给图表层；`local_dashboard/application-api.js` 负责本地 JSON API contract、Manual Input management / Mapping Review transport 和错误边界；`local_dashboard/manual-entry.js` 负责 Manual Input 创建、列表、更正与删除交互；`local_dashboard/mapping-review.js` 负责 Mapping Review workspace、Preview 与 Apply 交互；`local_dashboard/transactions.js` 负责 Transaction Workspace 的浏览与单笔例外编辑。前端不重新实现 Reconciliation、Mapping propagation、Enrichment 规则或消费聚合。
 ## Rebuild 支持工具
 
 `scripts/` 中保留了本次 Rebuild 期间建立 Merchant Mapping 时使用的截图切行、OCR 和候选匹配检查工具：
@@ -535,7 +554,7 @@ scripts/
 ├── inspect_description_matching.py
 └── inspect_mapping_candidates.py
 src/family_spending/
-├── application.py                    # Transaction + current Enrichment Application use cases
+├── application.py                    # Manual Source lifecycle + Transaction / Enrichment Application use cases
 ├── http_api.py                       # 最小本地 JSON transport
 ├── source_records.py                 # SourceRecord + SourceAdapter 扩展契约
 ├── transactions.py                   # Transaction Core + Source Link / 索引
@@ -543,8 +562,8 @@ src/family_spending/
 ├── enrichment.py                     # Enrichment current state 与更新规则
 ├── enrichment_store.py               # Enrichment JSONL storage
 ├── source_link_store.py              # Source Record → Transaction link storage
-├── manual_source.py                  # Manual Source local state
-├── manual_input.py                   # Manual Input command + cross-file rollback boundary
+├── manual_source.py                  # Manual Source local state + empty-store cleanup
+├── manual_input.py                   # Manual Input create/correct/delete + cross-file rollback boundary
 ├── mapping.py                        # 正式 Mapping loader + Mapping Enrichment resolver
 ├── mapping_review.py                 # Mapping Review aggregation / preview / Mapping propagation
 ├── month_coverage.py

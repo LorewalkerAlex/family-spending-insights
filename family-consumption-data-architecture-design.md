@@ -239,6 +239,11 @@ SourceRecord.description  ← 用户原始 description
 
 Manual Input 界面可以读取历史 Manual description 做非常轻量的复用提示，例如忽略空白或大小写差异、有限的前缀候选；这种匹配只用于避免误建重复 description，不是自动 Mapping，也不得静默合并语义不同的文本。用户仍可明确新建 description。新增且未命中 Mapping 的 description 与 CMB 未匹配 description 一样进入统一 Mapping Review。
 
+Manual Source 的来源事实允许由用户显式纠错和删除，但这属于 **Source lifecycle**，不是通用 Transaction Core 编辑：
+- correction 用新的 Source Record identity 替换旧 Manual Source Record，再重新进入 Reconciliation；
+- deletion 删除指定 Manual Source Record，并让当前 Transaction / Source Link / Enrichment 状态按剩余来源重新收敛；
+- Merchant / Category 的稳定语义仍通过 Mapping Review 管理，真正的 transaction-level 例外仍通过 Enrichment command 管理，不把这些职责塞进 Manual Source correction。
+
 ---
 ## 7. Transaction
 
@@ -344,6 +349,12 @@ Manual Source 在创建新 Transaction 前必须先检查是否已经存在对�
 - 历史 Manual Source 已经产生的 Transaction。
 
 只有不存在对应 Transaction 时，Manual Source 才创建新的 Transaction。
+
+Manual Source correction 仍遵循同一 Reconciliation 规则，但要区分 Source identity 与 Transaction identity：
+- correction 总是产生新的 Manual Source Record identity；
+- 若更正后的来源事实没有匹配到另一个既有 Transaction，则它仍表示同一笔真实交易的来源事实纠错，系统可以保留原 Transaction identity 与该 Transaction 的 current Enrichment；
+- 若更正后的来源事实唯一匹配到另一个既有 Transaction，则应收敛到该 Transaction，不为“保留旧 ID”而制造重复 Transaction；旧 Transaction 的 transaction-only Merchant / Category 例外不应静默复制到另一个 Transaction；
+- 删除 Manual Source 时，如果同一 Transaction 仍由 CMB 或其他 Source Record 支撑，则 Transaction 保留；如果没有任何剩余 Source 支撑，则该 Transaction 从当前重建状态退出。
 ### 8.3 匹配证据
 
 第一版匹配主要使用：
@@ -471,7 +482,7 @@ PC Web、微信小程序以及未来 App 共用同一套后端 Application / API
 
 Application / API 承接：
 
-- Manual Input；
+- Manual Input 创建、查询、更正与删除；
 - Transaction 查询；
 - Reconciliation / Review 用例；
 - Merchant / Category / Note 等 Enrichment 修改；
@@ -536,6 +547,21 @@ Manual Input
 → Analytics / Projection
 ```
 
+### Manual Source Correction / Delete
+
+```text
+Manual Source correction / delete
+→ replace or remove Source Record
+→ Reconciliation against current remaining sources
+→ preserve existing Transaction identity when the corrected source still represents that transaction,
+  or converge to another matching Transaction,
+  or remove an unsupported Transaction
+→ preserve/reapply Enrichment according to Mapping vs transaction-level exception semantics
+→ Analytics / Projection
+```
+
+这是 Source 阶段的显式 mutation，因此需要重新执行其下游 Reconciliation；它与仅从 Enrichment 阶段向下执行的 Merchant / Category / Note 编辑不同。
+
 ### CMB Email
 
 ```text
@@ -567,7 +593,7 @@ Analytics Update
 ---
 ## 14. 当前实现落地状态与后续迁移约束
 
-当前已经有四条核心领域纵向路径沿本 HLD 的边界落地：CMB Email、Manual Source / Cross-source Reconciliation、Enrichment 可编辑 / Application API，以及 Mapping Review / Mapping Correction；本地 Dashboard 也已作为第一个真实客户端接入 Application/API，并可直接提交 Manual Input、执行 Mapping Review 和提交 transaction-only Enrichment exception。现有 Email、CSV、正式 Mapping、退款规则与统计 schema v2 契约继续保留。
+当前已经有五条核心领域纵向路径沿本 HLD 的边界落地：CMB Email、Manual Source / Cross-source Reconciliation、Manual Source 生命周期管理、Enrichment 可编辑 / Application API，以及 Mapping Review / Mapping Correction；本地 Dashboard 也已作为第一个真实客户端接入 Application/API，并可直接创建、更正和删除 Manual Input、执行 Mapping Review 和提交 transaction-only Enrichment exception。现有 Email、CSV、正式 Mapping、退款规则与统计 schema v2 契约继续保留。
 
 当前实现状态：
 1. `CmbTransaction` / `transactions.csv` 保持原有六字段来源契约，并无损进入 CMB Source Record；CMB Source Record 的既有 `transaction_id` 作为来源身份保留，系统 Transaction 使用独立身份，并通过 Source Record → Transaction 关系连接。
@@ -591,6 +617,10 @@ Analytics Update
 19. Mapping Review Apply 会更新 `merchants.yaml` / `categories.yaml`，并只传播到仍跟随修改前 Mapping 的当前 Enrichment state。已有显式 transaction-only Merchant / Category exception 保持原决定，不会被 Mapping Correction 静默覆盖。
 20. Mapping Review mutation 从 Mapping / Enrichment 阶段继续执行 downstream Projection，不重新执行 Source Adapter、Reconciliation 或 Transaction identity 构建。Mapping、affected Enrichment 与 Projection 在单次 Application command 中使用文件快照协调；任一步失败时恢复命令前状态。
 21. 正常 runtime 现在只加载 `merchants.yaml` 与 `categories.yaml` 两份正式 Mapping；Application initialize、Manual Input、Statistics Generation、Transaction Resolution 和 Mapping Review 均不再接受或读取 legacy override path。`transaction_override` 只作为 persistent Enrichment 的合法 `category_source` 保留，以表达已经迁移且仍需保留的历史单笔决定。
+22. Application/API 已增加当前 Manual Input 查询、更正和删除。correction 不是 Transaction Core PATCH，而是新建 replacement Manual Source identity、移除旧 Source identity 并重新执行 source-aware Reconciliation；delete 只作用于指定 Manual Source。
+23. Manual-only correction 在更正后未匹配其他 Transaction 时保留原系统 Transaction identity；若 correction 唯一匹配到其他已有 Transaction，则复用该目标 Transaction。前者保留 current transaction-level Enrichment；后者不把旧 Transaction 的 Merchant / Category 单笔例外静默复制到目标 Transaction。
+24. 保留 Transaction identity 的 correction 会重新判断当前 Merchant 是否仍跟随旧 description Mapping：仍跟随时按新 description Mapping 更新；显式 transaction-level Merchant exception 与 Category override 保持。显式 correction Note 更新 current Enrichment Note；Dashboard 使用 current Enrichment Note 作为编辑起点。
+25. 删除 Manual Source 后，仍有其他 Source 支撑的 Transaction 保留；manual-only Transaction 在失去最后来源后退出当前状态。创建、更正、删除共用跨 Manual Source、Source Link、Enrichment 与 Projection 的命令级 rollback 边界，并已通过真实本地 API create → correction → delete 验证 Source identity 换新、Transaction identity 保留和最终无残留 Manual Source 的生命周期。
 当前本地文件持久化只是这一阶段的 concrete storage，不改变 HLD 的存储无关边界。legacy transaction category override → persistent Enrichment 的历史迁移与 runtime 依赖收敛已经完成；后续可以继续按产品价值优先级推进新的完整纵向切片，而无需再维护这条兼容链路。若实现更多 Source、正式客户端或新的存储实现，仍应继续沿相同 Domain / Application 边界扩展，不要为了新能力重新合并 Source、Transaction、Enrichment 或 Analytics。
 
 ---
@@ -632,4 +662,4 @@ Analytics Update
 - 某一阶段修改后只继续执行下游，上游保持不变；
 - Application / API 为所有客户端提供统一的数据读取和修改入口；
 - 具体存储技术通过数据访问边界隔离，留到 Technical Design 决定。
-CMB Email、Manual Source / Cross-source Reconciliation、Enrichment 可编辑 / Application API 与 Mapping Review / Mapping Correction 四条核心纵向切片已经验证这些边界可以在现有代码上落地；本地 Dashboard 进一步验证了客户端可以在不复制核心业务规则的前提下消费 Projection，并通过统一 Application/API 创建 Manual Input、维护 Mapping 和提交 transaction-only Enrichment exception。后续 Source、Application / API 与客户端能力应继续沿相同领域边界按完整纵向切片推进。
+CMB Email、Manual Source / Cross-source Reconciliation、Manual Source 生命周期管理、Enrichment 可编辑 / Application API 与 Mapping Review / Mapping Correction 五条核心纵向切片已经验证这些边界可以在现有代码上落地；本地 Dashboard 进一步验证了客户端可以在不复制核心业务规则的前提下消费 Projection，并通过统一 Application/API 创建 / 更正 / 删除 Manual Input、维护 Mapping 和提交 transaction-only Enrichment exception。后续 Source、Application / API 与客户端能力应继续沿相同领域边界按完整纵向切片推进。

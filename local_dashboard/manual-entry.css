@@ -91,24 +91,6 @@
   line-height: 1.5;
 }
 
-@media (min-width: 48rem) {
-  .manual-entry-card {
-    padding: 1.5rem;
-  }
-
-  .manual-entry-form__grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .manual-entry-form__field--wide {
-    grid-column: span 2;
-  }
-
-  .manual-entry-form__field--full {
-    grid-column: 1 / -1;
-  }
-}
-
 .manual-description-suggestions {
   display: flex;
   flex-wrap: wrap;
@@ -138,4 +120,201 @@
 
 .manual-description-suggestion--new {
   border-style: dashed;
+}
+
+.manual-input-management {
+  display: grid;
+  gap: 0.9rem;
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid #e5ebe7;
+}
+
+.manual-input-management__heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.manual-input-management__heading h3 {
+  margin: 0;
+  color: #223028;
+  font-size: 1rem;
+}
+
+.manual-input-management__heading p {
+  max-width: 48rem;
+  margin: 0.35rem 0 0;
+  color: #637068;
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
+.manual-input-management__summary {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: #526159;
+  font-size: 0.78rem;
+}
+
+.manual-input-management__state,
+.manual-input-management__empty,
+.manual-input-management__error,
+.manual-input-detail__empty {
+  margin: 0;
+  color: #637068;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.manual-input-management__error {
+  padding: 0.7rem 0.8rem;
+  border: 1px solid #e8c9c5;
+  border-radius: 0.7rem;
+  color: #823e36;
+  background: #fff7f6;
+}
+
+.manual-input-management__error p {
+  margin: 0;
+}
+
+.manual-input-management__grid {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.manual-input-list {
+  display: grid;
+  gap: 0.5rem;
+  align-content: start;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.manual-input-list__button {
+  display: grid;
+  gap: 0.25rem;
+  width: 100%;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid #d9e1dc;
+  border-radius: 0.75rem;
+  text-align: left;
+  color: #2e3c34;
+  background: #fbfcfb;
+  font: inherit;
+  cursor: pointer;
+}
+
+.manual-input-list__button strong {
+  overflow: hidden;
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manual-input-list__button span {
+  color: #6b776f;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.manual-input-list__button:hover {
+  border-color: #9bb2a4;
+  background: #f3f7f4;
+}
+
+.manual-input-list__button--active {
+  border-color: #6f9981;
+  background: #edf5f0;
+  box-shadow: 0 0 0 2px rgb(111 153 129 / 0.12);
+}
+
+.manual-input-list__button:focus-visible {
+  outline: 3px solid #9ec7b1;
+  outline-offset: 2px;
+}
+
+.manual-input-detail {
+  min-width: 0;
+  padding: 0.9rem;
+  border: 1px solid #e1e7e3;
+  border-radius: 0.8rem;
+  background: #fbfcfb;
+}
+
+.manual-input-detail__heading {
+  margin-bottom: 0.9rem;
+}
+
+.manual-input-detail__heading h4 {
+  margin: 0;
+  color: #243229;
+  font-size: 0.95rem;
+}
+
+.manual-input-detail__heading p {
+  margin: 0.3rem 0 0;
+  overflow-wrap: anywhere;
+  color: #6b776f;
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+.manual-correction-form {
+  margin-top: 0.25rem;
+}
+
+.danger-button {
+  min-height: 2.5rem;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid #d9a6a0;
+  border-radius: 0.7rem;
+  color: #8a362d;
+  background: #fff7f6;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.danger-button:hover {
+  border-color: #c7786e;
+  background: #fceae8;
+}
+
+.danger-button:focus-visible {
+  outline: 3px solid #e0afa9;
+  outline-offset: 2px;
+}
+
+.danger-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+@media (min-width: 48rem) {
+  .manual-entry-card {
+    padding: 1.5rem;
+  }
+
+  .manual-entry-form__grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .manual-entry-form__field--wide {
+    grid-column: span 2;
+  }
+
+  .manual-entry-form__field--full {
+    grid-column: 1 / -1;
+  }
+
+  .manual-input-management__grid {
+    grid-template-columns: minmax(15rem, 0.8fr) minmax(0, 1.5fr);
+  }
 }

@@ -60,6 +60,17 @@ class _RequestHandler(BaseHTTPRequestHandler):
                     },
                 )
                 return
+            if path == "/api/manual-inputs":
+                self._send_json(
+                    HTTPStatus.OK,
+                    {
+                        "manual_inputs": [
+                            item.to_dict()
+                            for item in self.server.application.list_manual_inputs()
+                        ]
+                    },
+                )
+                return
             if path == "/api/mapping-reviews":
                 self._send_json(
                     HTTPStatus.OK,
@@ -102,6 +113,17 @@ class _RequestHandler(BaseHTTPRequestHandler):
             if path == "/api/manual-inputs":
                 self._handle_manual_input()
                 return
+            manual_prefix = "/api/manual-inputs/"
+            correction_suffix = "/corrections"
+            if path.startswith(manual_prefix) and path.endswith(correction_suffix):
+                source_record_id = unquote(
+                    path[len(manual_prefix) : -len(correction_suffix)]
+                )
+                if not source_record_id or "/" in source_record_id:
+                    self._send_error_json(HTTPStatus.NOT_FOUND, "Route not found")
+                    return
+                self._handle_manual_input_correction(source_record_id)
+                return
             if path == "/api/mapping-reviews/preview":
                 self._handle_mapping_review_preview()
                 return
@@ -109,6 +131,8 @@ class _RequestHandler(BaseHTTPRequestHandler):
                 self._handle_mapping_review_apply()
                 return
             self._send_error_json(HTTPStatus.NOT_FOUND, "Route not found")
+        except ApplicationNotFoundError as exc:
+            self._send_error_json(HTTPStatus.NOT_FOUND, str(exc))
         except ApplicationValidationError as exc:
             self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
         except ApplicationError as exc:
@@ -154,6 +178,28 @@ class _RequestHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             self._send_error_json(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
 
+    def do_DELETE(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        try:
+            path = urlsplit(self.path).path
+            prefix = "/api/manual-inputs/"
+            if not path.startswith(prefix) or path == prefix:
+                self._send_error_json(HTTPStatus.NOT_FOUND, "Route not found")
+                return
+            source_record_id = unquote(path[len(prefix) :])
+            if not source_record_id or "/" in source_record_id:
+                self._send_error_json(HTTPStatus.NOT_FOUND, "Route not found")
+                return
+            result = self.server.application.delete_manual_input(source_record_id)
+            self._send_json(HTTPStatus.OK, {"manual_input_deletion": result.to_dict()})
+        except ApplicationNotFoundError as exc:
+            self._send_error_json(HTTPStatus.NOT_FOUND, str(exc))
+        except ApplicationValidationError as exc:
+            self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+        except ApplicationError as exc:
+            self._send_error_json(HTTPStatus.CONFLICT, str(exc))
+        except Exception as exc:
+            self._send_error_json(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
+
     def _handle_manual_input(self) -> None:
         payload = self._read_json_object()
         allowed = {"type", "date", "amount", "description", "note"}
@@ -176,6 +222,22 @@ class _RequestHandler(BaseHTTPRequestHandler):
             note=payload.get("note"),
         )
         self._send_json(HTTPStatus.CREATED, {"manual_input": result.to_dict()})
+
+    def _handle_manual_input_correction(self, source_record_id: str) -> None:
+        payload = self._read_json_object()
+        allowed = {"type", "date", "amount", "description", "note"}
+        required = {"type", "date", "amount", "description"}
+        self._require_exact_fields(payload, allowed, required, "Manual Input correction")
+        kwargs: dict[str, Any] = {
+            "transaction_type": payload["type"],
+            "transaction_date": payload["date"],
+            "amount": payload["amount"],
+            "description": payload["description"],
+        }
+        if "note" in payload:
+            kwargs["note"] = payload["note"]
+        result = self.server.application.correct_manual_input(source_record_id, **kwargs)
+        self._send_json(HTTPStatus.OK, {"manual_input_correction": result.to_dict()})
 
     def _handle_mapping_review_preview(self) -> None:
         payload = self._read_json_object()
@@ -258,7 +320,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(content_length))
         self.send_header("Cache-Control", "no-store")
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
     def log_message(self, format: str, *args: object) -> None:

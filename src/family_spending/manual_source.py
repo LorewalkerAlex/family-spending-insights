@@ -230,12 +230,15 @@ def write_manual_source_entries(
     entries: tuple[ManualSourceEntry, ...],
     path: Path = MANUAL_SOURCE_RECORDS_FILE,
 ) -> None:
-    """Replace the local Manual Source file atomically so a failed write cannot leave truncated source facts."""
+    """Replace Manual Source atomically; remove the file when no source facts remain."""
     for entry in entries:
         _validate_entry(entry)
     ids = [entry.id for entry in entries]
     if len(ids) != len(set(ids)):
         raise ManualSourceDataError("Manual Source entries contain duplicate ids")
+    if not entries:
+        path.unlink(missing_ok=True)
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     text = "".join(f"{_encode_entry(entry)}\n" for entry in entries)
     fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)

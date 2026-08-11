@@ -9,6 +9,7 @@ const {
   createApplicationService,
   findSimilarManualDescriptions,
   normalizeManualDescription,
+  validateManualInputRecord,
   validateTransaction,
 } = require("./application-api.js");
 
@@ -178,7 +179,6 @@ test("rejects malformed successful JSON payloads", async () => {
   });
 });
 
-
 test("Manual description matching stays lightweight and whitespace-insensitive", () => {
   assert.equal(normalizeManualDescription("  小区 门口早餐摊  "), "小区门口早餐摊");
   assert.deepEqual(
@@ -321,4 +321,115 @@ test("rejects unknown Manual Input result actions from a successful response", a
       return true;
     },
   );
+});
+
+test("validates Manual Input management records with source role and linked Transaction", () => {
+  const item = validateManualInputRecord({
+    source_record_id: "manual-1",
+    transaction_id: "txn-1",
+    source_role: "supporting",
+    type: "expense",
+    date: "2026-08-09",
+    amount: "88.50",
+    currency: "CNY",
+    description: "小区门口早餐摊",
+    note: "现金",
+    transaction: makeTransaction(),
+  });
+
+  assert.equal(item.sourceRecordId, "manual-1");
+  assert.equal(item.sourceRole, "supporting");
+  assert.equal(item.transaction.id, "txn-1");
+  assert.ok(Object.isFrozen(item));
+});
+
+test("loads Manual Inputs from the management endpoint", async () => {
+  const requests = [];
+  const service = createApplicationService({
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return response({
+        manual_inputs: [
+          {
+            source_record_id: "manual-1",
+            transaction_id: "txn-1",
+            source_role: "authoritative",
+            type: "expense",
+            date: "2026-08-09",
+            amount: "88.50",
+            currency: "CNY",
+            description: "现金早餐",
+            note: null,
+            transaction: makeTransaction(),
+          },
+        ],
+      });
+    },
+  });
+
+  const items = await service.getManualInputs();
+  assert.equal(items.length, 1);
+  assert.equal(items[0].description, "现金早餐");
+  assert.equal(requests[0].url, `${DEFAULT_API_BASE}/manual-inputs`);
+});
+
+test("correction replaces Manual Source identity through a dedicated POST action", async () => {
+  const requests = [];
+  const correctedTransaction = makeTransaction({ id: "txn-2", date: "2026-08-10" });
+  const service = createApplicationService({
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return response({
+        manual_input_correction: {
+          replaced_source_record_id: "manual-old",
+          manual_input: {
+            source_record_id: "manual-new",
+            action: "created",
+            transaction: correctedTransaction,
+          },
+        },
+      });
+    },
+  });
+
+  const result = await service.correctManualInput("manual-old", {
+    type: "expense",
+    date: "2026-08-10",
+    amount: "90.00",
+    description: "修正后的早餐",
+    note: null,
+  });
+
+  assert.equal(result.replacedSourceRecordId, "manual-old");
+  assert.equal(result.manualInput.sourceRecordId, "manual-new");
+  assert.equal(requests[0].url, `${DEFAULT_API_BASE}/manual-inputs/manual-old/corrections`);
+  assert.equal(requests[0].options.method, "POST");
+  assert.deepEqual(JSON.parse(requests[0].options.body), {
+    type: "expense",
+    date: "2026-08-10",
+    amount: "90.00",
+    description: "修正后的早餐",
+    note: null,
+  });
+});
+
+test("deletes one Manual Source record without inventing client-side Transaction semantics", async () => {
+  const requests = [];
+  const service = createApplicationService({
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return response({
+        manual_input_deletion: {
+          source_record_id: "manual-1",
+          transaction_id: "txn-1",
+          transaction_removed: false,
+        },
+      });
+    },
+  });
+
+  const result = await service.deleteManualInput("manual-1");
+  assert.equal(result.transactionRemoved, false);
+  assert.equal(requests[0].url, `${DEFAULT_API_BASE}/manual-inputs/manual-1`);
+  assert.equal(requests[0].options.method, "DELETE");
 });
