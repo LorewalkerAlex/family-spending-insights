@@ -52,6 +52,17 @@ from family_spending.mapping_review import (
     write_mapping_review,
 )
 from family_spending.reconciliation import ReconciliationError
+from family_spending.scheduled_input import (
+    SCHEDULED_INPUT_RULES_FILE,
+    ScheduledInputError,
+    ScheduledInputRule,
+    ScheduledInputRunResult,
+    create_scheduled_input_rule as build_scheduled_input_rule,
+    read_scheduled_input_rules,
+    run_due_scheduled_inputs as run_due_scheduled_input_commands,
+    update_scheduled_input_rule as replace_scheduled_input_rule,
+    write_scheduled_input_rules,
+)
 from family_spending.settings import (
     CATEGORIES_FILE,
     EMAILS_DIR,
@@ -110,6 +121,16 @@ class ApplicationPaths:
     categories: Path = CATEGORIES_FILE
     spending_statistics: Path = SPENDING_STATISTICS_FILE
     emails: Path = EMAILS_DIR
+    scheduled_input_rules: Path | None = None
+
+    def __post_init__(self) -> None:
+        """Keep test/custom path sets isolated by deriving schedule storage beside transactions."""
+        if self.scheduled_input_rules is None:
+            object.__setattr__(
+                self,
+                "scheduled_input_rules",
+                self.transactions.parent / SCHEDULED_INPUT_RULES_FILE.name,
+            )
 
 
 @dataclass(frozen=True)
@@ -249,9 +270,11 @@ class _FileSnapshot:
 class FamilySpendingApplication:
     def __init__(self, paths: ApplicationPaths | None = None) -> None:
         self.paths = paths or ApplicationPaths()
+        assert self.paths.scheduled_input_rules is not None
+        self._scheduled_rules_path = self.paths.scheduled_input_rules
 
     def initialize(self) -> None:
-        """Explicitly synchronize source-driven state once before serving client-only read/edit use cases."""
+        """Synchronize Source state, then materialize every scheduled occurrence due today."""
         generate_spending_statistics(
             transactions_path=self.paths.transactions,
             merchants_path=self.paths.merchants,
@@ -262,6 +285,7 @@ class FamilySpendingApplication:
             source_links_path=self.paths.source_links,
             enrichment_state_path=self.paths.enrichment_state,
         )
+        self.run_due_scheduled_inputs()
 
     def list_categories(self) -> tuple[str, ...]:
         """Return formal categories only; runtime `待分类` remains a state rather than a configurable category."""
@@ -310,6 +334,129 @@ class FamilySpendingApplication:
                 )
             )
         return tuple(views)
+
+    def list_scheduled_inputs(self) -> tuple[ScheduledInputRule, ...]:
+        """Return configured monthly orchestration rules in persisted order."""
+        try:
+            return read_scheduled_input_rules(self._scheduled_rules_path)
+        except ScheduledInputError as exc:
+            raise ApplicationStateError(str(exc)) from exc
+
+    def create_scheduled_input(
+        self,
+        *,
+        transaction_type: object,
+        amount: object,
+        description: object,
+        next_date: object,
+        note: object = None,
+        enabled: object = True,
+    ) -> ScheduledInputRule:
+        """Create a monthly rule and immediately execute occurrences already due today."""
+        type_value, parsed_amount, description_value = self._scheduled_rule_values(
+            transaction_type=transaction_type,
+            amount=amount,
+            description=description,
+        )
+        next_date_value = self._scheduled_date(next_date)
+        enabled_value = self._boolean(enabled, "enabled")
+        note_value = self._optional_text(note, "note")
+        try:
+            rule = build_scheduled_input_rule(
+                transaction_type=type_value,
+                amount=parsed_amount,
+                description=description_value,
+                next_date=next_date_value,
+                note=note_value,
+                enabled=enabled_value,
+            )
+        except ScheduledInputError as exc:
+            raise ApplicationValidationError(str(exc)) from exc
+        rules = self.list_scheduled_inputs() + (rule,)
+        self._write_rules_and_run_due(rules)
+        return self._get_scheduled_input_rule(rule.id)
+
+    def update_scheduled_input(
+        self,
+        rule_id: str,
+        *,
+        transaction_type: object,
+        amount: object,
+        description: object,
+        next_date: object,
+        note: object = None,
+        enabled: object = True,
+    ) -> ScheduledInputRule:
+        """Replace future rule configuration without rewriting historical Manual occurrences."""
+        current_rules = self.list_scheduled_inputs()
+        current = next((rule for rule in current_rules if rule.id == rule_id), None)
+        if current is None:
+            raise ApplicationNotFoundError(
+                f"Scheduled Input rule {rule_id!r} does not exist"
+            )
+        type_value, parsed_amount, description_value = self._scheduled_rule_values(
+            transaction_type=transaction_type,
+            amount=amount,
+            description=description,
+        )
+        next_date_value = self._scheduled_date(next_date)
+        enabled_value = self._boolean(enabled, "enabled")
+        note_value = self._optional_text(note, "note")
+        try:
+            updated = replace_scheduled_input_rule(
+                current,
+                transaction_type=type_value,
+                amount=parsed_amount,
+                description=description_value,
+                next_date=next_date_value,
+                note=note_value,
+                enabled=enabled_value,
+            )
+        except ScheduledInputError as exc:
+            raise ApplicationValidationError(str(exc)) from exc
+        candidate = tuple(updated if rule.id == rule_id else rule for rule in current_rules)
+        self._write_rules_and_run_due(candidate)
+        return self._get_scheduled_input_rule(rule_id)
+
+    def delete_scheduled_input(self, rule_id: str) -> ScheduledInputRule:
+        """Delete only the future orchestration rule; generated Manual Source history remains."""
+        rules = self.list_scheduled_inputs()
+        current = next((rule for rule in rules if rule.id == rule_id), None)
+        if current is None:
+            raise ApplicationNotFoundError(
+                f"Scheduled Input rule {rule_id!r} does not exist"
+            )
+        try:
+            write_scheduled_input_rules(
+                tuple(rule for rule in rules if rule.id != rule_id),
+                self._scheduled_rules_path,
+            )
+        except ScheduledInputError as exc:
+            raise ApplicationStateError(str(exc)) from exc
+        return current
+
+    def run_due_scheduled_inputs(
+        self,
+        as_of: date | None = None,
+    ) -> ScheduledInputRunResult:
+        """Run every enabled occurrence due through `as_of`, defaulting to the local calendar day."""
+        try:
+            return run_due_scheduled_input_commands(
+                as_of=as_of or date.today(),
+                rules_path=self._scheduled_rules_path,
+                transactions_path=self.paths.transactions,
+                manual_source_path=self.paths.manual_source,
+                source_links_path=self.paths.source_links,
+                merchants_path=self.paths.merchants,
+                categories_path=self.paths.categories,
+                output_path=self.paths.spending_statistics,
+                emails_dir=self.paths.emails,
+                enrichment_state_path=self.paths.enrichment_state,
+            )
+        except ReconciliationError as exc:
+            raise ApplicationConflictError(str(exc)) from exc
+        except ScheduledInputError as exc:
+            raise ApplicationStateError(str(exc)) from exc
 
     def get_mapping_review_workspace(self) -> MappingReviewWorkspaceView:
         """Aggregate unmapped CMB and Manual descriptions from the current reconciled snapshot."""
@@ -662,6 +809,36 @@ class FamilySpendingApplication:
             enrichment=enrichments_by_id[transaction_id],
         )
 
+    def _write_rules_and_run_due(
+        self,
+        rules: tuple[ScheduledInputRule, ...],
+    ) -> ScheduledInputRunResult:
+        """Commit a rule mutation and any immediately due Manual occurrences as one Application command."""
+        rule_snapshot = _snapshot_file(self._scheduled_rules_path)
+        try:
+            write_scheduled_input_rules(rules, self._scheduled_rules_path)
+            return self.run_due_scheduled_inputs()
+        except Exception as exc:
+            try:
+                _restore_file(rule_snapshot)
+            except Exception as rollback_error:
+                raise ApplicationStateError(
+                    "Scheduled Input rule mutation failed and rollback could not restore rule state: "
+                    f"original={exc}; rollback={rollback_error}"
+                ) from rollback_error
+            raise
+
+    def _get_scheduled_input_rule(self, rule_id: str) -> ScheduledInputRule:
+        rule = next(
+            (item for item in self.list_scheduled_inputs() if item.id == rule_id),
+            None,
+        )
+        if rule is None:
+            raise ApplicationStateError(
+                f"Scheduled Input rule {rule_id!r} disappeared after mutation"
+            )
+        return rule
+
     def _plan_mapping_review(
         self,
         snapshot: _ApplicationSnapshot,
@@ -827,6 +1004,53 @@ class FamilySpendingApplication:
         description_value = self._required_text(description, "description")
         return type_value, parsed_date, parsed_amount, description_value
 
+    def _scheduled_rule_values(
+        self,
+        *,
+        transaction_type: object,
+        amount: object,
+        description: object,
+    ) -> tuple[str, Decimal, str]:
+        """Normalize the source-native fields copied into future Manual occurrences."""
+        type_value = self._required_text(transaction_type, "type")
+        if type_value not in {"income", "expense"}:
+            raise ApplicationValidationError("type must be either 'income' or 'expense'")
+        amount_value = self._required_text(amount, "amount")
+        try:
+            parsed_amount = Decimal(amount_value)
+        except (InvalidOperation, ValueError) as exc:
+            raise ApplicationValidationError(
+                f"amount must be a decimal string, got {amount_value!r}"
+            ) from exc
+        if not parsed_amount.is_finite():
+            raise ApplicationValidationError(
+                f"amount must be a finite decimal string, got {amount_value!r}"
+            )
+        description_value = self._required_text(description, "description")
+        return type_value, parsed_amount, description_value
+
+    def _scheduled_date(self, value: object) -> date:
+        """Parse the next monthly occurrence and keep V1 recurrence away from month-end ambiguity."""
+        text = self._required_text(value, "next_date")
+        try:
+            parsed = date.fromisoformat(text)
+        except ValueError as exc:
+            raise ApplicationValidationError(
+                f"next_date must use YYYY-MM-DD format, got {text!r}"
+            ) from exc
+        if parsed.day > 28:
+            raise ApplicationValidationError(
+                "Scheduled Input V1 only supports monthly occurrence days 1-28"
+            )
+        return parsed
+
+    @staticmethod
+    def _boolean(value: object, field: str) -> bool:
+        """Require an explicit JSON boolean instead of accepting truthy client values."""
+        if not isinstance(value, bool):
+            raise ApplicationValidationError(f"{field} must be a boolean")
+        return value
+
     @staticmethod
     def _required_text(value: object, field: str) -> str:
         """Require one non-empty textual client value and normalize surrounding whitespace."""
@@ -848,7 +1072,7 @@ class FamilySpendingApplication:
 
 
 def _snapshot_file(path: Path) -> _FileSnapshot:
-    """Capture exact bytes so a multi-file Mapping mutation can restore the pre-command state."""
+    """Capture exact bytes so a multi-file mutation can restore the pre-command state."""
     if not path.exists():
         return _FileSnapshot(path=path, existed=False, contents=None)
     return _FileSnapshot(path=path, existed=True, contents=path.read_bytes())

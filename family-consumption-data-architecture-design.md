@@ -114,12 +114,12 @@ Manual Source
 未来可以根据真实需求增加 SMS、其他银行或其他来源。
 ### 4.3 Scheduled Input
 
-Scheduled Input 不是独立 Source。
-
-它是一个自动化流程：
+Scheduled Input 不是独立 Source，而是控制“何时调用 Manual Source”的 orchestration state。
 
 ```text
 Schedule / Rule
+    ↓
+到期 occurrence
     ↓
 调用 Manual Source
     ↓
@@ -128,7 +128,13 @@ Manual Source Record
 后续 Pipeline
 ```
 
-因此 Scheduled Input 产生的数据与普通 Manual Input 使用相同的 Source Record、Reconciliation 和 Transaction 创建规则。
+因此 Scheduled Input 产生的数据与普通 Manual Input 使用相同的 Source Record、Reconciliation、Transaction、Enrichment 和 downstream 规则，不建立第二套财务事实模型。
+
+当前 V1 落地为固定金额的月度规则。规则自身保存启停状态、收入/支出类型、金额、原始 description、可选 note、下一 occurrence 日期及最近一次执行元数据；规则不是 Financial Transaction，也不是 Source Record。V1 将 occurrence 日限制在每月 1–28 日，以保持月度递推确定性。
+
+规则的修改和删除只影响未来 orchestration。已经生成的 occurrence 一旦成为 Manual Source Record，就进入 Manual Source 自身的生命周期；后续纠错或删除通过现有 Manual Source correction / deletion 完成，不由 Scheduled Rule 反向改写历史。
+
+每个 rule + occurrence date 必须形成稳定的 occurrence identity，使重复执行或规则进度写回前发生异常时不会重复创建同一笔 Manual Source。具体如何触发进程、使用何种 OS / server Scheduler 仍属于 Technical / Deployment Design，不改变这里的领域边界。
 
 ---
 
@@ -483,6 +489,7 @@ PC Web、微信小程序以及未来 App 共用同一套后端 Application / API
 Application / API 承接：
 
 - Manual Input 创建、查询、更正与删除；
+- Scheduled Rule 创建、查询、修改、启停、删除与 due execution；
 - Transaction 查询；
 - Reconciliation / Review 用例；
 - Merchant / Category / Note 等 Enrichment 修改；
@@ -562,6 +569,22 @@ Manual Source correction / delete
 
 这是 Source 阶段的显式 mutation，因此需要重新执行其下游 Reconciliation；它与仅从 Enrichment 阶段向下执行的 Merchant / Category / Note 编辑不同。
 
+### Scheduled Input
+
+```text
+Scheduled Rule create / update / due execution
+→ determine due monthly occurrence(s)
+→ stable occurrence identity
+→ Manual Input / Manual Source Record
+→ Reconciliation
+→ Transaction create / match
+→ Mapping / Enrichment
+→ Analytics / Projection
+→ advance future rule state
+```
+
+Scheduled Rule 本身只控制未来 occurrence；它不会成为 Source，也不会把 rule edit/delete 反向传播到已经生成的 Manual Source。重复 due execution 必须保持同一 occurrence 幂等。
+
 ### CMB Email
 
 ```text
@@ -593,7 +616,7 @@ Analytics Update
 ---
 ## 14. 当前实现落地状态与后续迁移约束
 
-当前已经有五条核心领域纵向路径沿本 HLD 的边界落地：CMB Email、Manual Source / Cross-source Reconciliation、Manual Source 生命周期管理、Enrichment 可编辑 / Application API，以及 Mapping Review / Mapping Correction；本地 Dashboard 也已作为第一个真实客户端接入 Application/API，并可直接创建、更正和删除 Manual Input、执行 Mapping Review 和提交 transaction-only Enrichment exception。现有 Email、CSV、正式 Mapping、退款规则与统计 schema v2 契约继续保留。
+当前已经有六条核心领域纵向路径沿本 HLD 的边界落地：CMB Email、Manual Source / Cross-source Reconciliation、Manual Source 生命周期管理、Scheduled Input orchestration、Enrichment 可编辑 / Application API，以及 Mapping Review / Mapping Correction；本地 Dashboard 也已作为第一个真实客户端接入 Application/API，并可直接创建、更正和删除 Manual Input、管理 Scheduled Rule、执行 Mapping Review 和提交 transaction-only Enrichment exception。现有 Email、CSV、正式 Mapping、退款规则与统计 schema v2 契约继续保留。
 
 当前实现状态：
 1. `CmbTransaction` / `transactions.csv` 保持原有六字段来源契约，并无损进入 CMB Source Record；CMB Source Record 的既有 `transaction_id` 作为来源身份保留，系统 Transaction 使用独立身份，并通过 Source Record → Transaction 关系连接。
@@ -621,6 +644,12 @@ Analytics Update
 23. Manual-only correction 在更正后未匹配其他 Transaction 时保留原系统 Transaction identity；若 correction 唯一匹配到其他已有 Transaction，则复用该目标 Transaction。前者保留 current transaction-level Enrichment；后者不把旧 Transaction 的 Merchant / Category 单笔例外静默复制到目标 Transaction。
 24. 保留 Transaction identity 的 correction 会重新判断当前 Merchant 是否仍跟随旧 description Mapping：仍跟随时按新 description Mapping 更新；显式 transaction-level Merchant exception 与 Category override 保持。显式 correction Note 更新 current Enrichment Note；Dashboard 使用 current Enrichment Note 作为编辑起点。
 25. 删除 Manual Source 后，仍有其他 Source 支撑的 Transaction 保留；manual-only Transaction 在失去最后来源后退出当前状态。创建、更正、删除共用跨 Manual Source、Source Link、Enrichment 与 Projection 的命令级 rollback 边界，并已通过真实本地 API create → correction → delete 验证 Source identity 换新、Transaction identity 保留和最终无残留 Manual Source 的生命周期。
+26. Scheduled Input V1 已以独立 orchestration state 落地，不新增 Source 类型。当前规则保存 `id/enabled/type/amount/currency/description/note/next_date` 与最近一次 occurrence 元数据；固定月度 occurrence 仅允许每月 1–28 日，避免隐式月底漂移。
+27. Scheduled due runner 为每个 `rule_id + occurrence_date` 派生稳定 Manual Source identity，再调用既有 Manual Input / Reconciliation 主链。重复 Run Due 不会产生重复 Source；如果 Manual Source 已落盘但规则进度尚未写回，下一次执行通过已有 Source Link 恢复该 occurrence 并继续推进。
+28. Application `initialize()` 当前先同步已有 Source / Reconciliation / Projection，再执行截至本地当天的启用 Scheduled Rule；同时提供显式 Run Due。V1 不包含常驻线程、daemon 或具体 OS / server Scheduler，外部长期调度未来可以调用同一个 Application runner。
+29. Scheduled Rule create/update 只修改未来规则；如果启用后的 `next_date` 已到期，会在同一 Application command 中立即执行 due occurrence。pause/delete 不修改已生成的 Manual Source 历史。停机期间错过的启用规则从保存的 `next_date` 开始逐月补齐。
+30. Scheduled due run 对规则、Manual Source、Source Link、Enrichment 与 Projection 建立运行级快照；可捕获的多 occurrence 执行失败会恢复整批命令前状态。Rule mutation 包含立即 due execution 时，规则修改与该执行同样作为一个 Application rollback 边界处理。
+31. 本地 Dashboard 已增加 Scheduled Input workspace，可创建、编辑、启停、删除规则、显示下一日期与最近 occurrence，并显式 Run Due。真实本地 API 与 headless browser E2E 已验证：到期规则生成普通 Manual Source、重复执行幂等、暂停/编辑不改历史、删除 rule 不级联删除历史，以及前端可以从真实 API 异步渲染规则。
 当前本地文件持久化只是这一阶段的 concrete storage，不改变 HLD 的存储无关边界。legacy transaction category override → persistent Enrichment 的历史迁移与 runtime 依赖收敛已经完成；后续可以继续按产品价值优先级推进新的完整纵向切片，而无需再维护这条兼容链路。若实现更多 Source、正式客户端或新的存储实现，仍应继续沿相同 Domain / Application 边界扩展，不要为了新能力重新合并 Source、Transaction、Enrichment 或 Analytics。
 
 ---
@@ -655,11 +684,11 @@ Analytics Update
 
 - CMB Email 是当前权威自动来源；
 - Manual Source 是非信用卡交易的主要人工入口；
-- Scheduled Input 只是自动调用 Manual Source；
+- Scheduled Input 是调用 Manual Source 的 orchestration state；规则只控制未来 occurrence，生成后的事实进入 Manual Source 生命周期；
 - Transaction 只表示核心收入 / 支出事实；
 - Enrichment 独立保存 Merchant、Category、Note 等状态；
 - Reconciliation 在需要时实时读取当前数据进行匹配；
 - 某一阶段修改后只继续执行下游，上游保持不变；
 - Application / API 为所有客户端提供统一的数据读取和修改入口；
 - 具体存储技术通过数据访问边界隔离，留到 Technical Design 决定。
-CMB Email、Manual Source / Cross-source Reconciliation、Manual Source 生命周期管理、Enrichment 可编辑 / Application API 与 Mapping Review / Mapping Correction 五条核心纵向切片已经验证这些边界可以在现有代码上落地；本地 Dashboard 进一步验证了客户端可以在不复制核心业务规则的前提下消费 Projection，并通过统一 Application/API 创建 / 更正 / 删除 Manual Input、维护 Mapping 和提交 transaction-only Enrichment exception。后续 Source、Application / API 与客户端能力应继续沿相同领域边界按完整纵向切片推进。
+CMB Email、Manual Source / Cross-source Reconciliation、Manual Source 生命周期管理、Scheduled Input orchestration、Enrichment 可编辑 / Application API 与 Mapping Review / Mapping Correction 六条核心纵向切片已经验证这些边界可以在现有代码上落地；本地 Dashboard 进一步验证了客户端可以在不复制核心业务规则的前提下消费 Projection，并通过统一 Application/API 创建 / 更正 / 删除 Manual Input、管理 Scheduled Rule、维护 Mapping 和提交 transaction-only Enrichment exception。后续 Source、Application / API 与客户端能力应继续沿相同领域边界按完整纵向切片推进。

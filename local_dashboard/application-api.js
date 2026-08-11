@@ -21,6 +21,7 @@
     "unclassified",
   ]);
   const MANUAL_INPUT_ACTIONS = new Set(["created", "matched", "reused"]);
+  const SCHEDULED_RUN_ACTIONS = new Set(["created", "matched", "reused", "recovered"]);
   const SOURCE_ROLES = new Set(["authoritative", "supporting"]);
 
   class ApplicationApiError extends Error {
@@ -103,6 +104,19 @@
 
   function freezeArray(items) {
     return Object.freeze(items.map((item) => Object.freeze(item)));
+  }
+
+  function requireScheduledDate(value, path) {
+    const text = requireString(value, path);
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+    if (!match) {
+      fail("invalid_data", `${path} 必须使用 YYYY-MM-DD。`, path);
+    }
+    const day = Number(match[3]);
+    if (day < 1 || day > 28) {
+      fail("invalid_data", `${path} 的月度日期必须在 1–28 日。`, path);
+    }
+    return text;
   }
 
   function validateTransaction(value, path = "transaction") {
@@ -241,6 +255,107 @@
         deletion.transaction_removed,
         `${path}.transaction_removed`,
       ),
+    });
+  }
+
+  function validateScheduledInputRule(value, path = "scheduled_input") {
+    const rule = requireRecord(value, path);
+    const type = requireString(rule.type, `${path}.type`);
+    if (type !== "income" && type !== "expense") {
+      fail("invalid_data", `${path}.type 必须是 income 或 expense。`, `${path}.type`);
+    }
+    const lastAction = requireNullableString(rule.last_action, `${path}.last_action`);
+    if (lastAction !== null && !SCHEDULED_RUN_ACTIONS.has(lastAction)) {
+      fail(
+        "invalid_data",
+        `${path}.last_action 包含未知值 ${lastAction}。`,
+        `${path}.last_action`,
+      );
+    }
+    const lastFields = [
+      rule.last_occurrence_date,
+      rule.last_source_record_id,
+      rule.last_transaction_id,
+      rule.last_action,
+    ];
+    const presentCount = lastFields.filter((value) => value !== null).length;
+    if (presentCount !== 0 && presentCount !== lastFields.length) {
+      fail("invalid_data", `${path} 的最近执行字段必须同时为空或同时存在。`, path);
+    }
+    return Object.freeze({
+      id: requireString(rule.id, `${path}.id`),
+      enabled: requireBoolean(rule.enabled, `${path}.enabled`),
+      type,
+      amount: requireAmountString(rule.amount, `${path}.amount`),
+      currency: requireString(rule.currency, `${path}.currency`),
+      description: requireString(rule.description, `${path}.description`),
+      note: requireNullableString(rule.note, `${path}.note`),
+      nextDate: requireScheduledDate(rule.next_date, `${path}.next_date`),
+      lastOccurrenceDate:
+        rule.last_occurrence_date === null
+          ? null
+          : requireScheduledDate(
+              rule.last_occurrence_date,
+              `${path}.last_occurrence_date`,
+            ),
+      lastSourceRecordId: requireNullableString(
+        rule.last_source_record_id,
+        `${path}.last_source_record_id`,
+      ),
+      lastTransactionId: requireNullableString(
+        rule.last_transaction_id,
+        `${path}.last_transaction_id`,
+      ),
+      lastAction,
+    });
+  }
+
+  function validateScheduledInputRun(value, path = "scheduled_input_run") {
+    const run = requireRecord(value, path);
+    const occurrences = requireArray(run.occurrences, `${path}.occurrences`).map(
+      (item, index) => {
+        const occurrencePath = `${path}.occurrences[${index}]`;
+        const record = requireRecord(item, occurrencePath);
+        const action = requireString(record.action, `${occurrencePath}.action`);
+        if (!SCHEDULED_RUN_ACTIONS.has(action)) {
+          fail(
+            "invalid_data",
+            `${occurrencePath}.action 包含未知值 ${action}。`,
+            `${occurrencePath}.action`,
+          );
+        }
+        return Object.freeze({
+          ruleId: requireString(record.rule_id, `${occurrencePath}.rule_id`),
+          occurrenceDate: requireScheduledDate(
+            record.occurrence_date,
+            `${occurrencePath}.occurrence_date`,
+          ),
+          sourceRecordId: requireString(
+            record.source_record_id,
+            `${occurrencePath}.source_record_id`,
+          ),
+          transactionId: requireString(
+            record.transaction_id,
+            `${occurrencePath}.transaction_id`,
+          ),
+          action,
+        });
+      },
+    );
+    const generatedCount = requireNonNegativeInteger(
+      run.generated_count,
+      `${path}.generated_count`,
+    );
+    if (generatedCount !== occurrences.length) {
+      fail(
+        "invalid_data",
+        `${path}.generated_count 与 occurrences 数量不一致。`,
+        `${path}.generated_count`,
+      );
+    }
+    return Object.freeze({
+      generatedCount,
+      occurrences: Object.freeze(occurrences),
     });
   }
 
@@ -462,6 +577,42 @@
     return body;
   }
 
+  function scheduledInputCommand(command, path) {
+    const input = requireRecord(command, path);
+    const allowed = new Set([
+      "type",
+      "amount",
+      "description",
+      "note",
+      "nextDate",
+      "enabled",
+    ]);
+    const unknown = Object.keys(input).filter((key) => !allowed.has(key));
+    if (unknown.length > 0) {
+      throw new TypeError(`Scheduled Input 包含未知字段：${unknown.join(", ")}`);
+    }
+    for (const required of ["type", "amount", "description", "nextDate", "enabled"]) {
+      if (!Object.prototype.hasOwnProperty.call(input, required)) {
+        throw new TypeError(`Scheduled Input 缺少必填字段：${required}`);
+      }
+    }
+    const type = requireString(input.type, `${path}.type`);
+    if (type !== "income" && type !== "expense") {
+      throw new TypeError("Scheduled Input type 必须是 income 或 expense。");
+    }
+    return {
+      type,
+      amount: requireAmountString(input.amount, `${path}.amount`),
+      description: requireString(input.description, `${path}.description`).trim(),
+      note:
+        input.note === undefined
+          ? null
+          : requireNullableString(input.note, `${path}.note`),
+      next_date: requireScheduledDate(input.nextDate, `${path}.nextDate`),
+      enabled: requireBoolean(input.enabled, `${path}.enabled`),
+    };
+  }
+
   function createApplicationService(options = {}) {
     const baseUrl = normalizeBaseUrl(options.baseUrl);
     const fetchImpl =
@@ -551,6 +702,50 @@
         (item, index) => validateManualInputRecord(item, `manual_inputs[${index}]`),
       );
       return Object.freeze(items);
+    }
+
+    async function getScheduledInputs() {
+      const payload = await request("/scheduled-inputs");
+      const items = requireArray(payload.scheduled_inputs, "scheduled_inputs").map(
+        (item, index) =>
+          validateScheduledInputRule(item, `scheduled_inputs[${index}]`),
+      );
+      return Object.freeze(items);
+    }
+
+    async function createScheduledInput(command) {
+      const body = scheduledInputCommand(command, "scheduledInput");
+      const payload = await request("/scheduled-inputs", { method: "POST", body });
+      return validateScheduledInputRule(payload.scheduled_input);
+    }
+
+    async function updateScheduledInput(ruleId, command) {
+      const id = requireString(ruleId, "ruleId");
+      const body = scheduledInputCommand(command, "scheduledInputUpdate");
+      const payload = await request(`/scheduled-inputs/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body,
+      });
+      return validateScheduledInputRule(payload.scheduled_input);
+    }
+
+    async function deleteScheduledInput(ruleId) {
+      const id = requireString(ruleId, "ruleId");
+      const payload = await request(`/scheduled-inputs/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+      const deletion = requireRecord(
+        payload.scheduled_input_deletion,
+        "scheduled_input_deletion",
+      );
+      return Object.freeze({
+        id: requireString(deletion.id, "scheduled_input_deletion.id"),
+      });
+    }
+
+    async function runDueScheduledInputs() {
+      const payload = await request("/scheduled-inputs/run-due", { method: "POST" });
+      return validateScheduledInputRun(payload.scheduled_input_run);
     }
 
     async function getMappingReviews() {
@@ -696,6 +891,11 @@
       getCategories,
       getManualDescriptions,
       getManualInputs,
+      getScheduledInputs,
+      createScheduledInput,
+      updateScheduledInput,
+      deleteScheduledInput,
+      runDueScheduledInputs,
       getMappingReviews,
       getTransactions,
       getTransaction,
@@ -721,6 +921,8 @@
     validateManualInputRecord,
     validateManualInputCorrection,
     validateManualInputDeletion,
+    validateScheduledInputRule,
+    validateScheduledInputRun,
     validateMappingReviewItem,
     validateMappingReviewWorkspace,
     validateMappingReviewPreview,

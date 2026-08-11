@@ -404,5 +404,8 @@
   elements.correctionForm.addEventListener("submit", correctManualInput);
   elements.deleteButton.addEventListener("click", deleteManualInput);
   elements.managementRetry.addEventListener("click", () => loadManualInputs());
+  globalThis.addEventListener("family-spending:manual-source-changed", () => {
+    void loadManualData();
+  });
   loadManualData();
 })();

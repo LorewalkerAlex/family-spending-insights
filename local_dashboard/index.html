@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="./styles.css" />
     <link rel="stylesheet" href="./transactions.css" />
     <link rel="stylesheet" href="./manual-entry.css" />
+    <link rel="stylesheet" href="./scheduled-input.css" />
     <link rel="stylesheet" href="./mapping-review.css" />
     <script src="../node_modules/chart.js/dist/chart.umd.js" defer></script>
     <script src="./api.js" defer></script>
@@ -16,6 +17,7 @@
     <script src="./application-api.js" defer></script>
     <script src="./transactions.js" defer></script>
     <script src="./manual-entry.js" defer></script>
+    <script src="./scheduled-input.js" defer></script>
     <script src="./mapping-review.js" defer></script>
   </head>
   <body>
@@ -24,7 +26,7 @@
         <p class="eyebrow">Family Spending Insights</p>
         <h1>家庭消费统计</h1>
         <p class="page-header__description">
-          查看后端生成的净消费统计，通过本地 Application/API 手工录入及纠错收入/支出、审核未匹配 description 的 Mapping，并浏览逐笔 Transaction 例外。业务统计、Reconciliation 和写回规则仍全部由后端负责。
+          查看后端生成的净消费统计，通过本地 Application/API 手工或按月计划录入收入/支出、审核未匹配 description 的 Mapping，并浏览逐笔 Transaction 例外。业务统计、Reconciliation 和写回规则仍全部由后端负责。
         </p>
       </header>
       <p class="state-message" data-state="loading">正在读取消费统计…</p>
@@ -165,6 +167,124 @@
             <p class="manual-entry-form__status" role="status" aria-live="polite" data-manual-input-status></p>
           </div>
         </section>
+
+        <section class="scheduled-input-card" data-scheduled-input aria-labelledby="scheduled-input-title">
+          <div class="scheduled-input-card__heading">
+            <div>
+              <p class="eyebrow">Scheduled Input</p>
+              <h2 id="scheduled-input-title">月度固定收入 / 支出规则</h2>
+              <p>Scheduled Input 不是新的 Source。规则到期后由后端生成普通 Manual Source，再复用既有 Reconciliation、Mapping、Enrichment 与 Projection。V1 只支持每月 1–28 日；API 启动时会自动处理到期 occurrence，也可以在这里显式执行。</p>
+            </div>
+            <button class="secondary-button" type="button" data-action="run-scheduled-inputs">执行到期项</button>
+          </div>
+
+          <form class="scheduled-input-form" data-scheduled-create-form>
+            <div class="scheduled-input-form__grid">
+              <div class="scheduled-input-form__field">
+                <label for="scheduled-create-type">类型</label>
+                <select id="scheduled-create-type" data-scheduled-create-type required>
+                  <option value="expense">支出</option>
+                  <option value="income">收入</option>
+                </select>
+              </div>
+              <div class="scheduled-input-form__field">
+                <label for="scheduled-create-date">首次 / 下次日期</label>
+                <input id="scheduled-create-date" type="date" data-scheduled-create-date required />
+                <p class="scheduled-input-form__hint">仅支持每月 1–28 日。如果日期已到期，会在保存规则时补执行到今天。</p>
+              </div>
+              <div class="scheduled-input-form__field">
+                <label for="scheduled-create-amount">固定金额</label>
+                <input id="scheduled-create-amount" type="text" inputmode="decimal" placeholder="88.50" autocomplete="off" data-scheduled-create-amount required />
+              </div>
+              <div class="scheduled-input-form__field scheduled-input-form__field--full">
+                <label for="scheduled-create-description">Manual description</label>
+                <input id="scheduled-create-description" type="text" autocomplete="off" placeholder="例如：每月固定房租" data-scheduled-create-description required />
+              </div>
+              <div class="scheduled-input-form__field scheduled-input-form__field--full">
+                <label for="scheduled-create-note">Note</label>
+                <textarea id="scheduled-create-note" data-scheduled-create-note></textarea>
+              </div>
+              <div class="scheduled-input-form__field scheduled-input-form__field--full">
+                <label class="scheduled-input-toggle">
+                  <input type="checkbox" data-scheduled-create-enabled />
+                  <span>创建后启用规则</span>
+                </label>
+              </div>
+            </div>
+            <div class="scheduled-input-form__actions">
+              <button class="primary-button" type="submit" data-action="create-scheduled-input">创建月度规则</button>
+            </div>
+          </form>
+
+          <div class="scheduled-input-management">
+            <div class="scheduled-input-management__heading">
+              <div>
+                <h3>Scheduled Rules</h3>
+                <p>暂停规则不会推进 <code>next_date</code>；重新启用后会补齐仍然到期的 occurrence。要跳过暂停期间，请先把下次日期改到未来。编辑只影响未来规则；删除规则后，已经生成的历史 Manual Source / Transaction 不会被修改或删除。</p>
+              </div>
+              <div class="scheduled-input-management__summary">
+                <span><span data-scheduled-input-count>—</span> 条</span>
+                <button class="secondary-button" type="button" data-action="retry-scheduled-inputs">刷新</button>
+              </div>
+            </div>
+            <p class="scheduled-input-state" data-scheduled-input-loading>正在读取 Scheduled Rules…</p>
+            <div class="scheduled-input-error" data-scheduled-input-error hidden>
+              <p data-scheduled-input-error-message>无法读取 Scheduled Rules。</p>
+            </div>
+            <p class="scheduled-input-empty" data-scheduled-input-empty hidden>当前还没有 Scheduled Rule。</p>
+            <div class="scheduled-input-management__grid">
+              <ul class="scheduled-input-list" data-scheduled-input-list></ul>
+              <div class="scheduled-input-detail">
+                <p class="scheduled-input-detail__empty" data-scheduled-input-detail-empty>选择一个规则后可以修改未来 occurrence、暂停或删除规则。</p>
+                <div data-scheduled-input-detail hidden>
+                  <div class="scheduled-input-detail__heading">
+                    <h4 data-scheduled-input-detail-title>—</h4>
+                    <p data-scheduled-input-detail-meta>—</p>
+                  </div>
+                  <form class="scheduled-input-form" data-scheduled-edit-form>
+                    <div class="scheduled-input-form__grid">
+                      <div class="scheduled-input-form__field">
+                        <label for="scheduled-edit-type">类型</label>
+                        <select id="scheduled-edit-type" data-scheduled-edit-type required>
+                          <option value="expense">支出</option>
+                          <option value="income">收入</option>
+                        </select>
+                      </div>
+                      <div class="scheduled-input-form__field">
+                        <label for="scheduled-edit-date">下次日期</label>
+                        <input id="scheduled-edit-date" type="date" data-scheduled-edit-date required />
+                      </div>
+                      <div class="scheduled-input-form__field">
+                        <label for="scheduled-edit-amount">固定金额</label>
+                        <input id="scheduled-edit-amount" type="text" inputmode="decimal" autocomplete="off" data-scheduled-edit-amount required />
+                      </div>
+                      <div class="scheduled-input-form__field scheduled-input-form__field--full">
+                        <label for="scheduled-edit-description">Manual description</label>
+                        <input id="scheduled-edit-description" type="text" autocomplete="off" data-scheduled-edit-description required />
+                      </div>
+                      <div class="scheduled-input-form__field scheduled-input-form__field--full">
+                        <label for="scheduled-edit-note">Note</label>
+                        <textarea id="scheduled-edit-note" data-scheduled-edit-note></textarea>
+                      </div>
+                      <div class="scheduled-input-form__field scheduled-input-form__field--full">
+                        <label class="scheduled-input-toggle">
+                          <input type="checkbox" data-scheduled-edit-enabled />
+                          <span>启用规则</span>
+                        </label>
+                      </div>
+                    </div>
+                    <div class="scheduled-input-form__actions">
+                      <button class="primary-button" type="submit" data-action="update-scheduled-input">保存未来规则</button>
+                      <button class="danger-button" type="button" data-action="delete-scheduled-input">删除规则</button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            </div>
+            <p class="scheduled-input-status" role="status" aria-live="polite" data-scheduled-input-status></p>
+          </div>
+        </section>
+
         <section class="mapping-review-card" data-mapping-review aria-labelledby="mapping-review-title">
           <div class="mapping-review-card__heading">
             <div>

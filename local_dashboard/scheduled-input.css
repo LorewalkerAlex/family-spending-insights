@@ -1,0 +1,231 @@
+.scheduled-input-card {
+  margin-top: 1rem;
+  padding: 1.25rem;
+  border: 1px solid #dfe5e0;
+  border-radius: 1rem;
+  background: #ffffff;
+  box-shadow: 0 0.5rem 1.5rem rgb(29 48 37 / 0.05);
+}
+
+.scheduled-input-card__heading,
+.scheduled-input-management__heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.scheduled-input-card__heading h2,
+.scheduled-input-management__heading h3,
+.scheduled-input-detail__heading h4 {
+  margin: 0;
+  color: #223028;
+}
+
+.scheduled-input-card__heading p,
+.scheduled-input-management__heading p {
+  max-width: 48rem;
+  margin: 0.35rem 0 0;
+  color: #637068;
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
+.scheduled-input-form {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.scheduled-input-form__grid {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.scheduled-input-form__field {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.scheduled-input-form__field label {
+  color: #526159;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.scheduled-input-form input,
+.scheduled-input-form select,
+.scheduled-input-form textarea {
+  width: 100%;
+  min-height: 2.7rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid #cbd5ce;
+  border-radius: 0.7rem;
+  color: #17201b;
+  background: #ffffff;
+  font: inherit;
+}
+
+.scheduled-input-form textarea {
+  min-height: 5.5rem;
+  resize: vertical;
+}
+
+.scheduled-input-form input:focus-visible,
+.scheduled-input-form select:focus-visible,
+.scheduled-input-form textarea:focus-visible,
+.scheduled-input-list__button:focus-visible {
+  outline: 3px solid #9ec7b1;
+  outline-offset: 2px;
+}
+
+.scheduled-input-form__hint,
+.scheduled-input-status,
+.scheduled-input-state,
+.scheduled-input-empty,
+.scheduled-input-detail__empty {
+  margin: 0;
+  color: #637068;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.scheduled-input-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 2.7rem;
+}
+
+.scheduled-input-toggle input {
+  width: auto;
+  min-height: auto;
+}
+
+.scheduled-input-form__actions,
+.scheduled-input-management__summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.scheduled-input-management {
+  display: grid;
+  gap: 0.9rem;
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid #e5ebe7;
+}
+
+.scheduled-input-management__summary {
+  color: #526159;
+  font-size: 0.78rem;
+}
+
+.scheduled-input-error {
+  padding: 0.7rem 0.8rem;
+  border: 1px solid #e8c9c5;
+  border-radius: 0.7rem;
+  color: #823e36;
+  background: #fff7f6;
+}
+
+.scheduled-input-error p {
+  margin: 0;
+}
+
+.scheduled-input-management__grid {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.scheduled-input-list {
+  display: grid;
+  gap: 0.5rem;
+  align-content: start;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.scheduled-input-list__button {
+  display: grid;
+  gap: 0.25rem;
+  width: 100%;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid #d9e1dc;
+  border-radius: 0.75rem;
+  text-align: left;
+  color: #2e3c34;
+  background: #fbfcfb;
+  font: inherit;
+  cursor: pointer;
+}
+
+.scheduled-input-list__button strong {
+  overflow: hidden;
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scheduled-input-list__button span {
+  color: #6b776f;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.scheduled-input-list__button:hover {
+  border-color: #9bb2a4;
+  background: #f3f7f4;
+}
+
+.scheduled-input-list__button--active {
+  border-color: #6f9981;
+  background: #edf5f0;
+  box-shadow: 0 0 0 2px rgb(111 153 129 / 0.12);
+}
+
+.scheduled-input-detail {
+  min-width: 0;
+  padding: 0.9rem;
+  border: 1px solid #e1e7e3;
+  border-radius: 0.8rem;
+  background: #fbfcfb;
+}
+
+.scheduled-input-detail__heading {
+  margin-bottom: 0.9rem;
+}
+
+.scheduled-input-detail__heading h4 {
+  font-size: 0.95rem;
+}
+
+.scheduled-input-detail__heading p {
+  margin: 0.3rem 0 0;
+  overflow-wrap: anywhere;
+  color: #6b776f;
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+@media (min-width: 48rem) {
+  .scheduled-input-card {
+    padding: 1.5rem;
+  }
+
+  .scheduled-input-form__grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .scheduled-input-form__field--full {
+    grid-column: 1 / -1;
+  }
+
+  .scheduled-input-management__grid {
+    grid-template-columns: minmax(15rem, 0.8fr) minmax(0, 1.5fr);
+  }
+}

@@ -10,6 +10,8 @@ const {
   findSimilarManualDescriptions,
   normalizeManualDescription,
   validateManualInputRecord,
+  validateScheduledInputRule,
+  validateScheduledInputRun,
   validateTransaction,
 } = require("./application-api.js");
 
@@ -432,4 +434,168 @@ test("deletes one Manual Source record without inventing client-side Transaction
   assert.equal(result.transactionRemoved, false);
   assert.equal(requests[0].url, `${DEFAULT_API_BASE}/manual-inputs/manual-1`);
   assert.equal(requests[0].options.method, "DELETE");
+});
+
+test("validates Scheduled Input monthly rule and execution metadata", () => {
+  const rule = validateScheduledInputRule({
+    id: "schedule-test",
+    enabled: true,
+    type: "expense",
+    amount: "88.50",
+    currency: "CNY",
+    description: "固定房租",
+    note: null,
+    next_date: "2026-09-28",
+    last_occurrence_date: "2026-08-28",
+    last_source_record_id: "manual_schedule_x_20260828",
+    last_transaction_id: "txn-1",
+    last_action: "created",
+  });
+
+  assert.equal(rule.nextDate, "2026-09-28");
+  assert.equal(rule.lastAction, "created");
+  assert.equal(rule.enabled, true);
+});
+
+test("Scheduled Input validation rejects month-end and partial execution metadata", () => {
+  const base = {
+    id: "schedule-test",
+    enabled: true,
+    type: "expense",
+    amount: "88.50",
+    currency: "CNY",
+    description: "固定房租",
+    note: null,
+    next_date: "2026-09-11",
+    last_occurrence_date: null,
+    last_source_record_id: null,
+    last_transaction_id: null,
+    last_action: null,
+  };
+
+  assert.throws(
+    () => validateScheduledInputRule({ ...base, next_date: "2026-08-31" }),
+    /1–28/,
+  );
+  assert.throws(
+    () =>
+      validateScheduledInputRule({
+        ...base,
+        last_occurrence_date: "2026-08-11",
+      }),
+    /同时为空或同时存在/,
+  );
+});
+
+test("Scheduled Input Application API supports CRUD and explicit Run Due", async () => {
+  const requests = [];
+  const backendRule = {
+    id: "schedule-test",
+    enabled: true,
+    type: "expense",
+    amount: "88.50",
+    currency: "CNY",
+    description: "固定房租",
+    note: "自动录入",
+    next_date: "2026-09-11",
+    last_occurrence_date: null,
+    last_source_record_id: null,
+    last_transaction_id: null,
+    last_action: null,
+  };
+  const service = createApplicationService({
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      if (url.endsWith("/scheduled-inputs") && options.method === "GET") {
+        return response({ scheduled_inputs: [backendRule] });
+      }
+      if (url.endsWith("/scheduled-inputs") && options.method === "POST") {
+        return response({ scheduled_input: backendRule }, { status: 201 });
+      }
+      if (options.method === "PATCH") {
+        return response({ scheduled_input: { ...backendRule, enabled: false } });
+      }
+      if (options.method === "DELETE") {
+        return response({ scheduled_input_deletion: { id: "schedule-test" } });
+      }
+      return response({
+        scheduled_input_run: {
+          generated_count: 1,
+          occurrences: [
+            {
+              rule_id: "schedule-test",
+              occurrence_date: "2026-08-11",
+              source_record_id: "manual_schedule_x_20260811",
+              transaction_id: "txn-1",
+              action: "recovered",
+            },
+          ],
+        },
+      });
+    },
+  });
+
+  const listed = await service.getScheduledInputs();
+  const created = await service.createScheduledInput({
+    type: "expense",
+    amount: "88.50",
+    description: "固定房租",
+    note: "自动录入",
+    nextDate: "2026-09-11",
+    enabled: true,
+  });
+  const updated = await service.updateScheduledInput("schedule-test", {
+    type: "expense",
+    amount: "88.50",
+    description: "固定房租",
+    note: "自动录入",
+    nextDate: "2026-09-11",
+    enabled: false,
+  });
+  const deleted = await service.deleteScheduledInput("schedule-test");
+  const run = await service.runDueScheduledInputs();
+
+  assert.equal(listed[0].id, "schedule-test");
+  assert.equal(created.id, "schedule-test");
+  assert.equal(updated.enabled, false);
+  assert.equal(deleted.id, "schedule-test");
+  assert.equal(run.generatedCount, 1);
+  assert.equal(run.occurrences[0].action, "recovered");
+  assert.deepEqual(JSON.parse(requests[1].options.body), {
+    type: "expense",
+    amount: "88.50",
+    description: "固定房租",
+    note: "自动录入",
+    next_date: "2026-09-11",
+    enabled: true,
+  });
+  assert.deepEqual(
+    requests.map((item) => [item.url, item.options.method]),
+    [
+      [`${DEFAULT_API_BASE}/scheduled-inputs`, "GET"],
+      [`${DEFAULT_API_BASE}/scheduled-inputs`, "POST"],
+      [`${DEFAULT_API_BASE}/scheduled-inputs/schedule-test`, "PATCH"],
+      [`${DEFAULT_API_BASE}/scheduled-inputs/schedule-test`, "DELETE"],
+      [`${DEFAULT_API_BASE}/scheduled-inputs/run-due`, "POST"],
+    ],
+  );
+});
+
+test("Scheduled Input run validation requires generated_count to match occurrences", () => {
+  assert.throws(
+    () =>
+      validateScheduledInputRun({
+        generated_count: 2,
+        occurrences: [
+          {
+            rule_id: "schedule-test",
+            occurrence_date: "2026-08-11",
+            source_record_id: "manual_schedule_1",
+            transaction_id: "txn-1",
+            action: "created",
+          },
+        ],
+      }),
+    /不一致/,
+  );
 });

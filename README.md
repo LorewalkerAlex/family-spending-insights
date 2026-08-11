@@ -2,7 +2,7 @@
 
 用于在本地获取、整理和分析家庭共同消费数据。
 
-当前正式数据链路已经包含 CMB Email 与 Manual Source 两个入口，并共享第一版统一领域骨架：
+当前正式数据链路已经包含 CMB Email 与 Manual Source 两个 Source 入口；Scheduled Input V1 已作为调用 Manual Source 的月度编排能力接入同一领域骨架：
 
 ```text
 CMB Email / Manual Input
@@ -15,8 +15,13 @@ CMB Email / Manual Input
 → data/reports/spending_statistics.json Projection
 → Application / local JSON API
 → local_dashboard/
+
+Scheduled Rule
+→ 到期 occurrence
+→ Manual Input / Manual Source
+→ 上述同一 Pipeline
 ```
-项目当前已经实现邮件获取、CMB Source Record / Transaction 身份分离、Manual Source 与跨来源 Reconciliation、Manual Input 查询 / 更正 / 删除生命周期、正式 Merchant Mapping、按 description 聚合的 Mapping Review / Mapping Correction、独立持久化的当前 Enrichment、退款归并、消费统计 Projection、本地 JSON Application/API，以及支持 source-native Manual Input 管理、Mapping Review、逐笔 Transaction 浏览和 transaction-only Enrichment exception 的本地 HTML Dashboard。增长率/环比分析、AI 报告、面向公网部署与认证的远程 API、正式微信小程序等仍不在当前实现范围内。
+项目当前已经实现邮件获取、CMB Source Record / Transaction 身份分离、Manual Source 与跨来源 Reconciliation、Manual Input 查询 / 更正 / 删除生命周期、Scheduled Input 月度规则管理与幂等到期生成、正式 Merchant Mapping、按 description 聚合的 Mapping Review / Mapping Correction、独立持久化的当前 Enrichment、退款归并、消费统计 Projection、本地 JSON Application/API，以及支持 source-native Manual Input 管理、Scheduled Input 管理、Mapping Review、逐笔 Transaction 浏览和 transaction-only Enrichment exception 的本地 HTML Dashboard。增长率/环比分析、AI 报告、面向公网部署与认证的远程 API、正式微信小程序等仍不在当前实现范围内。
 ## 数据与隐私边界
 
 ```text
@@ -29,6 +34,7 @@ data/
 │   └── categories.yaml
 ├── transactions.csv
 ├── manual_source_records.jsonl
+├── scheduled_input_rules.json
 ├── transaction_source_links.jsonl
 ├── enrichment_state.jsonl
 └── reports/
@@ -41,7 +47,8 @@ data/
 - `transactions.csv`：从全部原始邮件全量重建的 CMB 来源级事实数据；进入统一领域模型后对应 `SourceRecord`，不是系统级 Transaction 存储。
 - `mappings/merchants.yaml`：人工确认的 `merchant_name → descriptions`。
 - `mappings/categories.yaml`：人工确认的 `category → merchant_names`。
-- `manual_source_records.jsonl`：Manual Source 的本地来源事实；当前录入保存 `type/date/amount/description/note`，Merchant / Category 由下游 Mapping / Enrichment 决定。更正会以新 Source Record 替换旧记录；删除最后一条 Manual Source 后文件会被移除，缺失文件表示空 Manual Source。
+- `manual_source_records.jsonl`：Manual Source 的本地来源事实；当前录入保存 `type/date/amount/description/note`，Merchant / Category 由下游 Mapping / Enrichment 决定。更正会以新 Source Record 替换旧记录；删除最后一条 Manual Source 后文件会被移除，缺失文件表示空 Manual Source。Scheduled occurrence 生成后也只是普通 Manual Source Record。
+- `scheduled_input_rules.json`：Scheduled Input V1 的本地编排状态，不是 Source 数据。保存月度规则及下次执行日期、启停状态和最近一次 occurrence 元数据；无规则时文件会被移除。
 - `transaction_source_links.jsonl`：当前 Source Record → Transaction 关系。
 - `enrichment_state.jsonl`：当前 Transaction Enrichment authoritative state；transaction-only Category exception 也持久化在这里，并通过 `category_source` 区分来源。
 - `reports/spending_statistics.json`：后端生成、可从正式状态重建的消费统计 Projection。
@@ -279,6 +286,45 @@ data/transaction_source_links.jsonl
 这些都属于本地运行数据，不提交到 Git。
 
 当前 Spending Analytics 仍只统计 expense。Manual Source 可以录入 income，但 income 当前只保留为正式 Transaction，不进入现有消费统计。
+## Scheduled Input V1
+
+Scheduled Input 不是新的 Source。V1 保存的是“何时自动调用 Manual Source”的月度规则；每个到期 occurrence 都生成普通 Manual Source Record，并继续复用既有 Mapping、跨来源 Reconciliation、Transaction、Enrichment 与 Projection 主链。
+
+当前规则字段：
+
+```text
+id
+enabled
+type
+amount
+currency
+description
+note?
+next_date
+last_occurrence_date?
+last_source_record_id?
+last_transaction_id?
+last_action?
+```
+
+V1 只支持固定金额的**每月一次**规则，并要求 `next_date` 落在每月 1–28 日，避免月底月份长度导致隐式漂移。每次成功处理一个 occurrence 后，`next_date` 前进一个自然月并保持相同日号。
+
+执行语义：
+- Application `initialize()` 先同步已有 Source / Reconciliation / Projection，再执行截至本地当天所有启用且到期的规则；
+- 也可以通过显式 `Run Due` 执行同一 runner；V1 不启动常驻线程、daemon 或系统级后台 Scheduler；
+- 创建或编辑启用规则后，如果 `next_date` 已到期，会在同一 Application command 中立即处理到当前日期；暂停规则不会生成 occurrence；
+- 如果程序一段时间未运行，启用规则会从保存的 `next_date` 开始逐月补齐到当前日期；不希望补齐时，应先把 `next_date` 改到未来再启用；
+- 每个 `rule_id + occurrence_date` 会派生稳定的 Manual Source ID。重复 `Run Due` 不会重复记账；即使进程在 Manual Source 已写入、规则进度尚未写回之间异常终止，下次执行也能识别已有 Source Link 并恢复推进；
+- 编辑、暂停或删除 Scheduled Rule 只影响未来编排，不修改或删除已经生成的 Manual Source / Transaction 历史；历史 occurrence 如需纠错，继续使用 Manual Input 的 Source-level 更正 / 删除能力；
+- 一次 due run 会快照规则、Manual Source、Source Link、Enrichment 与 Projection。可捕获的执行失败会恢复命令前状态，避免多月补执行只成功一部分。
+
+规则文件位于：
+
+```text
+data/scheduled_input_rules.json
+```
+
+它属于本地运行态数据，继续受 `data/*` 的默认 Git ignore 保护。
 ## Enrichment Application / API
 
 Enrichment 当前是独立持久化的 authoritative current state，保存在：
@@ -295,6 +341,8 @@ Mapping / Merchant default 负责新 Transaction 或缺失状态的初始化；�
 - 更正 Manual Source：替换 Source identity、重新 Reconciliation，并按实际匹配结果保留原 Transaction identity 或收敛到另一个既有 Transaction；
 - 删除 Manual Source，并根据是否仍有其他 Source 支撑决定 Transaction 是否保留；
 - 查询历史 Manual description，供录入时做轻量复用提示；
+- 创建、查询、编辑、启停和删除 Scheduled Input 月度规则，并显式执行到期规则；
+- Scheduled occurrence 通过 Manual Source 主链落地，不建立第二套 Transaction / Enrichment 规则；
 - 查询当前 Transaction + Source identity + Enrichment；
 - 查询正式 Category 列表；
 - 查询按未匹配 description 聚合的 Mapping Review workspace；
@@ -318,19 +366,24 @@ GET   /api/health
 GET   /api/categories
 GET   /api/manual-descriptions
 GET   /api/manual-inputs
+GET   /api/scheduled-inputs
 GET   /api/mapping-reviews
 GET   /api/transactions
 GET   /api/transactions/{transaction_id}
 POST  /api/manual-inputs
 POST  /api/manual-inputs/{source_record_id}/corrections
 DELETE /api/manual-inputs/{source_record_id}
+POST  /api/scheduled-inputs
+PATCH /api/scheduled-inputs/{rule_id}
+DELETE /api/scheduled-inputs/{rule_id}
+POST  /api/scheduled-inputs/run-due
 POST  /api/mapping-reviews/preview
 POST  /api/mapping-reviews/apply
 PATCH /api/transactions/{transaction_id}/enrichment
 ```
-API 启动时会先执行 `Application.initialize()`，同步当前 Source / Reconciliation / Enrichment 状态并重建最新 Projection。Source 在初始化后发生变化时，旧 Application snapshot 不会静默继续使用失效 links；应重新启动或重新初始化 Application，使上游 Source / Reconciliation 先收敛。
+API 启动时会先执行 `Application.initialize()`：先同步当前 Source / Reconciliation / Enrichment 状态并重建最新 Projection，再执行截至当天的 Scheduled Input due occurrences。Source 在初始化后发生变化时，旧 Application snapshot 不会静默继续使用失效 links；应重新启动或重新初始化 Application，使上游 Source / Reconciliation 先收敛。
 
-Application mutation 保持 authoritative state 与可重建 Projection 的提交边界。Enrichment PATCH 不得留下 Enrichment 已更新而 Projection 仍旧的半提交状态；Manual Input 的创建、更正和删除都会在跨 Manual Source / Source Link / Enrichment / Projection 写入失败时恢复本次命令前状态；Mapping Review Apply 同样会快照并协调 Mapping、affected Enrichment 与 Projection，任一步失败时恢复本次命令前状态。
+Application mutation 保持 authoritative state 与可重建 Projection 的提交边界。Enrichment PATCH 不得留下 Enrichment 已更新而 Projection 仍旧的半提交状态；Manual Input 的创建、更正和删除都会在跨 Manual Source / Source Link / Enrichment / Projection 写入失败时恢复本次命令前状态；Scheduled Rule 创建/编辑与立即到期执行使用同一命令级回滚边界，due runner 的多 occurrence 执行也会在可捕获失败时恢复整批状态；Mapping Review Apply 同样会快照并协调 Mapping、affected Enrichment 与 Projection，任一步失败时恢复本次命令前状态。
 ## 退款归并
 
 正式统计在 Source Record → Transaction → Enrichment 建立后调用 `reconcile_refunds()`。退款匹配会读取 authoritative Source Record 的 description，并可使用当前 Merchant identity 作为辅助证据；Category 和 transaction override 不参与退款身份判断。
@@ -446,7 +499,7 @@ http://localhost:8000/local_dashboard/
 ```text
 /data/reports/spending_statistics.json
 ```
-Manual Input、Mapping Review 与逐笔 Transaction / Enrichment 都通过本地 API `http://127.0.0.1:8765/api` 读取和修改。API 不可用时，已经生成的聚合统计仍可独立展示；Manual Input、Mapping Review 与 Transaction Workspace 会分别显示连接错误。
+Manual Input、Scheduled Input、Mapping Review 与逐笔 Transaction / Enrichment 都通过本地 API `http://127.0.0.1:8765/api` 读取和修改。API 不可用时，已经生成的聚合统计仍可独立展示；Manual Input、Scheduled Input、Mapping Review 与 Transaction Workspace 会分别显示连接错误。
 
 当前能力：
 - 总览使用 `summary.shown_data`，不会把 `show=false` 月份金额混入当前展示；
@@ -458,7 +511,10 @@ Manual Input、Mapping Review 与逐笔 Transaction / Enrichment 都通过本地
 - 更正会明确生成新的 Manual Source ID；普通 manual-only 事实纠错在未匹配其他 Transaction 时保留原 Transaction ID，而真正匹配到已有 Transaction 时按 Reconciliation 收敛到该 Transaction；
 - 更正编辑器使用当前 Transaction Enrichment Note；Merchant / Category 的稳定 Mapping 修改继续走 Mapping Review，transaction-only Merchant / Category 例外继续走 Transaction Workspace，不混入 Source correction；
 - 删除 Manual Source 后，如果没有其他 Source 支撑原 Transaction，则该 Transaction 从当前领域状态移除；若仍有 CMB 等来源支撑，则 Transaction 保留；
-- Manual Input 创建、更正或删除成功后由后端完成 Reconciliation 与 Projection 刷新，Dashboard 再重新读取 Manual Input 列表、Mapping Review、Transaction Workspace 与统计；
+- Manual Input 创建、更正或删除成功后由后端完成 Reconciliation 与 Projection 刷新，Dashboard 再重新读取 Manual Input 列表、Scheduled Input 状态、Mapping Review、Transaction Workspace 与统计；
+- Scheduled Input 区可以创建月度规则、查看下一执行日期和最近 occurrence、编辑未来规则、启停、删除以及显式 Run Due；界面只提交规则命令，不复制到期判断、幂等或 Reconciliation 逻辑；
+- Scheduled Rule 创建或编辑后如果已经到期，后端会在命令完成前生成对应 Manual occurrence；Dashboard 随后刷新 Manual Input、Mapping Review、Transaction Workspace 与统计；
+- 删除 Scheduled Rule 只删除未来编排，Dashboard 不把已经生成的 Manual Source 历史级联删除；
 - Transaction Workspace 跟随当前月份列出 Transaction，并展示其 Source description 与当前 Enrichment；
 - Mapping Review Workspace 按未匹配 description 聚合 CMB 与 Manual Source 交易，并显示笔数、总金额和来源类型；
 - Review 时可以搜索/选择已有 Merchant 或明确新建 Merchant，并选择正式默认 Category；Merchant 相似候选只做提示，不会自动合并；
@@ -488,7 +544,7 @@ Category 趋势图补齐缺失月份时使用 0，仅作为已有月度 category
 Chart.js 固定在项目的 npm 依赖中，并由页面加载本地 `node_modules/chart.js/dist/chart.umd.js`；运行 Dashboard 时不使用 CDN，也不发起其他外部网络请求。Chart.js 内置图例交互用于隐藏/恢复 category 系列。
 每张图表独立创建和捕获失败。某一图表初始化或渲染失败时，只在该图表卡片显示错误，不影响总览、月份切换、category/merchant 表格或其他图表。
 
-`local_dashboard/api.js` 负责加载统计 Projection、schema 校验、金额/笔数对账和 view model；`local_dashboard/charts.js` 负责纯图表配置与图表实例生命周期；`local_dashboard/app.js` 负责统计 DOM 状态、月份交互以及将 service 数据交给图表层；`local_dashboard/application-api.js` 负责本地 JSON API contract、Manual Input management / Mapping Review transport 和错误边界；`local_dashboard/manual-entry.js` 负责 Manual Input 创建、列表、更正与删除交互；`local_dashboard/mapping-review.js` 负责 Mapping Review workspace、Preview 与 Apply 交互；`local_dashboard/transactions.js` 负责 Transaction Workspace 的浏览与单笔例外编辑。前端不重新实现 Reconciliation、Mapping propagation、Enrichment 规则或消费聚合。
+`local_dashboard/api.js` 负责加载统计 Projection、schema 校验、金额/笔数对账和 view model；`local_dashboard/charts.js` 负责纯图表配置与图表实例生命周期；`local_dashboard/app.js` 负责统计 DOM 状态、月份交互以及将 service 数据交给图表层；`local_dashboard/application-api.js` 统一负责本地 JSON API contract、Manual Input / Scheduled Input / Mapping Review transport 和错误边界；`local_dashboard/manual-entry.js` 负责 Manual Input 创建、列表、更正与删除交互；`local_dashboard/scheduled-input.js` 负责 Scheduled Rule 列表、编辑、启停、删除和 Run Due 交互；`local_dashboard/mapping-review.js` 负责 Mapping Review workspace、Preview 与 Apply 交互；`local_dashboard/transactions.js` 负责 Transaction Workspace 的浏览与单笔例外编辑。前端不重新实现 Scheduled due/idempotency、Reconciliation、Mapping propagation、Enrichment 规则或消费聚合。
 ## Rebuild 支持工具
 
 `scripts/` 中保留了本次 Rebuild 期间建立 Merchant Mapping 时使用的截图切行、OCR 和候选匹配检查工具：
@@ -542,6 +598,8 @@ local_dashboard/
 ├── application-api.test.js
 ├── manual-entry.js
 ├── manual-entry.css
+├── scheduled-input.js
+├── scheduled-input.css
 ├── mapping-review.js
 ├── mapping-review.css
 ├── mapping-review-api.test.js
@@ -554,7 +612,7 @@ scripts/
 ├── inspect_description_matching.py
 └── inspect_mapping_candidates.py
 src/family_spending/
-├── application.py                    # Manual Source lifecycle + Transaction / Enrichment Application use cases
+├── application.py                    # Manual/Scheduled lifecycle + Transaction / Enrichment Application use cases
 ├── http_api.py                       # 最小本地 JSON transport
 ├── source_records.py                 # SourceRecord + SourceAdapter 扩展契约
 ├── transactions.py                   # Transaction Core + Source Link / 索引
@@ -564,6 +622,7 @@ src/family_spending/
 ├── source_link_store.py              # Source Record → Transaction link storage
 ├── manual_source.py                  # Manual Source local state + empty-store cleanup
 ├── manual_input.py                   # Manual Input create/correct/delete + cross-file rollback boundary
+├── scheduled_input.py                # Monthly rules + due runner + stable occurrence identity
 ├── mapping.py                        # 正式 Mapping loader + Mapping Enrichment resolver
 ├── mapping_review.py                 # Mapping Review aggregation / preview / Mapping propagation
 ├── month_coverage.py
@@ -585,6 +644,7 @@ tests/
 ├── test_enrichment_store.py
 ├── test_http_api.py
 ├── test_manual_input_application_api.py
+├── test_scheduled_input_application_api.py
 ├── test_imap_163.py
 ├── test_local_dashboard.py
 ├── test_mapping.py
@@ -608,7 +668,7 @@ tests/
 - 退款分配等更细的诊断明细界面；
 - 微信小程序正式客户端；
 - 面向公网部署的 API、登录、云同步或多用户；
-- 数据库、增量统计或后台调度；
+- 数据库、增量统计或常驻 / 系统级后台调度；Scheduled Input V1 只在 Application 初始化、规则 mutation 和显式 Run Due 时执行；
 - 其他银行、微信或支付宝独立账单接入。
 
 ## 架构说明

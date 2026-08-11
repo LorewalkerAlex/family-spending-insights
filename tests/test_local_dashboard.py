@@ -29,6 +29,8 @@ class LocalDashboardContractTests(unittest.TestCase):
             "mapping-review.js",
             "mapping-review.css",
             "mapping-review-api.test.js",
+            "scheduled-input.js",
+            "scheduled-input.css",
         }
         self.assertEqual(
             {path.name for path in DASHBOARD.iterdir() if path.is_file()},
@@ -41,6 +43,7 @@ class LocalDashboardContractTests(unittest.TestCase):
         self.assertIn('href="./transactions.css"', html)
         self.assertIn('href="./manual-entry.css"', html)
         self.assertIn('href="./mapping-review.css"', html)
+        self.assertIn('href="./scheduled-input.css"', html)
         self.assertIn('src="../node_modules/chart.js/dist/chart.umd.js"', html)
         self.assertIn('src="./api.js"', html)
         self.assertIn('src="./charts.js"', html)
@@ -49,6 +52,7 @@ class LocalDashboardContractTests(unittest.TestCase):
         self.assertIn('src="./transactions.js"', html)
         self.assertIn('src="./manual-entry.js"', html)
         self.assertIn('src="./mapping-review.js"', html)
+        self.assertIn('src="./scheduled-input.js"', html)
         self.assertIsNone(re.search(r"https?://", html, flags=re.IGNORECASE))
 
     def test_api_reads_formal_statistics_and_schema_v2(self) -> None:
@@ -121,6 +125,34 @@ class LocalDashboardContractTests(unittest.TestCase):
         self.assertIn("真实单笔例外走 Transaction Workspace", html)
         self.assertIn("Note 属于当前 Enrichment", html)
         self.assertIn("item.transaction.enrichment.note", entry_source)
+
+    def test_scheduled_input_is_orchestration_over_manual_source(self) -> None:
+        html = (DASHBOARD / "index.html").read_text(encoding="utf-8")
+        scheduled_source = (DASHBOARD / "scheduled-input.js").read_text(encoding="utf-8")
+        manual_source = (DASHBOARD / "manual-entry.js").read_text(encoding="utf-8")
+        api_source = (DASHBOARD / "application-api.js").read_text(encoding="utf-8")
+
+        self.assertIn("data-scheduled-input", html)
+        self.assertIn("data-scheduled-create-form", html)
+        self.assertIn("data-scheduled-input-list", html)
+        self.assertIn('data-action="run-scheduled-inputs"', html)
+        self.assertIn("不是新的 Source", html)
+        self.assertIn("1–28", html)
+        self.assertIn("历史 Manual Source / Transaction 不会被修改或删除", html)
+        self.assertIn('request("/scheduled-inputs")', api_source)
+        self.assertIn('request("/scheduled-inputs/run-due"', api_source)
+        self.assertIn("service.createScheduledInput", scheduled_source)
+        self.assertIn("service.updateScheduledInput", scheduled_source)
+        self.assertIn("service.deleteScheduledInput", scheduled_source)
+        self.assertIn("service.runDueScheduledInputs", scheduled_source)
+        self.assertIn("family-spending:manual-source-changed", scheduled_source)
+        self.assertIn("family-spending:manual-source-changed", manual_source)
+        self.assertNotIn("Reconciliation", scheduled_source)
+
+    def test_dashboard_html_has_unique_ids(self) -> None:
+        html = (DASHBOARD / "index.html").read_text(encoding="utf-8")
+        ids = re.findall(r'\bid="([^"]+)"', html)
+        self.assertEqual(len(ids), len(set(ids)))
 
     def test_mapping_review_uses_application_api_and_keeps_single_transaction_edits_separate(self) -> None:
         html = (DASHBOARD / "index.html").read_text(encoding="utf-8")

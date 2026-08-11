@@ -71,6 +71,17 @@ class _RequestHandler(BaseHTTPRequestHandler):
                     },
                 )
                 return
+            if path == "/api/scheduled-inputs":
+                self._send_json(
+                    HTTPStatus.OK,
+                    {
+                        "scheduled_inputs": [
+                            item.to_dict()
+                            for item in self.server.application.list_scheduled_inputs()
+                        ]
+                    },
+                )
+                return
             if path == "/api/mapping-reviews":
                 self._send_json(
                     HTTPStatus.OK,
@@ -113,6 +124,13 @@ class _RequestHandler(BaseHTTPRequestHandler):
             if path == "/api/manual-inputs":
                 self._handle_manual_input()
                 return
+            if path == "/api/scheduled-inputs":
+                self._handle_scheduled_input_create()
+                return
+            if path == "/api/scheduled-inputs/run-due":
+                result = self.server.application.run_due_scheduled_inputs()
+                self._send_json(HTTPStatus.OK, {"scheduled_input_run": result.to_dict()})
+                return
             manual_prefix = "/api/manual-inputs/"
             correction_suffix = "/corrections"
             if path.startswith(manual_prefix) and path.endswith(correction_suffix):
@@ -143,6 +161,15 @@ class _RequestHandler(BaseHTTPRequestHandler):
     def do_PATCH(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         try:
             path = urlsplit(self.path).path
+            scheduled_prefix = "/api/scheduled-inputs/"
+            if path.startswith(scheduled_prefix) and path != scheduled_prefix:
+                rule_id = unquote(path[len(scheduled_prefix) :])
+                if not rule_id or "/" in rule_id:
+                    self._send_error_json(HTTPStatus.NOT_FOUND, "Route not found")
+                    return
+                self._handle_scheduled_input_update(rule_id)
+                return
+
             prefix = "/api/transactions/"
             suffix = "/enrichment"
             if not path.startswith(prefix) or not path.endswith(suffix):
@@ -181,6 +208,19 @@ class _RequestHandler(BaseHTTPRequestHandler):
     def do_DELETE(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         try:
             path = urlsplit(self.path).path
+            scheduled_prefix = "/api/scheduled-inputs/"
+            if path.startswith(scheduled_prefix) and path != scheduled_prefix:
+                rule_id = unquote(path[len(scheduled_prefix) :])
+                if not rule_id or "/" in rule_id:
+                    self._send_error_json(HTTPStatus.NOT_FOUND, "Route not found")
+                    return
+                deleted = self.server.application.delete_scheduled_input(rule_id)
+                self._send_json(
+                    HTTPStatus.OK,
+                    {"scheduled_input_deletion": {"id": deleted.id}},
+                )
+                return
+
             prefix = "/api/manual-inputs/"
             if not path.startswith(prefix) or path == prefix:
                 self._send_error_json(HTTPStatus.NOT_FOUND, "Route not found")
@@ -238,6 +278,36 @@ class _RequestHandler(BaseHTTPRequestHandler):
             kwargs["note"] = payload["note"]
         result = self.server.application.correct_manual_input(source_record_id, **kwargs)
         self._send_json(HTTPStatus.OK, {"manual_input_correction": result.to_dict()})
+
+    def _handle_scheduled_input_create(self) -> None:
+        payload = self._read_json_object()
+        values = self._scheduled_input_values(payload, "Scheduled Input")
+        rule = self.server.application.create_scheduled_input(**values)
+        self._send_json(HTTPStatus.CREATED, {"scheduled_input": rule.to_dict()})
+
+    def _handle_scheduled_input_update(self, rule_id: str) -> None:
+        payload = self._read_json_object()
+        values = self._scheduled_input_values(payload, "Scheduled Input update")
+        rule = self.server.application.update_scheduled_input(rule_id, **values)
+        self._send_json(HTTPStatus.OK, {"scheduled_input": rule.to_dict()})
+
+    def _scheduled_input_values(
+        self,
+        payload: dict[str, Any],
+        label: str,
+    ) -> dict[str, Any]:
+        """Translate the exact JSON rule contract into one Application command."""
+        allowed = {"type", "amount", "description", "next_date", "note", "enabled"}
+        required = {"type", "amount", "description", "next_date", "enabled"}
+        self._require_exact_fields(payload, allowed, required, label)
+        return {
+            "transaction_type": payload["type"],
+            "amount": payload["amount"],
+            "description": payload["description"],
+            "next_date": payload["next_date"],
+            "note": payload.get("note"),
+            "enabled": payload["enabled"],
+        }
 
     def _handle_mapping_review_preview(self) -> None:
         payload = self._read_json_object()
@@ -336,7 +406,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    """Synchronize source-driven state once, then serve local client commands through Application use cases."""
+    """Synchronize source state and due schedules, then serve local client commands."""
     args = build_parser().parse_args()
     application = FamilySpendingApplication()
     try:
