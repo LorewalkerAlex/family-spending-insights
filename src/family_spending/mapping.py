@@ -11,6 +11,7 @@ from yaml.constructor import ConstructorError
 from yaml.nodes import MappingNode
 
 from family_spending.enrichment import (
+    INCOME_DEFAULT_CATEGORY,
     OTHER_EXPENSE_CATEGORY,
     OTHER_EXPENSE_REVIEW,
     UNCLASSIFIED_CATEGORY,
@@ -220,8 +221,20 @@ class MappingEnrichmentResolver(EnrichmentResolver):
         transaction: Transaction,
         source_record: SourceRecord[Any],
     ) -> TransactionEnrichment:
-        """Initialize Merchant/default Category from reviewed rules without replaying historical transaction exceptions."""
+        """Use Merchant Mapping only for expenses; income keeps source text and a small non-Mapping default."""
         description = source_record.description
+        if transaction.transaction_type == "income":
+            return TransactionEnrichment(
+                transaction_id=transaction.id,
+                merchant_name=None,
+                display_name=description or source_record.id,
+                default_category=None,
+                category=INCOME_DEFAULT_CATEGORY,
+                category_source="income_default",
+                is_unclassified=False,
+                review_signals=(),
+            )
+
         merchant_name = (
             self.mappings.description_to_merchant.get(description)
             if description is not None

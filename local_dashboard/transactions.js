@@ -197,6 +197,17 @@
 
   function renderCategoryOptions(transaction) {
     elements.category.replaceChildren();
+    if (transaction.type === "income") {
+      const incomeCategory = document.createElement("option");
+      incomeCategory.value = transaction.enrichment.category;
+      incomeCategory.textContent = transaction.enrichment.category;
+      elements.category.append(incomeCategory);
+      elements.category.value = transaction.enrichment.category;
+      elements.category.disabled = true;
+      return;
+    }
+
+    elements.category.disabled = false;
     const followDefault = document.createElement("option");
     followDefault.value = FOLLOW_DEFAULT_VALUE;
     followDefault.textContent = transaction.enrichment.defaultCategory
@@ -230,32 +241,41 @@
       return;
     }
 
+    const isIncome = transaction.type === "income";
     elements.detailTitle.textContent = transactionLabel(transaction);
     elements.detailMeta.textContent = `${transaction.date} · ${formatAmount(transaction)} · ${transaction.type}`;
     elements.sourceDescription.textContent = transaction.source.description || "—";
     elements.effectiveCategory.textContent = transaction.enrichment.category;
-    elements.defaultCategory.textContent = transaction.enrichment.defaultCategory || "无";
+    elements.defaultCategory.textContent = isIncome
+      ? "收入不使用 Merchant 默认分类"
+      : transaction.enrichment.defaultCategory || "无";
     elements.merchant.value = transaction.enrichment.merchant || "";
+    elements.merchant.disabled = isIncome;
+    elements.merchant.placeholder = isIncome ? "收入不使用 Merchant Mapping" : "";
     renderCategoryOptions(transaction);
     elements.note.value = transaction.enrichment.note || "";
-    elements.formStatus.textContent = "";
+    elements.formStatus.textContent = isIncome
+      ? "收入保留原始 description，不进入 Merchant Mapping；当前只允许修改 Note。"
+      : "";
     elements.save.disabled = false;
   }
 
   function buildPatch(transaction) {
     const patch = {};
-    const nextMerchant = normalizeText(elements.merchant.value);
-    const currentMerchant = transaction.enrichment.merchant;
-    if (nextMerchant !== currentMerchant) {
-      patch.merchant = nextMerchant;
-    }
+    if (transaction.type !== "income") {
+      const nextMerchant = normalizeText(elements.merchant.value);
+      const currentMerchant = transaction.enrichment.merchant;
+      if (nextMerchant !== currentMerchant) {
+        patch.merchant = nextMerchant;
+      }
 
-    const currentCategoryControl = categoryControlValue(transaction);
-    if (elements.category.value !== currentCategoryControl) {
-      patch.category =
-        elements.category.value === FOLLOW_DEFAULT_VALUE
-          ? null
-          : elements.category.value;
+      const currentCategoryControl = categoryControlValue(transaction);
+      if (elements.category.value !== currentCategoryControl) {
+        patch.category =
+          elements.category.value === FOLLOW_DEFAULT_VALUE
+            ? null
+            : elements.category.value;
+      }
     }
 
     const nextNote = normalizeText(elements.note.value);
@@ -285,14 +305,14 @@
     }
 
     elements.save.disabled = true;
-    elements.formStatus.textContent = "正在保存并刷新消费统计…";
+    elements.formStatus.textContent = "正在保存并刷新下游统计…";
     try {
       const updated = await service.updateEnrichment(transaction.id, patch);
       replaceTransaction(updated);
       state.selectedTransactionId = updated.id;
       renderList();
       renderDetail(updated);
-      elements.formStatus.textContent = "已保存；消费统计已由后端重新生成。";
+      elements.formStatus.textContent = "已保存；下游统计已由后端重新生成。";
       if (elements.dashboardReload) {
         elements.dashboardReload.click();
       }

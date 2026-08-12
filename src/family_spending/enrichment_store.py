@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 
 from family_spending.enrichment import (
+    INCOME_DEFAULT_CATEGORY,
     UNCLASSIFIED_CATEGORY,
     CategorySource,
     TransactionEnrichmentState,
@@ -13,7 +14,13 @@ from family_spending.enrichment import (
 
 ENRICHMENT_STATE_FILE = Path("data/enrichment_state.jsonl")
 _CATEGORY_SOURCES: frozenset[str] = frozenset(
-    ("merchant_default", "transaction_override", "manual_override", "unclassified")
+    (
+        "merchant_default",
+        "transaction_override",
+        "manual_override",
+        "income_default",
+        "unclassified",
+    )
 )
 
 
@@ -43,6 +50,16 @@ def _validate_state(state: TransactionEnrichmentState, *, context: str) -> None:
         raise EnrichmentStateStoreError(
             f"Invalid category_source {state.category_source!r} {context}"
         )
+    if state.category_source == "income_default":
+        if state.merchant_name is not None or state.default_category is not None:
+            raise EnrichmentStateStoreError(
+                f"income_default state must not retain Merchant/default Category {context}"
+            )
+        if state.category != INCOME_DEFAULT_CATEGORY:
+            raise EnrichmentStateStoreError(
+                f"income_default state must use category {INCOME_DEFAULT_CATEGORY!r} {context}"
+            )
+        return
     if state.default_category is not None and state.merchant_name is None:
         raise EnrichmentStateStoreError(
             f"default_category requires merchant_name {context}"

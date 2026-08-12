@@ -31,6 +31,9 @@ class LocalDashboardContractTests(unittest.TestCase):
             "mapping-review-api.test.js",
             "scheduled-input.js",
             "scheduled-input.css",
+            "financial-summary-api.js",
+            "financial-summary-api.test.js",
+            "financial-summary.js",
         }
         self.assertEqual(
             {path.name for path in DASHBOARD.iterdir() if path.is_file()},
@@ -49,6 +52,8 @@ class LocalDashboardContractTests(unittest.TestCase):
         self.assertIn('src="./charts.js"', html)
         self.assertIn('src="./app.js"', html)
         self.assertIn('src="./application-api.js"', html)
+        self.assertIn('src="./financial-summary-api.js"', html)
+        self.assertIn('src="./financial-summary.js"', html)
         self.assertIn('src="./transactions.js"', html)
         self.assertIn('src="./manual-entry.js"', html)
         self.assertIn('src="./mapping-review.js"', html)
@@ -67,6 +72,21 @@ class LocalDashboardContractTests(unittest.TestCase):
         self.assertNotIn("mock-data", source)
         self.assertNotIn("wx.", source)
 
+    def test_financial_summary_is_a_separate_sidecar_contract(self) -> None:
+        html = (DASHBOARD / "index.html").read_text(encoding="utf-8")
+        api_source = (DASHBOARD / "financial-summary-api.js").read_text(encoding="utf-8")
+        view_source = (DASHBOARD / "financial-summary.js").read_text(encoding="utf-8")
+        self.assertIn("data-financial-summary", html)
+        self.assertIn("data-financial-month-select", html)
+        self.assertIn("累计净现金流", html)
+        self.assertIn('const DEFAULT_DATA_URL = "/data/reports/financial_summary.json";', api_source)
+        self.assertIn("const SUPPORTED_SCHEMA_VERSION = 1;", api_source)
+        self.assertIn("net_cash_flow_minor", api_source)
+        self.assertIn("spending_data_complete", api_source)
+        self.assertIn("createFinancialSummaryService", view_source)
+        self.assertIn("消费侧覆盖完整", view_source)
+        self.assertNotIn("aggregate", view_source.lower())
+
     def test_transaction_workspace_uses_application_api_contract(self) -> None:
         html = (DASHBOARD / "index.html").read_text(encoding="utf-8")
         api_source = (DASHBOARD / "application-api.js").read_text(encoding="utf-8")
@@ -76,10 +96,13 @@ class LocalDashboardContractTests(unittest.TestCase):
         self.assertIn("data-enrichment-category", html)
         self.assertIn("data-enrichment-note", html)
         self.assertIn('const DEFAULT_API_BASE = "http://127.0.0.1:8765/api";', api_source)
+        self.assertIn('"income_default"', api_source)
         self.assertIn('request("/categories")', api_source)
         self.assertIn('request("/transactions")', api_source)
         self.assertIn('method: "PATCH"', api_source)
         self.assertIn("service.updateEnrichment", workspace_source)
+        self.assertIn('transaction.type === "income"', workspace_source)
+        self.assertIn("收入不使用 Merchant Mapping", workspace_source)
         self.assertIn("单笔 Enrichment 例外", html)
         self.assertIn("不修改 Mapping", html)
         self.assertIn("elements.dashboardReload.click()", workspace_source)
@@ -109,6 +132,7 @@ class LocalDashboardContractTests(unittest.TestCase):
         self.assertIn("findSimilarManualDescriptions", entry_source)
         self.assertNotIn("service.getCategories", entry_source)
         self.assertNotIn("Reconciliation", entry_source)
+        self.assertIn("Income 不进入 Merchant Mapping", html)
 
     def test_manual_input_management_keeps_source_correction_separate_from_enrichment(self) -> None:
         html = (DASHBOARD / "index.html").read_text(encoding="utf-8")
@@ -120,8 +144,8 @@ class LocalDashboardContractTests(unittest.TestCase):
         self.assertIn("data-action=\"delete-manual-input\"", html)
         self.assertIn("生成新的 Source ID", html)
         self.assertIn("保留原系统 Transaction identity", html)
-        self.assertIn("Merchant / Category 不在这里修改", html)
-        self.assertIn("稳定规则走 Mapping Review", html)
+        self.assertIn("Merchant / 消费 Category 不在这里修改", html)
+        self.assertIn("支出稳定规则走 Mapping Review", html)
         self.assertIn("真实单笔例外走 Transaction Workspace", html)
         self.assertIn("Note 属于当前 Enrichment", html)
         self.assertIn("item.transaction.enrichment.note", entry_source)
@@ -162,6 +186,8 @@ class LocalDashboardContractTests(unittest.TestCase):
         self.assertIn("data-mapping-review-list", html)
         self.assertIn("data-mapping-review-merchant", html)
         self.assertIn("data-mapping-review-category", html)
+        self.assertIn("支出待分类 description 审核", html)
+        self.assertIn("Income 不进入 Merchant Mapping", html)
         self.assertIn("更新 Mapping 并应用", html)
         self.assertIn("仅修改这一笔", html)
         self.assertIn('request("/mapping-reviews")', api_source)

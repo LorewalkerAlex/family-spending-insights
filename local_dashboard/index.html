@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light" />
-    <title>家庭消费统计</title>
+    <title>家庭财务概览</title>
     <link rel="stylesheet" href="./styles.css" />
     <link rel="stylesheet" href="./transactions.css" />
     <link rel="stylesheet" href="./manual-entry.css" />
@@ -15,6 +15,8 @@
     <script src="./charts.js" defer></script>
     <script src="./app.js" defer></script>
     <script src="./application-api.js" defer></script>
+    <script src="./financial-summary-api.js" defer></script>
+    <script src="./financial-summary.js" defer></script>
     <script src="./transactions.js" defer></script>
     <script src="./manual-entry.js" defer></script>
     <script src="./scheduled-input.js" defer></script>
@@ -24,9 +26,9 @@
     <main class="page-shell">
       <header class="page-header">
         <p class="eyebrow">Family Spending Insights</p>
-        <h1>家庭消费统计</h1>
+        <h1>家庭财务概览</h1>
         <p class="page-header__description">
-          查看后端生成的净消费统计，通过本地 Application/API 手工或按月计划录入收入/支出、审核未匹配 description 的 Mapping，并浏览逐笔 Transaction 例外。业务统计、Reconciliation 和写回规则仍全部由后端负责。
+          查看后端生成的收入、净消费与净现金流；通过本地 Application/API 手工或按月计划录入收入/支出，并审核支出侧未匹配 description 的 Merchant Mapping。Income 保留原始 Source description，不进入消费 Merchant Mapping。
         </p>
       </header>
       <p class="state-message" data-state="loading">正在读取消费统计…</p>
@@ -41,6 +43,41 @@
         <button class="primary-button" type="button" data-action="reload">重新加载</button>
       </section>
       <div data-state="dashboard" hidden>
+        <section class="summary-card" data-financial-summary aria-labelledby="financial-summary-title">
+          <div>
+            <p class="summary-card__label" id="financial-summary-title">展示月份累计净现金流</p>
+            <p class="summary-card__amount" data-financial-summary="cash-flow">¥0.00</p>
+          </div>
+          <dl class="summary-card__metrics">
+            <div>
+              <dt>收入</dt>
+              <dd data-financial-summary="income">¥0.00</dd>
+            </div>
+            <div>
+              <dt>净消费</dt>
+              <dd data-financial-summary="spending">¥0.00</dd>
+            </div>
+            <div>
+              <dt>展示月份</dt>
+              <dd data-financial-summary="month-count">0</dd>
+            </div>
+          </dl>
+          <p class="state-message" data-financial-status>正在读取家庭财务摘要…</p>
+          <div class="month-card__selector">
+            <label for="financial-month-select">财务月份</label>
+            <select id="financial-month-select" data-financial-month-select></select>
+          </div>
+          <div class="month-card__summary">
+            <div>
+              <p class="month-card__label" data-financial-month-label>所选月份净现金流</p>
+              <p class="month-card__amount" data-financial-month="cash-flow">¥0.00</p>
+            </div>
+            <p class="month-card__count">
+              收入 <strong data-financial-month="income">¥0.00</strong> ·
+              净消费 <strong data-financial-month="spending">¥0.00</strong>
+            </p>
+          </div>
+        </section>
         <section class="summary-card" aria-labelledby="summary-title">
           <div>
             <p class="summary-card__label" id="summary-title">展示月份累计净消费</p>
@@ -66,7 +103,7 @@
             <div>
               <p class="eyebrow">Manual Input</p>
               <h2 id="manual-entry-title">手工录入收入 / 支出</h2>
-              <p>录入原始 Manual description 后由 Application 执行现有 Mapping、跨来源 Reconciliation、Enrichment 与 Projection 链路；新 description 未命中 Mapping 时进入待分类，后续与信用卡未匹配 description 共用同一审核路径。</p>
+              <p>录入原始 Manual description 后由 Application 执行跨来源 Reconciliation、Enrichment 与 Projection。支出 description 未命中 Mapping 时进入待分类；Income 保留原始 description，不进入 Merchant Mapping，当前使用独立的收入默认 Enrichment。</p>
             </div>
           </div>
           <form class="manual-entry-form" data-manual-entry-form>
@@ -90,7 +127,7 @@
                 <label for="manual-description">交易描述</label>
                 <input id="manual-description" type="text" autocomplete="off" placeholder="例如：小区门口早餐摊" data-manual-description required />
                 <div class="manual-description-suggestions" data-manual-description-suggestions hidden></div>
-                <p class="manual-entry-form__hint">这里保存的是 Manual Source 的原始 description。输入时只对历史 Manual description 做轻量匹配；可复用已有 description，也可明确新建。新 description 未命中 Mapping 时进入待分类。</p>
+                <p class="manual-entry-form__hint">这里保存的是 Manual Source 的原始 description。输入时只对历史 Manual description 做轻量匹配；可复用已有 description，也可明确新建。支出新 description 未命中 Mapping 时进入待分类；Income 不进入 Merchant Mapping。</p>
               </div>
               <div class="manual-entry-form__field manual-entry-form__field--full">
                 <label for="manual-note">Note</label>
@@ -148,7 +185,7 @@
                       <div class="manual-entry-form__field manual-entry-form__field--full">
                         <label for="manual-edit-description">交易描述</label>
                         <input id="manual-edit-description" type="text" autocomplete="off" data-manual-edit-description required />
-                        <p class="manual-entry-form__hint">Merchant / Category 不在这里修改：稳定规则走 Mapping Review，真实单笔例外走 Transaction Workspace。</p>
+                        <p class="manual-entry-form__hint">Merchant / 消费 Category 不在这里修改：支出稳定规则走 Mapping Review，真实单笔例外走 Transaction Workspace；Income 不使用 Merchant Mapping。</p>
                       </div>
                       <div class="manual-entry-form__field manual-entry-form__field--full">
                         <label for="manual-edit-note">当前 Note</label>
@@ -173,7 +210,7 @@
             <div>
               <p class="eyebrow">Scheduled Input</p>
               <h2 id="scheduled-input-title">月度固定收入 / 支出规则</h2>
-              <p>Scheduled Input 不是新的 Source。规则到期后由后端生成普通 Manual Source，再复用既有 Reconciliation、Mapping、Enrichment 与 Projection。V1 只支持每月 1–28 日；API 启动时会自动处理到期 occurrence，也可以在这里显式执行。</p>
+              <p>Scheduled Input 不是新的 Source。规则到期后由后端生成普通 Manual Source，再复用既有 Reconciliation、Enrichment 与 Projection；支出继续走 Merchant Mapping，Income 不进入消费 Mapping。V1 只支持每月 1–28 日；API 启动时会自动处理到期 occurrence，也可以在这里显式执行。</p>
             </div>
             <button class="secondary-button" type="button" data-action="run-scheduled-inputs">执行到期项</button>
           </div>
@@ -289,8 +326,8 @@
           <div class="mapping-review-card__heading">
             <div>
               <p class="eyebrow">Mapping Review</p>
-              <h2 id="mapping-review-title">待分类 description 审核</h2>
-              <p>按原始 description 聚合 CMB 与 Manual 待审核交易。正常处理会修改长期 Mapping，并只传播到仍跟随旧 Mapping 的 Enrichment；已有单笔例外不会被覆盖。</p>
+              <h2 id="mapping-review-title">支出待分类 description 审核</h2>
+              <p>只聚合 expense 的 CMB 与 Manual 未匹配 description。Income 不进入 Merchant Mapping；支出正常处理会修改长期 Mapping，并只传播到仍跟随旧 Mapping 的 Enrichment，已有单笔例外不会被覆盖。</p>
             </div>
             <span class="mapping-review-card__count"><span data-mapping-review-count>—</span> 个待审核 description</span>
           </div>
@@ -299,7 +336,7 @@
             <p data-mapping-review-error-message>无法读取 Mapping Review。</p>
             <button class="secondary-button" type="button" data-action="retry-mapping-review">重新连接</button>
           </div>
-          <p class="mapping-review-empty" data-mapping-review-empty hidden>当前没有未匹配 description。</p>
+          <p class="mapping-review-empty" data-mapping-review-empty hidden>当前没有未匹配的支出 description。</p>
           <div class="mapping-review-grid">
             <ul class="mapping-review-list" data-mapping-review-list></ul>
             <div class="mapping-review-detail">
@@ -335,7 +372,7 @@
                   </div>
                 </form>
                 <div class="mapping-review-single-exception">
-                  <p><strong>仅修改这一笔？</strong> 不要改 Mapping。请在下方 Transaction Workspace 选择具体交易，使用 transaction-only Enrichment exception。</p>
+                  <p><strong>仅修改这一笔？</strong> 不要改 Mapping。请在下方 Transaction Workspace 选择具体支出，使用 transaction-only Enrichment exception。</p>
                   <button class="secondary-button" type="button" data-action="mapping-review-single-exception">前往 Transaction Workspace</button>
                 </div>
               </div>
@@ -361,7 +398,7 @@
               <div>
                 <p class="eyebrow">Transaction Workspace</p>
                 <h2 id="transactions-title">逐笔交易与 Enrichment</h2>
-                <p>跟随上方统计月份浏览当前 Transaction。这里的 Merchant / Category 编辑只作为单笔 Enrichment 例外，不修改 Mapping；正常的未分类与 Mapping 修正使用上方 Mapping Review。保存后由 Application 重建下游 Projection，再刷新本页统计。</p>
+                <p>跟随上方统计月份浏览当前 Transaction。Expense 的 Merchant / Category 编辑只作为单笔 Enrichment 例外，不修改 Mapping；Income 保留原始 description，不进入 Merchant Mapping，当前只开放 Note 编辑。保存后由 Application 重建下游 Projection，再刷新本页统计。</p>
               </div>
               <span class="transaction-workspace__count"><span data-transactions-count>—</span> 笔</span>
             </div>
@@ -390,12 +427,12 @@
                     <div class="transaction-form__field">
                       <label for="enrichment-merchant">Merchant</label>
                       <input id="enrichment-merchant" type="text" autocomplete="off" data-enrichment-merchant />
-                      <p class="transaction-form__hint">这里只修改当前 Transaction，不写 Merchant Mapping。留空表示清除当前 Merchant；Merchant 变化时，后端只重新计算隐式默认分类，显式分类例外仍保留。</p>
+                      <p class="transaction-form__hint">Expense 时这里只修改当前 Transaction，不写 Merchant Mapping。Income 不使用 Merchant Mapping，因此该控件会禁用。</p>
                     </div>
                     <div class="transaction-form__field">
                       <label for="enrichment-category">Category</label>
                       <select id="enrichment-category" data-enrichment-category></select>
-                      <p class="transaction-form__hint">这里只修改当前 Transaction，不写 Category Mapping。选择“跟随商户默认”会发送 <code>category = null</code>；无默认分类时回到“待分类”。</p>
+                      <p class="transaction-form__hint">Expense 时这里只修改当前 Transaction，不写 Category Mapping。选择“跟随商户默认”会发送 <code>category = null</code>；Income 当前使用独立的收入默认 Enrichment，因此该控件会禁用。</p>
                     </div>
                     <div class="transaction-form__field">
                       <label for="enrichment-note">Note</label>

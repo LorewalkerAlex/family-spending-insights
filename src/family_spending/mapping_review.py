@@ -102,9 +102,11 @@ def build_mapping_review_items(
     enrichment_states_by_transaction_id: Mapping[str, TransactionEnrichmentState],
     mappings: MerchantMappings,
 ) -> tuple[MappingReviewItem, ...]:
-    """Aggregate only unmapped source descriptions so CMB and Manual inputs share one review queue."""
+    """Aggregate unmapped expense descriptions only; income does not use Merchant Mapping."""
     grouped: dict[str, list[Transaction]] = defaultdict(list)
     for transaction in transactions:
+        if transaction.transaction_type != "expense":
+            continue
         source = source_records_by_transaction_id[transaction.id]
         description = source.description
         if description is None or description in mappings.description_to_merchant:
@@ -167,7 +169,7 @@ def plan_mapping_review(
     merchant: str,
     category: str,
 ) -> MappingReviewPlan:
-    """Plan Mapping propagation from current state without mutating files or rerunning reconciliation."""
+    """Plan expense Mapping propagation from current state without touching income or rerunning reconciliation."""
     if description in mappings.description_to_merchant:
         raise MappingReviewError(
             f"Description {description!r} is already mapped; refresh Mapping Review before applying"
@@ -178,11 +180,12 @@ def plan_mapping_review(
     matching_transaction_ids = {
         transaction.id
         for transaction in transactions
-        if source_records_by_transaction_id[transaction.id].description == description
+        if transaction.transaction_type == "expense"
+        and source_records_by_transaction_id[transaction.id].description == description
     }
     if not matching_transaction_ids:
         raise MappingReviewError(
-            f"Description {description!r} does not exist in the current Transaction snapshot"
+            f"Expense description {description!r} does not exist in the current Transaction snapshot"
         )
 
     previous_default_category = mappings.merchant_to_category.get(merchant)
@@ -208,6 +211,9 @@ def plan_mapping_review(
     category_mapping_changes = is_new_merchant or previous_default_category != category
     for transaction in transactions:
         state = state_by_id[transaction.id]
+        if transaction.transaction_type != "expense":
+            next_states.append(state)
+            continue
         source = source_records_by_transaction_id[transaction.id]
         updated = state
 

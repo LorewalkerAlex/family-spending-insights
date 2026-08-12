@@ -16,6 +16,7 @@ CATEGORIES_FILE = MAPPINGS_DIR / "categories.yaml"
 TRANSACTIONS_FILE = DATA_DIR / "transactions.csv"
 REPORTS_DIR = DATA_DIR / "reports"
 SPENDING_STATISTICS_FILE = REPORTS_DIR / "spending_statistics.json"
+FINANCIAL_SUMMARY_FILE = REPORTS_DIR / "financial_summary.json"
 
 
 @dataclass(frozen=True)

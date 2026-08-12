@@ -8,7 +8,9 @@ from typing import Any, Literal
 
 from family_spending.source_records import SourceRecord
 from family_spending.transactions import Transaction
+
 UNCLASSIFIED_CATEGORY = "待分类"
+INCOME_DEFAULT_CATEGORY = "其他收入"
 OTHER_EXPENSE_CATEGORY = "其他支出"
 GENERAL_SHOPPING_CATEGORY = "综合购物"
 HIGH_VALUE_GENERAL_SHOPPING_THRESHOLD = Decimal("1000")
@@ -18,8 +20,10 @@ CategorySource = Literal[
     "merchant_default",
     "transaction_override",
     "manual_override",
+    "income_default",
     "unclassified",
 ]
+
 
 @dataclass(frozen=True)
 class TransactionEnrichment:
@@ -32,6 +36,7 @@ class TransactionEnrichment:
     is_unclassified: bool
     review_signals: tuple[str, ...]
     note: str | None = None
+
 
 @dataclass(frozen=True)
 class TransactionEnrichmentState:
@@ -88,6 +93,8 @@ def update_merchant_enrichment_state(
     default_category: str | None,
 ) -> TransactionEnrichmentState:
     """Re-evaluate only implicit Category when Merchant changes; explicit overrides remain user-owned."""
+    if state.category_source == "income_default":
+        return state
     if state.category_source in ("transaction_override", "manual_override"):
         category = state.category
         category_source = state.category_source
@@ -112,10 +119,12 @@ def update_category_enrichment_state(
     category: str | None,
 ) -> TransactionEnrichmentState:
     """Set an explicit current Category, or reset it to the current Merchant default when null."""
-    if category is None:
+    if state.category_source == "income_default":
+        return state
+    elif category is None:
         if state.default_category is None:
             next_category = UNCLASSIFIED_CATEGORY
-            category_source: CategorySource = "unclassified"
+            category_source = "unclassified"
         else:
             next_category = state.default_category
             category_source = "merchant_default"
@@ -151,7 +160,17 @@ def validate_enrichment_state_categories(
     state: TransactionEnrichmentState,
     categories: Collection[str],
 ) -> None:
-    """Reject persisted current categories that no longer fit the loaded formal category vocabulary."""
+    """Reject persisted current categories that no longer fit their formal expense or income vocabulary."""
+    if state.category_source == "income_default":
+        if state.merchant_name is not None:
+            raise ValueError(
+                f"Income Transaction {state.transaction_id!r} must not have a Merchant in income_default state"
+            )
+        if state.default_category is not None or state.category != INCOME_DEFAULT_CATEGORY:
+            raise ValueError(
+                f"Income Transaction {state.transaction_id!r} has invalid default income category state"
+            )
+        return
     if state.default_category is not None and state.default_category not in categories:
         raise ValueError(
             f"Transaction {state.transaction_id!r} has unknown default category {state.default_category!r}"

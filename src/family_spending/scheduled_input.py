@@ -20,6 +20,7 @@ from family_spending.manual_source import (
 from family_spending.settings import (
     CATEGORIES_FILE,
     EMAILS_DIR,
+    FINANCIAL_SUMMARY_FILE,
     MERCHANTS_FILE,
     SPENDING_STATISTICS_FILE,
     TRANSACTIONS_FILE,
@@ -452,6 +453,7 @@ def run_due_scheduled_inputs(
     if not any(rule.enabled and rule.next_date <= as_of for rule in rules):
         return ScheduledInputRunResult(occurrences=())
 
+    financial_output_path = output_path.with_name(FINANCIAL_SUMMARY_FILE.name)
     snapshots = tuple(
         _snapshot_file(path)
         for path in (
@@ -460,6 +462,7 @@ def run_due_scheduled_inputs(
             source_links_path,
             enrichment_state_path,
             output_path,
+            financial_output_path,
         )
     )
     occurrences: list[ScheduledInputOccurrence] = []

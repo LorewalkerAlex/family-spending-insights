@@ -18,6 +18,7 @@
     "merchant_default",
     "transaction_override",
     "manual_override",
+    "income_default",
     "unclassified",
   ]);
   const MANUAL_INPUT_ACTIONS = new Set(["created", "matched", "reused"]);
