@@ -644,7 +644,11 @@ Application / API 承接：
 
 客户端负责交互与展示，不复制核心数据处理规则，也不直接操作底层存储。
 
-当前本地 Dashboard 对 Income 明确禁用 Merchant 和消费 Category 编辑，只保留 Note；这属于当前产品 contract，而不是仅靠前端约定把 Income 伪装成 Expense。
+当前已经有两层真实客户端验证这一边界：`local_dashboard/` 继续承载已迁移完成的 Manual Input、Scheduled Input、Mapping Review、Transaction / Enrichment 和完整统计能力；首个 Desktop Web + Taro Mini 跨端 POC 则通过正式 Application/API 读取 Financial Summary，并共用 Feedback 产品反馈能力。跨端 POC 尚未把 Transactions、Review、Automation 或 Add Transaction 的业务 UI 从 legacy Dashboard 迁移过来。
+
+Financial Summary 的客户端 read use case 只返回当前已经生成的 Projection，不把 rebuild 或 mutation 隐藏在读取动作里。Feedback 则是独立的产品支持状态：它可持久化本地 `content/status/context`，但不是 Source、Transaction、Enrichment、Analytics 或 Projection，不进入家庭财务 Pipeline，也不会反向修改任何财务事实。
+
+当前 legacy Dashboard 对 Income 明确禁用 Merchant 和消费 Category 编辑，只保留 Note；这属于当前产品 contract，而不是仅靠前端约定把 Income 伪装成 Expense。
 
 ---
 
@@ -780,7 +784,7 @@ Analytics Update
 
 ## 14. 当前实现落地状态与后续迁移约束
 
-当前已有七条核心领域 / 产品纵向路径沿本 HLD 的边界落地：CMB Email、Manual Source / Cross-source Reconciliation、Manual Source 生命周期管理、Scheduled Input orchestration、Enrichment 可编辑 / Application API、Expense Mapping Review / Mapping Correction，以及 Income + Cash Flow Analytics V1。本地 Dashboard 已作为第一个真实客户端接入 Application/API，并可直接创建、更正和删除 Manual Input、管理 Scheduled Rule、执行 Expense Mapping Review、浏览家庭现金流摘要和提交允许范围内的 transaction-only Enrichment。现有 Email、CSV、正式 Expense Mapping、退款规则与 `spending_statistics.json` schema v2 契约继续保留。
+当前已有七条核心领域 / 产品纵向路径沿本 HLD 的边界落地：CMB Email、Manual Source / Cross-source Reconciliation、Manual Source 生命周期管理、Scheduled Input orchestration、Enrichment 可编辑 / Application API、Expense Mapping Review / Mapping Correction，以及 Income + Cash Flow Analytics V1。`local_dashboard/` 已作为完整 legacy 客户端接入这些能力；在此基础上，首个 Desktop Web + Taro Mini 跨端 POC 又验证了同一 Application/API 可以同时服务不同 presentation runtime，并共享 Financial Summary 与产品 Feedback，而不把业务规则复制到客户端。现有 Email、CSV、正式 Expense Mapping、退款规则与 `spending_statistics.json` schema v2 契约继续保留。
 
 当前实现状态：
 
@@ -819,6 +823,10 @@ Analytics Update
 33. Scheduled Rule create/update 只修改未来规则；如果启用后的 `next_date` 已到期，会在同一 Application command 中立即执行 due occurrence。pause/delete 不修改已生成的 Manual Source 历史。停机期间错过的启用规则从保存的 `next_date` 开始逐月补齐。
 34. Scheduled due run 对规则、Manual Source、Source Link、Enrichment 与两个 Projection 建立运行级快照；可捕获的多 occurrence 执行失败会恢复整批命令前状态。Rule mutation 包含立即 due execution 时，规则修改与该执行同样作为一个 Application rollback 边界处理。
 35. 本地 Dashboard 已增加 Scheduled Input workspace 和 Financial Summary 视图。Income 在 Transaction Workspace 中保留 Source description 和当前 Category 展示，但 Merchant / Expense Category 控件禁用，只允许编辑 Note；这避免客户端再次把 Income 拉回 Expense Mapping 模型。
+36. 跨端前端 POC 已建立 Desktop Web、Mini H5 / WeChat presentation 与共享 frontend core。共享 core 只保存 API contract、runtime decoding、service、view-model 和 formatting，不依赖 React/Taro/DOM；Desktop 与 Mini 分别通过 BrowserTransport / TaroTransport 消费同一 Application/API 语义。
+37. Desktop 与 Mini H5 已真实读取 Financial Summary，并通过同一 Feedback backend 创建、查询和切换 `open/resolved` 状态；Feedback context 可区分 `desktop_web`、`mini_h5` 和未来 `weapp` runtime。Feedback 是产品反馈状态，不加入 Transaction/Enrichment/Analytics 模型。
+38. 跨端 POC 当前只完成 Overview + Feedback 纵向能力。Transactions、Review、Automation、Add Transaction 及 legacy charts 仍由 `local_dashboard/` 承载或显示明确 migration state，因此旧客户端不会在替代能力尚未验证前被删除。
+39. Taro H5 与 WeChat production build 已验证；H5 只是本地开发 preview，WeChat 真机联网与正式部署仍需要有效 Mini Program runtime 和 HTTPS API origin，不属于当前 HLD 已验证的数据链路。
 
 当前本地文件持久化只是这一阶段的 concrete storage，不改变 HLD 的存储无关边界。legacy transaction category override → persistent Enrichment 的历史迁移与 runtime 依赖收敛已经完成；Income V1 也明确不建立第二套 Merchant Mapping。后续如果扩展收入分类、更多 Source、正式客户端或新的存储实现，应继续沿相同 Domain / Application 边界扩展，不要为了新能力重新合并 Source、Transaction、Enrichment 或 Analytics。
 
@@ -871,4 +879,4 @@ Analytics Update
 - Application / API 为所有客户端提供统一的数据读取和修改入口；
 - 具体存储技术通过数据访问边界隔离，留到 Technical Design 决定。
 
-CMB Email、Manual Source / Cross-source Reconciliation、Manual Source 生命周期管理、Scheduled Input orchestration、Enrichment 可编辑 / Application API、Expense Mapping Review / Mapping Correction 与 Income + Cash Flow Analytics V1 七条纵向切片已经验证这些边界可以在现有代码上持续演进；本地 Dashboard 进一步验证了客户端可以在不复制核心业务规则的前提下消费多个 Projection，并通过统一 Application/API 创建 / 更正 / 删除 Manual Input、管理 Scheduled Rule、维护 Expense Mapping 和允许范围内的 Enrichment。后续 Source、Application / API 与客户端能力应继续沿相同领域边界按完整纵向切片推进。
+CMB Email、Manual Source / Cross-source Reconciliation、Manual Source 生命周期管理、Scheduled Input orchestration、Enrichment 可编辑 / Application API、Expense Mapping Review / Mapping Correction 与 Income + Cash Flow Analytics V1 七条纵向切片已经验证这些边界可以在现有代码上持续演进；`local_dashboard/` 进一步验证了完整业务客户端可以在不复制核心规则的前提下消费多个 Projection 并执行 Application command。首个 Desktop Web + Taro Mini POC 又验证了同一边界可以扩展到多 presentation runtime，共享 Financial Summary / Feedback 语义而不重新合并 Source、Transaction、Enrichment 或 Analytics。后续 Source、Application / API 与客户端能力应继续沿相同领域边界按完整纵向切片推进。

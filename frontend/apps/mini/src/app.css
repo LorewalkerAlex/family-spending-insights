@@ -1,0 +1,451 @@
+page {
+  min-height: 100%;
+  background: #f7f8f6;
+  color: #1d211e;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+button::after {
+  border: none;
+}
+
+.mini-page {
+  box-sizing: border-box;
+  min-height: 100vh;
+  padding: 20px 16px 32px;
+}
+
+.mini-page__header,
+.section-heading,
+.financial-hero__breakdown,
+.feedback-sheet__actions,
+.feedback-row__meta,
+.month-row {
+  display: flex;
+  align-items: center;
+}
+
+.mini-page__header,
+.section-heading,
+.month-row {
+  justify-content: space-between;
+}
+
+.mini-page__header {
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.mini-page__heading {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mini-page__title {
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.mini-page__description,
+.section-subtitle,
+.financial-hero__note,
+.placeholder-block__body,
+.month-row__secondary,
+.feedback-sheet__hint {
+  color: #687169;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.workspace-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.financial-hero,
+.section-block,
+.placeholder-block {
+  background: #ffffff;
+  border: 1px solid #dce2dc;
+  border-radius: 8px;
+}
+
+.financial-hero {
+  padding: 20px;
+}
+
+.eyebrow,
+.metric-label {
+  display: block;
+  color: #687169;
+  font-size: 12px;
+}
+
+.financial-hero__amount {
+  display: block;
+  margin: 8px 0 6px;
+  color: #2f6b4f;
+  font-size: 36px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.financial-hero__amount--negative,
+.inline-error {
+  color: #a33d3d;
+}
+
+.financial-hero__breakdown {
+  gap: 24px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #dce2dc;
+}
+
+.financial-hero__breakdown > view {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.metric-value,
+.month-row__cash-flow {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.section-block,
+.placeholder-block {
+  padding: 16px;
+}
+
+.section-heading {
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.section-heading > view:first-child {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.section-title,
+.placeholder-block__title {
+  display: block;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.placeholder-block__body {
+  display: block;
+  margin-top: 8px;
+}
+
+.month-list,
+.feedback-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.month-row {
+  gap: 12px;
+  min-height: 60px;
+  border-top: 1px solid #edf0ed;
+}
+
+.month-row:first-child {
+  border-top: none;
+}
+
+.month-row > view {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.month-row__name {
+  font-weight: 600;
+}
+
+.month-row__right {
+  align-items: flex-end;
+  text-align: right;
+}
+
+.button {
+  box-sizing: border-box;
+  min-height: 44px;
+  margin: 0;
+  padding: 0 14px;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1d211e;
+  font-size: 14px;
+  line-height: 42px;
+}
+
+.button--compact {
+  min-height: 36px;
+  padding: 0 12px;
+  line-height: 34px;
+}
+
+.button--primary {
+  background: #2f6b4f;
+  color: #ffffff;
+}
+
+.button--ghost {
+  background: #f7f8f6;
+  color: #2f6b4f;
+}
+
+.button[disabled] {
+  opacity: 0.55;
+}
+
+.page-state,
+.empty-state {
+  padding: 20px 0;
+  color: #687169;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.page-state--error {
+  color: #a33d3d;
+}
+
+.page-state--error .button {
+  margin-top: 12px;
+}
+
+.feedback-overlay {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(29, 33, 30, 0.28);
+}
+
+.feedback-sheet {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 20px 16px calc(20px + env(safe-area-inset-bottom));
+  border-radius: 12px 12px 0 0;
+  background: #ffffff;
+  box-shadow: 0 12px 32px rgba(29, 33, 30, 0.14);
+}
+
+.feedback-sheet__title {
+  display: block;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.feedback-sheet__hint {
+  display: block;
+  margin-top: 6px;
+}
+
+.feedback-textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 140px;
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid #dce2dc;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1d211e;
+  font-size: 14px;
+}
+
+.inline-error {
+  display: block;
+  margin-top: 10px;
+  font-size: 13px;
+}
+
+.feedback-sheet__actions {
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.feedback-row {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 0;
+  border-top: 1px solid #edf0ed;
+}
+
+.feedback-row:first-child {
+  border-top: none;
+}
+
+.feedback-row__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.feedback-row__meta {
+  flex-wrap: wrap;
+  gap: 8px;
+  color: #687169;
+  font-size: 12px;
+}
+
+.feedback-row__content {
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.status-pill {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #e9f1ec;
+  color: #2f6b4f;
+}
+
+.status-pill--resolved {
+  background: #edf0ed;
+  color: #687169;
+}
+
+/* H5 exists only as a development preview; keep it phone-sized on wide desktop browsers. */
+.mini-page--h5 {
+  width: 100%;
+  max-width: 430px;
+  margin: 0 auto;
+}
+
+.mini-page--h5 .feedback-sheet {
+  max-width: 430px;
+  margin-right: auto;
+  margin-left: auto;
+}
+
+/* H5 preview uses explicit desktop CSS pixels instead of Mini Program pxtransform. */
+.mini-page--h5 {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.mini-page--h5 .mini-page__header {
+  margin-bottom: 18px;
+}
+
+.mini-page--h5 .mini-page__title {
+  font-size: 20px;
+  line-height: 1.25;
+}
+
+.mini-page--h5 .mini-page__description,
+.mini-page--h5 .section-subtitle,
+.mini-page--h5 .financial-hero__note,
+.mini-page--h5 .placeholder-block__body,
+.mini-page--h5 .month-row__secondary,
+.mini-page--h5 .feedback-sheet__hint {
+  font-size: 12px;
+}
+
+.mini-page--h5 .financial-hero {
+  padding: 18px;
+}
+
+.mini-page--h5 .financial-hero__amount {
+  font-size: 30px;
+}
+
+.mini-page--h5 .financial-hero__breakdown {
+  gap: 18px;
+  margin-top: 16px;
+  padding-top: 14px;
+}
+
+.mini-page--h5 .metric-label,
+.mini-page--h5 .eyebrow {
+  font-size: 12px;
+}
+
+.mini-page--h5 .metric-value {
+  font-size: 20px;
+  line-height: 1.25;
+}
+
+.mini-page--h5 .section-title,
+.mini-page--h5 .placeholder-block__title,
+.mini-page--h5 .feedback-sheet__title {
+  font-size: 16px;
+}
+
+.mini-page--h5 .month-row {
+  min-height: 52px;
+}
+
+.mini-page--h5 .month-row__name {
+  font-size: 15px;
+  line-height: 1.25;
+}
+
+.mini-page--h5 .month-row__cash-flow {
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.mini-page--h5 .button {
+  min-height: 40px;
+  font-size: 13px;
+  line-height: 38px;
+}
+
+.mini-page--h5 .button--compact {
+  min-height: 34px;
+  line-height: 32px;
+}
+
+.mini-page--h5 .page-state,
+.mini-page--h5 .empty-state,
+.mini-page--h5 .feedback-row__content {
+  font-size: 13px;
+}
+
+/* H5 preview stacks heading copy above action buttons so Taro buttons cannot squeeze text vertically. */
+.mini-page--h5 .mini-page__header,
+.mini-page--h5 .section-heading {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.mini-page--h5 .mini-page__heading,
+.mini-page--h5 .section-heading > view:first-child {
+  width: 100%;
+}
+
+.mini-page--h5 .mini-page__title,
+.mini-page--h5 .mini-page__description,
+.mini-page--h5 .section-title,
+.mini-page--h5 .section-subtitle {
+  display: block;
+}
+
+.mini-page--h5 .mini-page__header > .button,
+.mini-page--h5 .section-heading > .button {
+  width: 100%;
+}

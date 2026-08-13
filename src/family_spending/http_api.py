@@ -44,6 +44,23 @@ class _RequestHandler(BaseHTTPRequestHandler):
             if path == "/api/health":
                 self._send_json(HTTPStatus.OK, {"status": "ok"})
                 return
+            if path == "/api/financial-summary":
+                self._send_json(
+                    HTTPStatus.OK,
+                    {"financial_summary": self.server.application.get_financial_summary()},
+                )
+                return
+            if path == "/api/feedback":
+                self._send_json(
+                    HTTPStatus.OK,
+                    {
+                        "feedback": [
+                            item.to_dict()
+                            for item in self.server.application.list_feedback()
+                        ]
+                    },
+                )
+                return
             if path == "/api/categories":
                 self._send_json(
                     HTTPStatus.OK,
@@ -121,6 +138,9 @@ class _RequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         try:
             path = urlsplit(self.path).path
+            if path == "/api/feedback":
+                self._handle_feedback_create()
+                return
             if path == "/api/manual-inputs":
                 self._handle_manual_input()
                 return
@@ -161,6 +181,15 @@ class _RequestHandler(BaseHTTPRequestHandler):
     def do_PATCH(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         try:
             path = urlsplit(self.path).path
+            feedback_prefix = "/api/feedback/"
+            if path.startswith(feedback_prefix) and path != feedback_prefix:
+                feedback_id = unquote(path[len(feedback_prefix) :])
+                if not feedback_id or "/" in feedback_id:
+                    self._send_error_json(HTTPStatus.NOT_FOUND, "Route not found")
+                    return
+                self._handle_feedback_update(feedback_id)
+                return
+
             scheduled_prefix = "/api/scheduled-inputs/"
             if path.startswith(scheduled_prefix) and path != scheduled_prefix:
                 rule_id = unquote(path[len(scheduled_prefix) :])
@@ -239,6 +268,27 @@ class _RequestHandler(BaseHTTPRequestHandler):
             self._send_error_json(HTTPStatus.CONFLICT, str(exc))
         except Exception as exc:
             self._send_error_json(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
+
+    def _handle_feedback_create(self) -> None:
+        payload = self._read_json_object()
+        allowed = {"content", "context"}
+        required = {"content"}
+        self._require_exact_fields(payload, allowed, required, "Feedback")
+        item = self.server.application.create_feedback(
+            content=payload["content"],
+            context=payload.get("context"),
+        )
+        self._send_json(HTTPStatus.CREATED, {"feedback": item.to_dict()})
+
+    def _handle_feedback_update(self, feedback_id: str) -> None:
+        payload = self._read_json_object()
+        allowed = {"status"}
+        self._require_exact_fields(payload, allowed, allowed, "Feedback update")
+        item = self.server.application.update_feedback(
+            feedback_id,
+            status=payload["status"],
+        )
+        self._send_json(HTTPStatus.OK, {"feedback": item.to_dict()})
 
     def _handle_manual_input(self) -> None:
         payload = self._read_json_object()

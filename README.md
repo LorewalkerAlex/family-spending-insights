@@ -15,7 +15,10 @@ CMB Email / Manual Input
 → expense 退款归并生成 Net Consumption
 → spending_statistics.json schema v2
 → income + net spending → financial_summary.json schema v1
-→ Application / local JSON API + local_dashboard/
+→ Application / local JSON API
+   ├─ local_dashboard/（legacy fallback）
+   ├─ Desktop Web
+   └─ Mini H5 / WeChat
 
 Scheduled Rule
 → 到期 occurrence
@@ -23,7 +26,7 @@ Scheduled Rule
 → 上述同一 Pipeline
 ```
 
-项目当前已经实现邮件获取、CMB Source Record / Transaction 身份分离、Manual Source 与跨来源 Reconciliation、Manual Input 查询 / 更正 / 删除生命周期、Scheduled Input 月度规则管理与幂等到期生成、支出侧 Merchant Mapping 与 Mapping Review / Mapping Correction、独立持久化的当前 Enrichment、退款归并、消费统计 Projection、收入 / 净消费 / 净现金流 Financial Summary Projection、本地 JSON Application/API，以及支持 source-native Manual Input 管理、Scheduled Input 管理、Mapping Review、家庭现金流概览、逐笔 Transaction 浏览和 transaction-only Enrichment exception 的本地 HTML Dashboard。增长率/环比分析、收入分类体系、AI 报告、面向公网部署与认证的远程 API、正式微信小程序等仍不在当前实现范围内。
+项目当前已经实现邮件获取、CMB Source Record / Transaction 身份分离、Manual Source 与跨来源 Reconciliation、Manual Input 查询 / 更正 / 删除生命周期、Scheduled Input 月度规则管理与幂等到期生成、支出侧 Merchant Mapping 与 Mapping Review / Mapping Correction、独立持久化的当前 Enrichment、退款归并、消费统计 Projection、收入 / 净消费 / 净现金流 Financial Summary Projection、本地 JSON Application/API，以及支持 source-native Manual Input 管理、Scheduled Input 管理、Mapping Review、家庭现金流概览、逐笔 Transaction 浏览和 transaction-only Enrichment exception 的本地 HTML Dashboard。首个跨端前端 POC 也已落地：Desktop Web 与 Taro Mini 共用 TypeScript contracts/service/view-model core，Desktop 与 Mini H5 已真实接入 Financial Summary 与 Feedback；Transactions、Review、Automation 和 Add Transaction 仍按完整纵向能力逐步迁移，legacy `local_dashboard/` 继续作为功能 fallback。Taro WeChat production build 已通过，但真机联网、正式 AppID / HTTPS API 域名配置和公网部署仍不属于当前已验证范围。增长率/环比分析、收入分类体系、AI 报告以及面向公网部署与认证的远程 API 也仍未实现。
 
 ## 数据与隐私边界
 
@@ -40,6 +43,7 @@ data/
 ├── scheduled_input_rules.json
 ├── transaction_source_links.jsonl
 ├── enrichment_state.jsonl
+├── feedback.jsonl
 └── reports/
     ├── spending_statistics.json
     └── financial_summary.json
@@ -55,10 +59,11 @@ data/
 - `scheduled_input_rules.json`：Scheduled Input V1 的本地编排状态，不是 Source 数据。保存月度规则及下次执行日期、启停状态和最近一次 occurrence 元数据；无规则时文件会被移除。
 - `transaction_source_links.jsonl`：当前 Source Record → Transaction 关系。
 - `enrichment_state.jsonl`：当前 Transaction Enrichment authoritative state；Expense 的 transaction-only Category exception 与 Income 的 `income_default` 当前状态都持久化在这里，并通过 `category_source` 区分来源。
+- `feedback.jsonl`：本地产品 Feedback V1 状态，保存 `content/status/context` 等产品使用反馈；它不属于 Financial Transaction、Enrichment 或 Analytics，不参与任何财务 Projection。
 - `reports/spending_statistics.json`：后端生成、可从正式状态重建的消费统计 Projection，继续使用 schema v2。
 - `reports/financial_summary.json`：后端生成、可从正式状态重建的家庭财务摘要 Projection，schema v1；按月汇总收入、净消费与净现金流，不复制消费 category / merchant 明细。
 
-除两份正式 Mapping 外，`data/` 中的原始邮件、截图、完整交易、运行态 Source/Link/Enrichment 状态、OCR 结果和派生 Projection 默认只保存在本地，不提交到 Git。
+除两份正式 Mapping 外，`data/` 中的原始邮件、截图、完整交易、运行态 Source/Link/Enrichment 状态、产品 Feedback、OCR 结果和派生 Projection 默认只保存在本地，不提交到 Git。
 
 正式进入 Git 的数据文件只有：
 
@@ -77,11 +82,13 @@ data/mappings/categories.yaml
 uv sync
 ```
 
-本地 Dashboard 图表 POC 使用固定版本的 Chart.js，并通过项目根目录的 npm 依赖安装到本地；运行页面时不依赖 CDN：
+项目根目录的 npm workspace 同时管理 legacy Dashboard 的 Chart.js、新 Desktop Web、Taro Mini 与共享 frontend packages。项目使用 `.npmrc` 固定 `install-strategy=nested`，隔离 Desktop Vite 与 Taro 的依赖树并避免依赖偶然 hoist；一次根目录安装即可准备全部 JavaScript workspace：
 
 ```powershell
 npm install
 ```
+
+不要为了局部构建错误把安装策略改回全局 hoisted；Mini 需要的 Taro runtime / build dependency 应显式声明在自己的 workspace。
 
 复制环境变量示例：
 
@@ -389,10 +396,12 @@ Expense 的 Mapping / Merchant default 负责新 Transaction 或缺失状态的�
 $env:PYTHONPATH="src"; uv run --frozen python -m family_spending.http_api
 ```
 
-默认监听 `127.0.0.1:8765`，当前端点包括：
+直接单独运行该模块时默认监听 `127.0.0.1:8765`；跨端前端开发默认使用后文的 managed runtime，并不要求占用 8765。当前端点包括：
 
 ```text
 GET   /api/health
+GET   /api/financial-summary
+GET   /api/feedback
 GET   /api/categories
 GET   /api/manual-descriptions
 GET   /api/manual-inputs
@@ -400,6 +409,8 @@ GET   /api/scheduled-inputs
 GET   /api/mapping-reviews
 GET   /api/transactions
 GET   /api/transactions/{transaction_id}
+POST  /api/feedback
+PATCH /api/feedback/{feedback_id}
 POST  /api/manual-inputs
 POST  /api/manual-inputs/{source_record_id}/corrections
 DELETE /api/manual-inputs/{source_record_id}
@@ -411,6 +422,8 @@ POST  /api/mapping-reviews/preview
 POST  /api/mapping-reviews/apply
 PATCH /api/transactions/{transaction_id}/enrichment
 ```
+
+`GET /api/financial-summary` 只读取当前已经生成的 Financial Summary Projection，不在 GET 后隐藏重建或其他 mutation。Feedback API 只维护本地产品反馈，不触发 Financial Transaction / Enrichment / Projection Pipeline。
 
 API 启动时会先执行 `Application.initialize()`：先同步当前 Source / Reconciliation / Enrichment 状态并重建最新 Projections，再执行截至当天的 Scheduled Input due occurrences。Source 在初始化后发生变化时，旧 Application snapshot 不会静默继续使用失效 links；应重新启动或重新初始化 Application，使上游 Source / Reconciliation 先收敛。
 
@@ -529,6 +542,78 @@ M+1 月 10 日账单
 Financial Summary 对同一覆盖事实使用更明确的字段名 `spending_data_complete`，避免把 CMB 信用卡账单覆盖误解为“收入数据完整”。当前 `financial_summary.json` 的 `show` 同样沿用消费侧覆盖策略，因此 `shown_data` 表示“消费侧账单覆盖完整的月份中的家庭财务摘要”；它**不证明 Income Source 已覆盖该月全部收入**。未来如果增加收入来源完整性事实，应单独建模，不复用 CMB 消费完整性。
 
 `spending_statistics.json` 金额和 `financial_summary.json` 的 Income / Spending 金额均使用人民币最小单位“分”的安全整数表示；Financial Summary 的净现金流允许负安全整数。两个文件都保持确定性字段顺序和原子替换，不包含逐笔来源邮件或退款分配历史。
+
+## 跨端前端 POC
+
+首个跨端前端纵向切片已经完成并通过真实本地数据 smoke：
+
+```text
+frontend/
+├── apps/
+│   ├── web/          # Desktop React / Vite
+│   └── mini/         # Taro React → H5 preview / WeChat
+└── packages/
+    ├── core/         # Zod contracts, services, view models, formatting
+    └── design-tokens/
+```
+
+当前迁移范围：
+
+- Desktop Web：Overview、Feedback workspace 与全局 Send Feedback 已接真实 Application/API；Transactions、Review、Automation 仍显示明确 migration state，Add Transaction 仍禁用，避免把占位控件伪装成已完成能力；
+- Mini：Overview 与 Feedback 已接真实 Application/API；Transactions / Review 仍为 migration state，Automation 暂放在 More 中作为待迁移能力；
+- Desktop 与 Mini 共用 Financial Summary / Feedback 的 schema、service、view-model 与格式化语义，但分别使用 BrowserTransport 与 TaroTransport，不共享平台 UI；
+- Mini H5 仅作为桌面浏览器中的开发预览，使用居中的 phone-sized viewport 和 H5-only typography/layout 校准，不是第三个正式产品；Taro dev server 显式关闭自动打开浏览器；
+- WeChat production build 已验证通过；真实 WeChat runtime 仍需要有效的 Mini Program 配置与可访问的 HTTPS API origin，当前 POC 不声称已经完成真机联网或正式发布。
+
+### Managed local development runtime
+
+正常跨端开发统一从项目根目录使用：
+
+```powershell
+npm run dev
+```
+
+managed runtime 同时管理 API、Desktop 和 Mini H5。它把当前实例记录在受 Git ignore 保护的 `.runtime/dev.json`，再次执行 `npm run dev` 会复用同一 runtime / PID / port，不会不断创建新的端口服务，也不会自动打开浏览器。
+
+常用命令：
+
+```powershell
+npm run dev
+npm run dev:status
+npm run dev:stop
+npm run dev:restart
+```
+
+默认 preferred ports 为：
+
+```text
+API      18765
+Desktop  15173
+Mini H5  11087
+```
+
+如果 preferred port 已被其他项目占用，只会为本次 managed runtime 从该起点向后选择空闲端口，不会按端口杀其他进程。可通过以下环境变量覆盖 preferred port：
+
+```text
+FAMILY_SPENDING_API_PORT
+FAMILY_SPENDING_WEB_PORT
+FAMILY_SPENDING_MINI_H5_PORT
+```
+
+Mini WeChat runtime 的远程 API origin 使用 `TARO_APP_API_BASE_URL` 在 Taro build config 中编译进入客户端；H5 开发预览继续通过同源 `/api` proxy 访问 managed API。
+
+### Cross-platform frontend checks
+
+```powershell
+npm run test:dev-runtime
+npm run typecheck:frontend
+npm run test:frontend
+npm run build:web
+npm run build:mini:h5
+npm run build:mini:weapp
+```
+
+`local_dashboard/` 在迁移完成前继续保留，并与上述新前端共享同一后端事实而不是被 iframe 或半迁移进新 shell。
 
 ## 本地消费统计 Dashboard
 
@@ -651,13 +736,33 @@ Python 编译检查：
 uv run --frozen python -m compileall -q src tests
 ```
 
-需要定位失败时，再对对应模块使用 `-v`，避免正常验证输出全部测试名称。
+跨端 frontend / managed runtime 检查：
+
+```powershell
+npm run test:dev-runtime
+npm run typecheck:frontend
+npm run test:frontend
+npm run build:web
+npm run build:mini:h5
+npm run build:mini:weapp
+```
+
+需要定位失败时，再对对应模块使用更详细的 test/build 输出，避免正常验证打印无关日志。提交前完整回归同时覆盖 Python、legacy Dashboard JavaScript、managed runtime、frontend typecheck/unit tests 以及 Desktop/H5/WeChat production builds。
 
 ## 当前代码结构
 
 ```text
 package.json
 package-lock.json                  # npm install 后生成并应随依赖版本一起提交
+.npmrc                             # npm workspace install-strategy=nested
+
+frontend/
+├── apps/
+│   ├── web/                       # Desktop React/Vite presentation
+│   └── mini/                      # Taro Mini + H5 preview presentation
+└── packages/
+    ├── core/                      # shared contracts/services/view models
+    └── design-tokens/
 
 local_dashboard/
 ├── index.html
@@ -683,6 +788,8 @@ local_dashboard/
 └── transactions.css
 
 scripts/
+├── dev-runtime.mjs                # managed single-instance local API/Web/Mini runtime
+├── dev-runtime.test.mjs
 ├── inspect_app_row_ocr.py
 ├── inspect_app_rows.py
 ├── inspect_description_matching.py
@@ -691,6 +798,7 @@ scripts/
 src/family_spending/
 ├── application.py                    # Manual/Scheduled lifecycle + Transaction / Enrichment Application use cases
 ├── http_api.py                       # 最小本地 JSON transport
+├── feedback.py                       # local product Feedback V1 store/domain
 ├── source_records.py                 # SourceRecord + SourceAdapter 扩展契约
 ├── transactions.py                   # Transaction Core + Source Link / 索引
 ├── reconciliation.py                 # Reconciler 扩展契约 + source-aware 实现
@@ -724,6 +832,7 @@ tests/
 ├── test_financial_application_projection.py
 ├── test_financial_projection.py
 ├── test_financial_statistics_generation.py
+├── test_feedback.py
 ├── test_http_api.py
 ├── test_income_mapping.py
 ├── test_manual_input_application_api.py
@@ -752,7 +861,8 @@ tests/
 - 最终图表组合收敛；
 - AI 消费 / 财务报告；
 - 退款分配等更细的诊断明细界面；
-- 微信小程序正式客户端；
+- 新跨端前端中的 Transactions / Review / Automation / Add Transaction 和 legacy chart capabilities 尚未完成迁移；
+- 微信小程序真机联网与正式发布；当前 Taro WeChat production build 已通过，但仍未配置正式 AppID、HTTPS API 域名和部署环境；
 - 面向公网部署的 API、登录、云同步或多用户；
 - 数据库、增量统计或常驻 / 系统级后台调度；Scheduled Input V1 只在 Application 初始化、规则 mutation 和显式 Run Due 时执行；
 - 其他银行、微信或支付宝独立账单接入。

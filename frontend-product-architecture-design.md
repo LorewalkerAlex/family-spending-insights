@@ -1,12 +1,13 @@
 # Family Spending Insights Frontend Product Architecture
 
-> Status: V1 design baseline before cross-platform frontend POC implementation
-> Repository baseline: `LorewalkerAlex/family-spending-insights` `main` @ `f06e0dac733eb80804fb0342895a72a9c4ea0fd6`
+> Status: V1 canonical baseline validated by the first cross-platform frontend POC on 2026-08-13
+> Design origin baseline: `LorewalkerAlex/family-spending-insights` `main` @ `f06e0dac733eb80804fb0342895a72a9c4ea0fd6`
+> POC implementation started from: `main` @ `898b238fbad25a5da1545cd4a5c7f9dd58a12dd7`
 > Scope: frontend product information architecture, Desktop/Mini presentation model, cross-platform boundaries, technology baseline, POC scope, and Design System V1.
 
 ## 1. Purpose
 
-The existing `local_dashboard/` proved the backend/Application contracts and multiple product workflows, but it is still a development-oriented flat page. Financial Summary, Manual Input, Scheduled Input, Mapping Review, transaction management, and charts are all presented in one long document. The next frontend stage must replace that presentation model without changing the backend domain truth that has already been validated.
+The existing `local_dashboard/` proved the backend/Application contracts and multiple product workflows, but it is still a development-oriented flat page. Financial Summary, Manual Input, Scheduled Input, Mapping Review, transaction management, and charts are all presented in one long document. The first cross-platform POC has now established the replacement presentation architecture; subsequent migration must continue capability by capability without changing the backend domain truth that has already been validated.
 
 The target product has two formal presentation surfaces:
 
@@ -159,7 +160,7 @@ Keep normal work depth shallow. Main workflows should usually remain within work
 
 ### 5.3 Mini H5 Preview
 
-The H5 build is a development preview target. The preferred desktop-browser development experience is a centered phone-sized viewport around 390 px wide. Device-width switching may be added later if it creates real testing value.
+The H5 build is a development preview target. The validated POC uses a centered phone-sized viewport capped around 430 px, with H5-only typography/layout calibration so desktop preview does not distort the Mini presentation. Taro H5 development explicitly disables automatic browser opening. Device-width switching may be added later if it creates real testing value.
 
 No requirements should be added solely for mobile-browser deployment, SEO, PWA behavior, mobile Safari support, or a separately distributed mobile Web product.
 
@@ -303,6 +304,8 @@ React is intentionally held at 18.3.1 for the initial cross-platform baseline so
 
 Do not introduce pnpm/Turborepo/Redux/Zustand/TanStack Query merely as modern-project defaults. Add infrastructure only when the repository demonstrates a real coordination or state-management need.
 
+The POC also established one repository-specific npm constraint: root installs use `.npmrc` with `install-strategy=nested`. Desktop Vite and Taro must not rely on accidental transitive hoisting across workspace boundaries; Mini declares the runtime/build packages its generated code and Taro runner actually resolve. This keeps the original one-root-`npm install` requirement while making dependency ownership deterministic.
+
 ## 9. Repository frontend structure
 
 Do not split the shared layer into many packages prematurely. The initial physical structure should remain small:
@@ -319,7 +322,7 @@ frontend/
 
 `core/` may internally contain contracts, decoders, services, view models, formatting, and presentation transforms without requiring each concern to become its own package.
 
-The root npm workspace should continue to use the repository's existing npm/package-lock workflow.
+The root npm workspace continues to use the repository's npm/package-lock workflow. `.npmrc` is part of that workspace contract because the validated POC requires nested dependency trees rather than default hoisting.
 
 ## 10. Formal API boundary required by the new frontend
 
@@ -345,9 +348,9 @@ Feedback persistence may use a small local runtime file such as `data/feedback.j
 
 ## 11. Cross-platform frontend POC
 
-The first implementation slice is **Frontend Cross-platform Foundation + Financial Summary + Feedback POC**.
+The first implementation slice was **Frontend Cross-platform Foundation + Financial Summary + Feedback POC**.
 
-It must be a real vertical slice rather than framework scaffolding only.
+It was implemented and validated as a real vertical slice rather than framework scaffolding only.
 
 ### 11.1 In scope
 
@@ -423,6 +426,38 @@ The POC is successful only when all of the following hold:
 13. Existing Python full suite passes.
 14. Existing legacy Dashboard JavaScript/tests remain green.
 15. `local_dashboard/` remains functional and is not prematurely removed.
+
+### 11.4 POC validation result
+
+The first POC satisfied the success criteria and is now the implementation baseline for subsequent workspace migration:
+
+- one root `npm install` prepares the npm workspaces with the repository nested install strategy;
+- shared `core` remains independent of React, Taro, DOM, and Mini Program APIs;
+- `GET /api/financial-summary` is read-only and both Desktop and Mini H5 receive the same backend Financial Summary semantics through the shared decoder/service/view-model layer;
+- Desktop Overview and Feedback are real Application/API-backed surfaces; Transactions, Review, Automation, and Add Transaction remain explicit migration states;
+- Mini Overview and Feedback are real Application/API-backed surfaces; Transactions and Review remain migration states and Automation remains a lower-frequency placeholder under More;
+- Desktop and Mini H5 can create Feedback into the same local backend, preserve `desktop_web` / `mini_h5` context, and synchronize resolve/reopen state;
+- Desktop production build, Mini H5 production build, and Taro WeChat production build pass;
+- frontend typecheck/unit tests, managed-runtime tests, the Python full suite, compileall, and the legacy Dashboard JavaScript suite pass together;
+- real browser smoke with local data validated Desktop Overview, Mini H5 phone-sized preview, Feedback capture, cross-client visibility, and status changes;
+- `local_dashboard/` remains intact as the functional fallback.
+
+The POC does **not** claim that a real WeChat client has already connected to the local backend. WeChat production compilation is validated; actual Mini Program networking still requires a valid AppID/runtime environment and an HTTPS API origin/domain configuration.
+
+### 11.5 Managed local development runtime
+
+Cross-platform local development uses one repository-managed runtime instead of repeatedly starting unrelated fixed-port processes:
+
+~~~text
+npm run dev          start or reuse the single managed runtime
+npm run dev:status   print current URLs/PIDs
+npm run dev:stop     stop only processes owned by the recorded runtime
+npm run dev:restart  stop then start
+~~~
+
+The preferred ports are API `18765`, Desktop `15173`, and Mini H5 `11087`. If another project already owns a preferred port, the runtime selects a free port from that starting point; it never kills a process merely because a port is occupied. State and logs live under Git-ignored `.runtime/`, and a repeated `npm run dev` reuses the same runtime id, PIDs, and ports while it remains healthy. The runtime prints URLs but does not open browser windows.
+
+Environment overrides are `FAMILY_SPENDING_API_PORT`, `FAMILY_SPENDING_WEB_PORT`, and `FAMILY_SPENDING_MINI_H5_PORT`. WeChat builds use `TARO_APP_API_BASE_URL` for the compiled absolute API origin; H5 continues to use same-origin `/api` proxying.
 
 ## 12. Design System V1
 
@@ -557,11 +592,11 @@ Migration proceeds by complete vertical capabilities:
 4. retire equivalent `local_dashboard/` functionality only after the replacement has real validation coverage.
 5. remove the legacy Dashboard only when all required functionality has migrated and regression coverage proves parity.
 
-The new frontend should improve presentation architecture without destabilizing the already-validated Python domain pipeline.
+The new frontend should improve presentation architecture without destabilizing the already-validated Python domain pipeline. The first two migration steps—foundation plus real Desktop/Mini validation—are now complete; later work should continue with one coherent workspace/workflow migration at a time.
 
 ## 14. Decision status
 
-This document is the V1 canonical frontend product architecture baseline for the upcoming POC. Implementation may refine low-level details when repository/toolchain facts require it, but changes to the following require an explicit design decision rather than accidental drift:
+This document is the V1 canonical frontend product architecture baseline validated by the completed first POC. Low-level implementation details may continue to adapt to repository/toolchain facts, but changes to the following require an explicit design decision rather than accidental drift:
 
 - canonical workspaces and global commands
 - Desktop vs Mini product/presentation distinction

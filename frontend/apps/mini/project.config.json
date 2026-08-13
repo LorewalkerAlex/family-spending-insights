@@ -1,0 +1,13 @@
+{
+  "miniprogramRoot": "dist/",
+  "projectname": "family-spending-insights-mini",
+  "description": "Family Spending Insights Taro Mini POC",
+  "appid": "touristappid",
+  "setting": {
+    "es6": true,
+    "enhance": true,
+    "minified": true,
+    "postcss": true
+  },
+  "compileType": "miniprogram"
+}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 from collections.abc import Mapping
@@ -23,6 +24,17 @@ from family_spending.enrichment_store import (
     ENRICHMENT_STATE_FILE,
     read_enrichment_states,
     write_enrichment_states,
+)
+from family_spending.feedback import (
+    FEEDBACK_FILE,
+    FEEDBACK_RUNTIMES,
+    FeedbackContext,
+    FeedbackError,
+    FeedbackItem,
+    create_feedback_item,
+    read_feedback_items,
+    update_feedback_status,
+    write_feedback_items,
 )
 from family_spending.ingestion.cmb_email_transactions import read_transactions_csv
 from family_spending.ingestion.cmb_source_adapter import CmbSourceAdapter
@@ -66,6 +78,7 @@ from family_spending.scheduled_input import (
 from family_spending.settings import (
     CATEGORIES_FILE,
     EMAILS_DIR,
+    FINANCIAL_SUMMARY_FILE,
     MERCHANTS_FILE,
     SPENDING_STATISTICS_FILE,
     TRANSACTIONS_FILE,
@@ -272,6 +285,10 @@ class FamilySpendingApplication:
         self.paths = paths or ApplicationPaths()
         assert self.paths.scheduled_input_rules is not None
         self._scheduled_rules_path = self.paths.scheduled_input_rules
+        self._financial_summary_path = self.paths.spending_statistics.with_name(
+            FINANCIAL_SUMMARY_FILE.name
+        )
+        self._feedback_path = self.paths.transactions.parent / FEEDBACK_FILE.name
 
     def initialize(self) -> None:
         """Synchronize Source state, then materialize every scheduled occurrence due today."""
@@ -294,6 +311,86 @@ class FamilySpendingApplication:
             self.paths.categories,
         )
         return tuple(sorted(mappings.categories))
+
+    def get_financial_summary(self) -> dict[str, Any]:
+        """Read the current generated Financial Summary without hiding a rebuild behind the query."""
+        try:
+            payload = json.loads(self._financial_summary_path.read_text(encoding="utf-8"))
+        except FileNotFoundError as exc:
+            raise ApplicationStateError(
+                "Financial Summary projection does not exist; run application.initialize()"
+            ) from exc
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ApplicationStateError(
+                f"Unable to read Financial Summary projection from {self._financial_summary_path}: {exc}"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise ApplicationStateError(
+                f"Financial Summary projection {self._financial_summary_path} must contain a JSON object"
+            )
+        return payload
+
+    def list_feedback(self) -> tuple[FeedbackItem, ...]:
+        """Return the local Feedback inbox newest first without coupling it to financial Review state."""
+        try:
+            items = read_feedback_items(self._feedback_path)
+        except FeedbackError as exc:
+            raise ApplicationStateError(str(exc)) from exc
+        return tuple(reversed(items))
+
+    def create_feedback(
+        self,
+        *,
+        content: object,
+        context: object = None,
+    ) -> FeedbackItem:
+        """Capture one product-feedback item with server-owned identity, timestamp, and open status."""
+        content_value = self._required_text(content, "content")
+        context_value = self._feedback_context(context)
+        try:
+            items = read_feedback_items(self._feedback_path)
+            item = create_feedback_item(
+                content=content_value,
+                context=context_value,
+            )
+            write_feedback_items(items + (item,), self._feedback_path)
+        except FeedbackError as exc:
+            raise ApplicationStateError(str(exc)) from exc
+        return item
+
+    def update_feedback(
+        self,
+        feedback_id: str,
+        *,
+        status: object,
+    ) -> FeedbackItem:
+        """Resolve or reopen one Feedback item while preserving its original content and context."""
+        feedback_id_value = self._required_text(feedback_id, "feedback_id")
+        status_value = self._required_text(status, "status")
+        if status_value not in {"open", "resolved"}:
+            raise ApplicationValidationError(
+                "Feedback status must be either 'open' or 'resolved'"
+            )
+        try:
+            items = read_feedback_items(self._feedback_path)
+        except FeedbackError as exc:
+            raise ApplicationStateError(str(exc)) from exc
+        current = next((item for item in items if item.id == feedback_id_value), None)
+        if current is None:
+            raise ApplicationNotFoundError(
+                f"Feedback {feedback_id_value!r} does not exist"
+            )
+        if current.status == status_value:
+            return current
+        try:
+            updated = update_feedback_status(current, status_value)
+            write_feedback_items(
+                tuple(updated if item.id == feedback_id_value else item for item in items),
+                self._feedback_path,
+            )
+        except FeedbackError as exc:
+            raise ApplicationStateError(str(exc)) from exc
+        return updated
 
     def list_manual_descriptions(self) -> tuple[str, ...]:
         """Return distinct source-native Manual descriptions, newest first, for lightweight reuse hints."""
@@ -1043,6 +1140,41 @@ class FamilySpendingApplication:
                 "Scheduled Input V1 only supports monthly occurrence days 1-28"
             )
         return parsed
+
+    def _feedback_context(self, value: object) -> FeedbackContext:
+        """Normalize the explicit cross-platform capture context accepted by Feedback V1."""
+        if value is None:
+            return FeedbackContext()
+        if not isinstance(value, dict):
+            raise ApplicationValidationError("Feedback context must be a JSON object or null")
+        allowed = {"runtime", "page", "workspace", "entity_type", "entity_id"}
+        unknown = sorted(set(value) - allowed)
+        if unknown:
+            raise ApplicationValidationError(
+                f"Unknown Feedback context fields: {unknown!r}"
+            )
+        runtime = self._optional_text(value.get("runtime"), "context.runtime")
+        if runtime is not None and runtime not in FEEDBACK_RUNTIMES:
+            raise ApplicationValidationError(
+                f"Feedback runtime must be one of {sorted(FEEDBACK_RUNTIMES)!r}"
+            )
+        entity_type = self._optional_text(
+            value.get("entity_type"), "context.entity_type"
+        )
+        entity_id = self._optional_text(value.get("entity_id"), "context.entity_id")
+        if (entity_type is None) != (entity_id is None):
+            raise ApplicationValidationError(
+                "Feedback context entity_type and entity_id must be provided together"
+            )
+        return FeedbackContext(
+            runtime=runtime,
+            page=self._optional_text(value.get("page"), "context.page"),
+            workspace=self._optional_text(
+                value.get("workspace"), "context.workspace"
+            ),
+            entity_type=entity_type,
+            entity_id=entity_id,
+        )
 
     @staticmethod
     def _boolean(value: object, field: str) -> bool:

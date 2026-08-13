@@ -7,6 +7,7 @@ import unittest
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -46,6 +47,7 @@ class HttpApiTests(unittest.TestCase):
             spending_statistics=root / "reports" / "spending_statistics.json",
             emails=root / "emails",
         )
+        self.paths = paths
         paths.merchants.write_text(MERCHANTS, encoding="utf-8")
         paths.categories.write_text(CATEGORIES, encoding="utf-8")
         paths.emails.mkdir()
@@ -135,6 +137,85 @@ class HttpApiTests(unittest.TestCase):
         self.assertEqual(enrichment["merchant"], "测试家电")
         self.assertEqual(enrichment["category"], "家居家电")
         self.assertEqual(enrichment["note"], "HTTP 修改")
+
+    def test_financial_summary_query_returns_current_projection_without_rebuild(self) -> None:
+        expected = json.loads(
+            self.paths.spending_statistics.with_name("financial_summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        with patch(
+            "family_spending.application.generate_spending_statistics",
+            side_effect=AssertionError("GET must not rebuild projections"),
+        ):
+            status, body = self._json_request("/api/financial-summary")
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {"financial_summary": expected})
+
+    def test_feedback_create_list_resolve_and_reopen(self) -> None:
+        status, created_body = self._json_request(
+            "/api/feedback",
+            method="POST",
+            payload={
+                "content": "总览层级需要调整",
+                "context": {
+                    "runtime": "desktop_web",
+                    "page": "/overview",
+                    "workspace": "overview",
+                },
+            },
+        )
+        self.assertEqual(status, 201)
+        created = created_body["feedback"]
+        feedback_id = created["id"]
+        self.assertEqual(created["status"], "open")
+        self.assertEqual(created["content"], "总览层级需要调整")
+        self.assertEqual(created["context"]["runtime"], "desktop_web")
+        self.assertTrue(
+            (self.paths.transactions.parent / "feedback.jsonl").exists()
+        )
+
+        status, listing = self._json_request("/api/feedback")
+        self.assertEqual(status, 200)
+        self.assertEqual([item["id"] for item in listing["feedback"]], [feedback_id])
+
+        status, resolved_body = self._json_request(
+            f"/api/feedback/{feedback_id}",
+            method="PATCH",
+            payload={"status": "resolved"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(resolved_body["feedback"]["status"], "resolved")
+
+        status, reopened_body = self._json_request(
+            f"/api/feedback/{feedback_id}",
+            method="PATCH",
+            payload={"status": "open"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(reopened_body["feedback"]["status"], "open")
+        self.assertEqual(reopened_body["feedback"]["content"], created["content"])
+        self.assertEqual(reopened_body["feedback"]["context"], created["context"])
+
+    def test_feedback_rejects_invalid_context_and_missing_item(self) -> None:
+        status, body = self._json_request(
+            "/api/feedback",
+            method="POST",
+            payload={
+                "content": "测试反馈",
+                "context": {"runtime": "browser"},
+            },
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("Feedback runtime", body["error"])
+
+        status, body = self._json_request(
+            "/api/feedback/feedback_missing",
+            method="PATCH",
+            payload={"status": "resolved"},
+        )
+        self.assertEqual(status, 404)
+        self.assertIn("does not exist", body["error"])
 
     def test_patch_rejects_unknown_fields(self) -> None:
         _, listing = self._json_request("/api/transactions")
