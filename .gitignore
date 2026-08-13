@@ -15,8 +15,9 @@ mapping_output/
 __pycache__/
 *.pyc
 
-# JavaScript 依赖
+# JavaScript 依赖与构建缓存
 node_modules/
+.swc/
 
 # 本地开发运行态
 .runtime/
