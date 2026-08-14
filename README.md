@@ -26,6 +26,21 @@ Scheduled Rule
 → 上述同一 Pipeline
 ```
 
+后端运行层已经从“各功能模块自行拼接文件读取 / Pipeline / rollback”收敛到明确的本地 modular runtime：
+
+```text
+CLI / HTTP
+   ↓
+RuntimeFamilySpendingApplication
+   ↓
+BackendRuntime
+├── CurrentHouseholdSnapshot
+├── HouseholdPipeline
+└── FileUnitOfWork
+```
+
+`BackendRuntime` 在进程内持有可重建的当前 household snapshot，Query 优先复用该 snapshot；Source Sync、downstream Projection rebuild、runtime-backed Enrichment / Mapping mutation 与 Scheduled due batch 通过显式 Pipeline / commit boundary 运行。具体技术边界见 `backend-technical-architecture-design.md`；领域事实与长期数据模型仍以 `family-consumption-data-architecture-design.md` 为准。
+
 项目当前已经实现邮件获取、CMB Source Record / Transaction 身份分离、Manual Source 与跨来源 Reconciliation、Manual Input 查询 / 更正 / 删除生命周期、Scheduled Input 月度规则管理与幂等到期生成、支出侧 Merchant Mapping 与 Mapping Review / Mapping Correction、独立持久化的当前 Enrichment、退款归并、消费统计 Projection、收入 / 净消费 / 净现金流 Financial Summary Projection、本地 JSON Application/API，以及支持 source-native Manual Input 管理、Scheduled Input 管理、Mapping Review、家庭现金流概览、逐笔 Transaction 浏览和 transaction-only Enrichment exception 的本地 HTML Dashboard。跨端前端已经从基础 POC 进入 PC Web-first 稳定化阶段：Desktop Web 的 Overview、Transactions、Review、Automation、Feedback 五个正式 workspace 与全局 Add Transaction / Send Feedback 都已接入真实 Application/API；Overview 在 Financial Hero 与近期月份之外增加最近最多 12 个 `show=true` 自然月的收入 / 净消费趋势，Transactions 提供桌面 master-detail、Expense transaction-only Merchant / Category / Note、Income Note-only 与 Manual Source 更正 / 删除，Review 提供 Mapping Review 聚合、Merchant 建议、Preview / Apply 与新 Merchant 二次确认，Automation 提供 Scheduled Input 创建、编辑、启停、删除与 Run Due。Mini 已真实接入 Overview、Transactions、Review、Add Transaction 与 Feedback；Automation 仍留在后续 Mini 收敛阶段。Desktop 与 Mini 继续共用 TypeScript contracts/service/view-model core，业务事实仍由既有 Python Domain / Application / API 负责，legacy `local_dashboard/` 继续作为功能 fallback。Taro WeChat production build 已通过，但真机联网、正式 AppID / HTTPS API 域名配置和公网部署仍不属于当前已验证范围。增长率/环比分析、收入分类体系、AI 报告以及面向公网部署与认证的远程 API 也仍未实现。
 
 ## 数据与隐私边界
@@ -344,13 +359,14 @@ last_action?
 V1 只支持固定金额的**每月一次**规则，并要求 `next_date` 落在每月 1–28 日，避免月底月份长度导致隐式漂移。每次成功处理一个 occurrence 后，`next_date` 前进一个自然月并保持相同日号。
 
 执行语义：
-- Application `initialize()` 先同步已有 Source / Reconciliation / Projection，再执行截至本地当天所有启用且到期的规则；
-- 也可以通过显式 `Run Due` 执行同一 runner；V1 不启动常驻线程、daemon 或系统级后台 Scheduler；
+- `RuntimeFamilySpendingApplication.initialize()` 先通过 `BackendRuntime.bootstrap()` 同步已有 Source / Reconciliation / Projection，再执行截至本地当天所有启用且到期的规则；
+- 也可以通过显式 `Run Due` 或 `python -m family_spending jobs run-due` 执行同一 runner；V1 不启动常驻线程、daemon 或系统级后台 Scheduler；
 - 创建或编辑启用规则后，如果 `next_date` 已到期，会在同一 Application command 中立即处理到当前日期；暂停规则不会生成 occurrence；
 - 如果程序一段时间未运行，启用规则会从保存的 `next_date` 开始逐月补齐到当前日期；不希望补齐时，应先把 `next_date` 改到未来再启用；
-- 每个 `rule_id + occurrence_date` 会派生稳定的 Manual Source ID。重复 `Run Due` 不会重复记账；即使进程在 Manual Source 已写入、规则进度尚未写回之间异常终止，下次执行也能识别已有 Source Link 并恢复推进；
+- 同一次 catch-up 会先汇总全部 due occurrence，再把新增 occurrence 作为普通 Manual Source candidates 交给一次 `HouseholdPipeline.plan_source_sync()`；不会为每个月份重复执行一整套 Source → Projection rebuild；
+- 每个 `rule_id + occurrence_date` 会派生稳定的 Manual Source ID。重复 `Run Due` 不会重复记账；如果 Source state 已完整落盘但规则 cursor 尚未推进，下次执行可根据既有 Source Link 识别并恢复 occurrence；
 - 编辑、暂停或删除 Scheduled Rule 只影响未来编排，不修改或删除已经生成的 Manual Source / Transaction 历史；历史 occurrence 如需纠错，继续使用 Manual Input 的 Source-level 更正 / 删除能力；
-- 一次 due run 会快照规则、Manual Source、Source Link、Enrichment 与两个派生 Projection。可捕获的执行失败会恢复命令前状态，避免多月补执行只成功一部分。
+- 一次 due run 把规则、Manual Source、Source Link、Enrichment 与两个派生 Projection 纳入同一个 `FileUnitOfWork`。可捕获的执行失败会恢复命令前状态，避免多月补执行只成功一部分。
 
 规则文件位于：
 
@@ -390,13 +406,13 @@ Expense 的 Mapping / Merchant default 负责新 Transaction 或缺失状态的�
 
 对 Expense，`category = null` 表示清除显式 Category，并恢复当前 Merchant 的默认分类；如果当前 Merchant 没有默认分类，则回到运行态 `待分类`。Income 的默认分类不使用这一消费 Mapping reset 语义。
 
-启动最小本地 JSON API：
+启动统一后端 JSON API：
 
 ```powershell
-$env:PYTHONPATH="src"; uv run --frozen python -m family_spending.http_api
+$env:PYTHONPATH="src"; uv run --frozen python -m family_spending serve
 ```
 
-直接单独运行该模块时默认监听 `127.0.0.1:8765`；跨端前端开发默认使用后文的 managed runtime，并不要求占用 8765。当前端点包括：
+`serve` 默认监听 `127.0.0.1:8765`。历史 `python -m family_spending.http_api` 入口暂时保留为 compatibility entry；跨端前端开发默认使用后文的 managed runtime，并不要求占用 8765。当前端点包括：
 
 ```text
 GET   /api/health
@@ -425,9 +441,9 @@ PATCH /api/transactions/{transaction_id}/enrichment
 
 `GET /api/financial-summary` 只读取当前已经生成的 Financial Summary Projection，不在 GET 后隐藏重建或其他 mutation。Feedback API 只维护本地产品反馈，不触发 Financial Transaction / Enrichment / Projection Pipeline。
 
-API 启动时会先执行 `Application.initialize()`：先同步当前 Source / Reconciliation / Enrichment 状态并重建最新 Projections，再执行截至当天的 Scheduled Input due occurrences。Source 在初始化后发生变化时，旧 Application snapshot 不会静默继续使用失效 links；应重新启动或重新初始化 Application，使上游 Source / Reconciliation 先收敛。
+统一 `serve` 入口创建 `RuntimeFamilySpendingApplication`。初始化时先执行 `BackendRuntime.bootstrap()`：运行一次完整 Source Sync、发布 `CurrentHouseholdSnapshot`，再执行截至当天的 Scheduled Input due occurrences。正常 Query 从 runtime snapshot 读取；如果受跟踪的 Source / Link / Enrichment / Mapping 文件被外部修改，runtime 会先检测 filesystem fingerprint 并重新装载已 reconciled current state，而不是在每个 GET 中重复跑 Reconciliation。若外部 Source 变化已经使持久化 links 失效，则 refresh 会明确报错并要求重新执行 Source Sync。
 
-Application mutation 保持 authoritative state 与可重建 Projection 的提交边界。Enrichment PATCH 不得留下 Enrichment 已更新而任一 Projection 仍旧的半提交状态；Manual Input 的创建、更正和删除都会在跨 Manual Source / Source Link / Enrichment / Projection 写入失败时恢复本次命令前状态；Scheduled Rule 创建/编辑与立即到期执行使用同一命令级回滚边界，due runner 的多 occurrence 执行也会在可捕获失败时恢复整批状态；Mapping Review Apply 同样会快照并协调 Mapping、affected Enrichment 与两个 Projection，任一步失败时恢复本次命令前状态。
+Runtime-backed mutation 保持 authoritative state 与可重建 Projection 的提交边界。Enrichment PATCH 与 Mapping Review Apply 使用共享 `FileUnitOfWork` 协调 Enrichment / Mapping 与两个 Projection；Scheduled due batch 把规则、Manual Source 和 downstream state 纳入同一 commit boundary。历史 Manual Input create/correct/delete compatibility path 暂时继续使用原有 rollback 实现，后续再迁入统一 runtime command pipeline。所有路径都不得静默留下已知的半提交 Application state。
 
 ## 退款归并
 
@@ -452,33 +468,52 @@ amount = 0：忽略并单独计数
 
 退款归并不会改写 Transaction Core。原始消费保持正数、退款保持负数；下游得到独立的 `NetConsumption(transaction_id, spending)` 派生结果，其中 `spending` 为正的剩余净消费金额。部分退款仍引用原消费 Transaction；完全退款的 Transaction 和 Source Record 继续存在于正式领域状态，但不会产生 NetConsumption，也不进入消费统计笔数。
 
-## 生成消费统计与家庭财务摘要
+## 同步当前后端状态与重建 Projection
+
+完整 Source Sync 的正式 operator 入口为：
 
 ```powershell
-$env:PYTHONPATH="src"; uv run python -m family_spending.statistics_generation
+$env:PYTHONPATH="src"; uv run --frozen python -m family_spending sync
 ```
 
 完整后端链路为：
 
 ```text
-read CMB transactions + Manual Source records
-→ read existing Source Links + current Enrichment state
-→ load_merchant_mappings()
-→ build_household_domain_state()
-   → CMB / Manual Adapter + Source Record
-   → source-aware Reconciliation / Transaction / Source Link
-   → preserve or initialize type-aware current Enrichment
-→ normalize legacy implicit Income Enrichment when needed
-→ build_spending_projection()
-   → reconcile_refunds() → NetConsumption
-   → aggregate_spending()
-   → load_month_coverage()
-   → serialize spending schema v2
-   → build financial summary schema v1 from Income + same NetConsumption
-→ persist current Source Links / Enrichment state / both Projections
+BackendRuntime.sync_sources()
+→ HouseholdPipeline.plan_source_sync()
+   → read CMB transactions + Manual Source records
+   → read existing Source Links + current Enrichment state
+   → load_merchant_mappings()
+   → build_household_domain_state()
+      → CMB / Manual Adapter + Source Record
+      → source-aware Reconciliation / Transaction / Source Link
+      → preserve or initialize type-aware current Enrichment
+   → normalize legacy implicit Income Enrichment when needed
+   → build_spending_projection()
+      → reconcile_refunds() → NetConsumption
+      → aggregate_spending()
+      → load_month_coverage()
+      → spending schema v2 + financial summary schema v1
+→ FileUnitOfWork
+   → persist Source Links / Enrichment / both Projections
+→ publish refreshed CurrentHouseholdSnapshot
 ```
 
-每次显式运行会从当前完整 Source facts、既有 identity links 与 Enrichment current state 重新构建一致的下游结果。当前数据规模不引入退款缓存、数据库或增量统计状态。
+历史 `python -m family_spending.statistics_generation` 入口暂时保留并委托给同一 `HouseholdPipeline`，不再拥有第二套统计编排实现。
+
+只需要从已经 reconciled 的 current state 重建派生输出时，可以跳过 Source Adapter / Reconciliation：
+
+```powershell
+$env:PYTHONPATH="src"; uv run --frozen python -m family_spending rebuild projections
+```
+
+只读检查当前 coherent state：
+
+```powershell
+$env:PYTHONPATH="src"; uv run --frozen python -m family_spending diagnose state
+```
+
+当前数据规模仍不引入数据库、持久化 runtime cache 或增量统计状态；`BackendRuntime` 的内存 snapshot 是可从正式文件状态重建的进程内 read model。
 
 `spending_statistics.json` 继续只表示 Expense 净消费，并保持原有 schema v2：
 
@@ -580,7 +615,7 @@ frontend/
 npm run dev
 ```
 
-managed runtime 同时管理 API、Desktop 和 Mini H5。它把当前实例记录在受 Git ignore 保护的 `.runtime/dev.json`，再次执行 `npm run dev` 会复用同一 runtime / PID / port，不会不断创建新的端口服务，也不会自动打开浏览器。
+managed runtime 同时管理 API、Desktop 和 Mini H5。API worker 统一执行 `python -m family_spending serve`，因此本地产品运行与独立 operator CLI 使用同一 `BackendRuntime` / `HouseholdPipeline` 入口。它把当前实例记录在受 Git ignore 保护的 `.runtime/dev.json`，再次执行 `npm run dev` 会复用同一 runtime / PID / port，不会不断创建新的端口服务，也不会自动打开浏览器。
 
 常用命令：
 
@@ -641,8 +676,8 @@ npm install
 Dashboard 现在同时消费两个静态 Projection 与本地 Application/API。需要在两个终端分别启动：
 
 ```powershell
-# 终端 1：初始化当前领域状态并提供 Transaction / Enrichment API
-$env:PYTHONPATH="src"; uv run --frozen python -m family_spending.http_api
+# 终端 1：初始化 BackendRuntime 并提供 Transaction / Enrichment API
+$env:PYTHONPATH="src"; uv run --frozen python -m family_spending serve
 ```
 
 ```powershell
@@ -811,8 +846,19 @@ scripts/
 └── inspect_mapping_candidates.py
 
 src/family_spending/
-├── application.py                    # Manual/Scheduled lifecycle + Transaction / Enrichment Application use cases
-├── http_api.py                       # 最小本地 JSON transport
+├── __main__.py                       # `python -m family_spending` entry
+├── cli.py                            # serve / sync / jobs / rebuild / diagnose operator CLI
+├── backend/
+│   ├── paths.py                      # runtime persistent participants
+│   ├── state.py                      # CurrentHouseholdSnapshot rehydration
+│   ├── pipeline.py                   # Source Sync + Projection rebuild lifecycle
+│   ├── runtime.py                    # in-process current snapshot + fingerprint refresh
+│   ├── application.py                # runtime-backed Application compatibility facade
+│   └── scheduled_jobs.py             # batched Scheduled due → one Source Sync
+├── infrastructure/
+│   └── file_uow.py                   # shared cross-file rollback / commit boundary
+├── application.py                    # legacy Application surface; remaining compatibility commands
+├── http_api.py                       # JSON transport + legacy module entry
 ├── feedback.py                       # local product Feedback V1 store/domain
 ├── source_records.py                 # SourceRecord + SourceAdapter 扩展契约
 ├── transactions.py                   # Transaction Core + Source Link / 索引
@@ -821,19 +867,19 @@ src/family_spending/
 ├── enrichment_store.py               # Enrichment JSONL storage
 ├── source_link_store.py              # Source Record → Transaction link storage
 ├── manual_source.py                  # Manual Source local state + empty-store cleanup
-├── manual_input.py                   # Manual Input create/correct/delete + cross-file rollback boundary
-├── scheduled_input.py                # Monthly rules + due runner + stable occurrence identity
+├── manual_input.py                   # legacy Manual Input command orchestration / rollback
+├── scheduled_input.py                # Monthly rule model + legacy compatibility runner
 ├── mapping.py                        # Expense Mapping loader + type-aware Enrichment resolver
 ├── mapping_review.py                 # Expense Mapping Review aggregation / preview / propagation
 ├── month_coverage.py
 ├── refund_reconciliation.py          # Expense Transaction facts → NetConsumption 派生视图
-├── spending_projection.py            # coupled spending + financial downstream Projection write boundary
+├── spending_projection.py            # spending + financial Projection build/persist primitives
 ├── financial_projection.py           # Income + net spending → financial_summary.json schema v1
 ├── settings.py
 ├── spending_statistics.py            # AnalyticsProcessor + 消费统计
-├── statistics_generation.py          # Source → Transaction → Enrichment → both Projections orchestrator
+├── statistics_generation.py          # compatibility wrapper → HouseholdPipeline full sync
 ├── statistics_serialization.py
-├── transaction_resolution.py         # 共享 CMB domain snapshot + 诊断 CLI
+├── transaction_resolution.py         # shared household domain assembly + diagnostic compatibility
 └── ingestion/
     ├── imap_163.py
     ├── cmb_email_transactions.py
@@ -841,6 +887,9 @@ src/family_spending/
 
 tests/
 ├── test_application.py
+├── test_backend_architecture.py
+├── test_backend_runtime_application.py
+├── test_backend_scheduled_jobs.py
 ├── test_cmb_domain.py
 ├── test_cmb_email_transactions.py
 ├── test_enrichment_store.py
@@ -877,7 +926,7 @@ tests/
 - AI 消费 / 财务报告；
 - 退款分配等更细的诊断明细界面；
 - legacy Dashboard 的完整消费 chart / category / merchant analytics 尚未全部迁入新 PC Web；当前新 Overview 只使用 Financial Summary 提供 Hero、近期月份与收入 / 净消费趋势；
-- Transactions 当前读写路径仍有可感知的加载等待，性能优化留待独立切片按实际阶段耗时与重复状态装载证据处理，不依据界面交易条数直接推断瓶颈；
+- 后端 Query 已移除主要路径上的逐请求完整 state rebuild，并改为复用 `BackendRuntime` current snapshot；尚未建立正式性能基准，后续性能优化仍按实际阶段耗时与 I/O / Pipeline 证据处理，不依据界面交易条数直接推断瓶颈；
 - Mini Automation workspace 的正式迁移，以及微信小程序真机联网与正式发布；当前 Taro WeChat production build 已通过，但仍未配置正式 AppID、HTTPS API 域名和部署环境；
 - 面向公网部署的 API、登录、云同步或多用户；
 - 数据库、增量统计或常驻 / 系统级后台调度；Scheduled Input V1 只在 Application 初始化、规则 mutation 和显式 Run Due 时执行；
@@ -885,8 +934,14 @@ tests/
 
 ## 架构说明
 
-系统边界、数据资产、重建关系和隐私原则见：
+领域边界、数据资产、重建关系和隐私原则：
 
 ```text
 family-consumption-data-architecture-design.md
+```
+
+当前 Python 后端的 Runtime / Pipeline / Unit of Work / CLI 技术结构：
+
+```text
+backend-technical-architecture-design.md
 ```

@@ -56,6 +56,27 @@ test("runtime state validation rejects malformed process ownership data", () => 
   );
 });
 
+test("workerCommand launches the API through the unified backend CLI", () => {
+  const env = {
+    FAMILY_SPENDING_API_PORT: "18765",
+    PYTHONPATH: "existing-pythonpath",
+  };
+
+  const spec = workerCommand("api", env, "win32");
+  assert.equal(spec.command, "uv");
+  assert.deepEqual(spec.args, [
+    "run",
+    "--frozen",
+    "python",
+    "-m",
+    "family_spending",
+    "serve",
+    "--port",
+    "18765",
+  ]);
+  assert.match(spec.env.PYTHONPATH, /src/);
+  assert.match(spec.env.PYTHONPATH, /existing-pythonpath/);
+});
 
 test("workerCommand launches npm scripts through cmd.exe on Windows", () => {
   const env = {

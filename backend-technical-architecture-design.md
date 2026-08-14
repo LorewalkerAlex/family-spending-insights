@@ -1,0 +1,357 @@
+# Family Spending Insights Backend Technical Architecture
+
+> Status: current technical baseline after Backend Runtime / Pipeline foundation
+> Scope: Python backend runtime, application orchestration, pipeline execution, file-backed commit boundaries, operator CLI, and compatibility strategy.
+
+## 1. Purpose
+
+`family-consumption-data-architecture-design.md` defines the domain and HLD: Source, Source Record, Reconciliation, Transaction, Enrichment, Analytics / Projection, and the rule that a change starts from its own stage and only refreshes downstream stages.
+
+This document defines how the current Python implementation realizes that model as a lightweight local modular monolith. It intentionally does **not** introduce a database, message bus, dependency-injection framework, persistent cache, or service decomposition merely to make the repository look more layered.
+
+The architecture goal is concrete:
+
+```text
+one current backend state
++ explicit pipeline entry points
++ explicit commit boundaries
++ one operator/runtime entry surface
++ compatibility while older feature modules are migrated gradually
+```
+
+## 2. Technical shape
+
+The current backend execution shape is:
+
+```text
+Interfaces
+├── python -m family_spending ...
+└── local JSON HTTP
+          ↓
+Application
+└── RuntimeFamilySpendingApplication
+          ↓
+BackendRuntime
+├── CurrentHouseholdSnapshot
+├── HouseholdPipeline
+└── ScheduledInputJobRunner
+          ↓
+Domain / existing business rules
+├── Source Adapter / Reconciliation
+├── Transaction / Enrichment
+├── Mapping / Refund
+└── Analytics / Projection
+          ↓
+Infrastructure
+└── FileUnitOfWork + existing file stores
+          ↓
+local CSV / JSONL / YAML / EML / Projection JSON
+```
+
+This is a **modular monolith**, not a distributed architecture. The file system remains the persistent source of truth for the current local product.
+
+## 3. Package responsibilities
+
+### `family_spending.backend`
+
+The new `backend/` package contains runtime/application orchestration that previously existed implicitly inside feature-oriented modules.
+
+```text
+backend/
+├── paths.py
+├── state.py
+├── pipeline.py
+├── runtime.py
+├── application.py
+└── scheduled_jobs.py
+```
+
+- `paths.py` collects the persistent files that participate in the financial runtime.
+- `state.py` reconstructs a coherent already-reconciled `CurrentHouseholdSnapshot` without rerunning identity decisions.
+- `pipeline.py` owns explicit Source Sync and downstream Projection rebuild lifecycles.
+- `runtime.py` owns the in-process current snapshot and its refresh lifecycle.
+- `application.py` bridges the existing Application/API surface onto the runtime-backed Query and mutation paths that have already migrated.
+- `scheduled_jobs.py` batches Scheduled Input catch-up and submits the resulting Manual Source candidates through one Source Sync.
+
+### `family_spending.infrastructure`
+
+`infrastructure/file_uow.py` provides the shared file-backed Unit of Work. Existing stores still own file formats and writes; the UoW owns only the cross-file commit/rollback boundary.
+
+### Existing root modules
+
+The repository is intentionally in a staged migration instead of a large directory move. Existing modules such as `reconciliation.py`, `enrichment.py`, `mapping.py`, `manual_input.py`, and `scheduled_input.py` still contain validated business rules or compatibility orchestration.
+
+The physical package structure therefore does **not yet** claim that every root module has been classified into final `domain/`, `application/`, and `infrastructure/` folders. Directory migration should happen only after responsibilities have actually moved.
+
+## 4. CurrentHouseholdSnapshot
+
+`CurrentHouseholdSnapshot` is the current joined read model used by runtime-backed Queries and downstream-only mutations.
+
+It contains:
+
+```text
+source_records
+manual_entries
+source_links
+transactions
+transactions_by_id
+authoritative source_records_by_transaction_id
+enrichment_states
+enrichment_states_by_transaction_id
+materialized enrichments_by_transaction_id
+mappings
+```
+
+Loading a snapshot performs consistency validation but does **not** run Reconciliation. In particular it rejects:
+
+- Source Records that have no current Source Link;
+- stale Source/Transaction link groups;
+- Transactions missing persisted Enrichment state;
+- invalid persisted Category state against the current Mapping configuration.
+
+Those failures mean the persisted stages are no longer coherent and a Source Sync is required; a read request must not silently invent new identity decisions.
+
+## 5. BackendRuntime lifecycle
+
+`BackendRuntime` owns one optional in-memory `CurrentHouseholdSnapshot`.
+
+### Bootstrap
+
+```text
+BackendRuntime.bootstrap()
+→ sync_sources()
+→ HouseholdPipeline Source Sync
+→ persist coherent downstream state
+→ refresh()
+→ publish CurrentHouseholdSnapshot
+```
+
+A normal `serve` startup bootstraps once before accepting client traffic, then executes due Scheduled Input orchestration.
+
+### Query reuse
+
+```text
+HTTP Query
+→ RuntimeFamilySpendingApplication
+→ BackendRuntime.current_state()
+→ cached CurrentHouseholdSnapshot
+```
+
+`BackendRuntime` records a cheap fingerprint for the persistent files relevant to current state: CMB transactions, Manual Source, Source Links, Enrichment state, Merchant Mapping, and Category Mapping.
+
+If those files have not changed, repeated Queries reuse the same snapshot instead of re-reading and rebuilding the world for every request.
+
+If a tracked file changes externally, `current_state()` performs `refresh()`, which reloads already-reconciled state without Reconciliation. If an external Source change makes links stale, refresh fails explicitly and the caller must run Source Sync.
+
+The runtime snapshot is a **rebuildable in-process read model**, not a new persistent authority.
+
+## 6. Pipeline entry points
+
+The technical runtime currently recognizes three financial processing scopes.
+
+### 6.1 Source Sync
+
+Use when Source facts or Source identity relationships can change.
+
+```text
+CMB / Manual Source facts
+→ existing Source Links + Enrichment
+→ Mapping
+→ build_household_domain_state()
+→ Reconciliation / Transaction
+→ preserve or initialize Enrichment
+→ Refund / Analytics / Projections
+→ FileUnitOfWork
+→ Source Links + Enrichment + both Projections
+→ Runtime refresh
+```
+
+`HouseholdPipeline.plan_source_sync()` evaluates the candidate next state before persistence. `write_source_sync_plan()` writes an already evaluated plan inside an owning UoW. This split also allows Scheduled Input to add Manual Source records and include the rule cursor in a larger commit boundary without running the financial pipeline separately for every occurrence.
+
+### 6.2 Enrichment / Mapping downstream mutation
+
+Use when Source identity does not change.
+
+Current runtime-backed examples are transaction Enrichment PATCH and Mapping Review Apply:
+
+```text
+CurrentHouseholdSnapshot
+→ change Enrichment / Mapping
+→ materialize current Enrichment
+→ Refund / Analytics / Projections
+→ FileUnitOfWork
+→ persist affected authoritative state + both Projections
+→ Runtime refresh
+```
+
+These paths deliberately do **not** rerun Source Adapter or Reconciliation.
+
+### 6.3 Projection rebuild
+
+Use when only downstream analytics/projection code or serialized outputs need rebuilding.
+
+```text
+already-reconciled CurrentHouseholdSnapshot
+→ Refund / Analytics
+→ spending_statistics.json
+→ financial_summary.json
+```
+
+Operator command:
+
+```powershell
+$env:PYTHONPATH="src"; uv run --frozen python -m family_spending rebuild projections
+```
+
+This path does not rewrite Source identity, Source Links, or Enrichment.
+
+## 7. Scheduled Input batching
+
+Scheduled Input remains orchestration, not a financial Source type.
+
+The runtime runner works as:
+
+```text
+Scheduled rules
+→ calculate all occurrences due through as_of
+→ stable Manual Source IDs
+→ collect new Manual Source entries
+→ one HouseholdPipeline.plan_source_sync()
+→ resolve occurrence transaction/action results
+→ one FileUnitOfWork
+   ├── Manual Source
+   ├── Source Links
+   ├── Enrichment
+   ├── both Projections
+   └── final Scheduled Rule cursor
+→ Runtime refresh
+```
+
+A rule that is three months behind therefore does not perform three complete Source → Projection rebuilds. All due occurrences are evaluated together and committed as one batch.
+
+Stable `rule_id + occurrence_date` Source identity preserves idempotency. If a previously persisted occurrence already has a valid Source Link while the rule cursor is stale, the runner reports it as recovered instead of creating another financial event.
+
+V1 still has no daemon or system scheduler. It runs during Application initialization, rule mutation when due work must execute, or explicit `jobs run-due` / API Run Due.
+
+## 8. FileUnitOfWork
+
+`FileUnitOfWork` centralizes a pattern that was previously duplicated in feature modules.
+
+At entry it captures exact bytes (or absence) for every declared participant. Existing stores perform their normal writes. The caller must then explicitly `commit()`.
+
+```text
+with FileUnitOfWork(paths):
+    write authoritative state
+    write derived state
+    refresh runtime if required
+    commit()
+```
+
+If an exception escapes, or the context exits without `commit()`, participants are restored in reverse order. A secondary restoration failure is raised explicitly as `FileUnitOfWorkRollbackError`.
+
+This is an **application-level local file transaction**, not a durable database transaction or crash journal. It protects coordinated mutations from ordinary captured failures; process-level crash durability remains bounded by the atomic-write behavior of the individual stores.
+
+## 9. Application and compatibility boundary
+
+`RuntimeFamilySpendingApplication` subclasses the existing `FamilySpendingApplication` so the HTTP contract did not need to be rewritten during the architecture migration.
+
+Already runtime-backed:
+
+- Transaction / Mapping Review and related snapshot-based Queries via the overridden `_load_snapshot()`;
+- Category and Manual description/input Queries;
+- Mapping Review Apply;
+- transaction Enrichment mutation;
+- Scheduled due execution.
+
+Still using compatibility orchestration:
+
+- Manual Input create / correct / delete;
+- some existing feature-level helpers and module CLIs;
+- legacy direct `python -m family_spending.http_api` and `python -m family_spending.statistics_generation` entrypoints.
+
+Those compatibility paths remain tested and functional. They are migration debt, not a second intended architecture. Future refactors should move one coherent command family at a time onto the runtime/pipeline/UoW boundaries before considering broad package relocation.
+
+## 10. Operator CLI and process lifecycle
+
+The canonical backend operator surface is:
+
+```text
+python -m family_spending
+├── serve
+├── sync
+├── jobs
+│   └── run-due
+├── rebuild
+│   └── projections
+└── diagnose
+    └── state
+```
+
+Meanings:
+
+- `serve`: bootstrap current Source state, run due orchestration, then serve the local JSON API;
+- `sync`: full Source Sync and downstream Projection refresh;
+- `jobs run-due`: materialize Scheduled Input occurrences due through today or `--as-of`;
+- `rebuild projections`: downstream-only rebuild from already-reconciled state;
+- `diagnose state`: read and summarize coherent current state without mutation.
+
+The JavaScript managed development runtime starts its API worker through the same canonical command:
+
+```text
+npm run dev
+→ scripts/dev-runtime.mjs
+→ python -m family_spending serve --port <managed-port>
+```
+
+Desktop and Mini H5 proxies therefore hit the same backend runtime that the standalone operator CLI uses.
+
+## 11. Dependency direction
+
+The desired dependency direction is:
+
+```text
+interfaces / CLI
+      ↓
+application / runtime orchestration
+      ↓
+domain rules
+      ↑
+infrastructure implementations
+```
+
+The staged migration is not yet perfectly expressed by physical imports because validated legacy modules still combine responsibilities. New work should avoid making that worse:
+
+- Query/UI code must not perform Vault/file I/O or financial recomputation directly;
+- Application commands should call explicit pipeline stages rather than reproduce Source → Projection steps;
+- rollback mechanics belong in the shared UoW, not copied into every new feature;
+- domain identity rules must remain independent of JSON/YAML/HTTP concerns;
+- persistent storage changes should be hidden behind the existing read/write boundaries and future repository abstractions rather than leaking into clients.
+
+## 12. Concurrency and runtime scope
+
+The current backend is a local single-process product. `BackendRuntime` is an in-process state owner; it is not a cross-process cache or lock manager.
+
+The current architecture therefore assumes one authoritative mutation flow per local API process. A future public/multi-user deployment must add an explicit serialized mutation/concurrency strategy and durable storage boundary rather than treating the current file UoW as sufficient for multi-process writes.
+
+This is intentionally deferred until the product actually requires remote concurrent writers.
+
+## 13. Validation baseline
+
+The architecture is protected by dedicated tests for:
+
+- `FileUnitOfWork` commit and rollback;
+- full Source Sync and downstream-only Projection rebuild separation;
+- runtime snapshot reuse, refresh, and stale-state detection;
+- runtime-backed Query / Mapping / Enrichment behavior;
+- preservation of transaction-only Mapping/Enrichment exceptions;
+- Scheduled catch-up batching, idempotency, recovery, and rollback;
+- the canonical CLI parser;
+- the managed development runtime launching `family_spending serve`.
+
+The broader existing Python, legacy Dashboard, shared frontend, Desktop, H5, and WeChat build regressions remain the final release gate for this refactor because the goal is architectural replacement with no product-contract regression.
+
+## 14. Next architecture work
+
+The next useful backend architecture slice should be driven by remaining duplicated orchestration, not folder aesthetics. The strongest candidate is migrating Manual Input create / correct / delete from `manual_input.py` into runtime-owned Application commands using `HouseholdPipeline` and `FileUnitOfWork`.
+
+After those command families are migrated and behavior-equivalence tests remain green, the project can safely consider physical package consolidation such as `domain/`, `application/commands`, and `infrastructure/storage` without merely moving the old coupling into prettier folders.

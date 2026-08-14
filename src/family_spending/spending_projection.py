@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
@@ -13,6 +11,10 @@ from family_spending.financial_projection import (
     FinancialProjection,
     build_financial_projection,
     write_financial_projection,
+)
+from family_spending.infrastructure.file_uow import (
+    FileUnitOfWork,
+    FileUnitOfWorkRollbackError,
 )
 from family_spending.month_coverage import load_month_coverage
 from family_spending.refund_reconciliation import reconcile_refunds
@@ -49,59 +51,6 @@ class SpendingProjection:
     summary: SpendingProjectionSummary
     payload: dict[str, Any]
     financial_projection: FinancialProjection | None = None
-
-
-@dataclass(frozen=True)
-class _ProjectionFileSnapshot:
-    path: Path
-    contents: bytes | None
-
-
-def _snapshot_projection_file(path: Path) -> _ProjectionFileSnapshot:
-    """Capture one derived file so coupled projection writes can be restored together."""
-    return _ProjectionFileSnapshot(
-        path=path,
-        contents=path.read_bytes() if path.exists() else None,
-    )
-
-
-def _restore_projection_file(snapshot: _ProjectionFileSnapshot) -> None:
-    """Restore one derived file atomically, or remove it when it did not exist before the write."""
-    if snapshot.contents is None:
-        snapshot.path.unlink(missing_ok=True)
-        return
-    snapshot.path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temp_name = tempfile.mkstemp(
-        prefix=f".{snapshot.path.name}.",
-        suffix=".rollback",
-        dir=snapshot.path.parent,
-    )
-    temp_path = Path(temp_name)
-    try:
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(snapshot.contents)
-        os.replace(temp_path, snapshot.path)
-    except Exception:
-        temp_path.unlink(missing_ok=True)
-        raise
-
-
-def _restore_projection_files(
-    snapshots: tuple[_ProjectionFileSnapshot, ...],
-    original_error: Exception,
-) -> None:
-    """Restore both derived sidecars if either coupled projection write fails."""
-    failures: list[str] = []
-    for snapshot in reversed(snapshots):
-        try:
-            _restore_projection_file(snapshot)
-        except Exception as exc:  # pragma: no cover - requires a secondary storage failure
-            failures.append(f"{snapshot.path}: {exc}")
-    if failures:
-        raise OSError(
-            "Projection write failed and rollback could not restore all derived files: "
-            + "; ".join(failures)
-        ) from original_error
 
 
 def build_spending_projection(
@@ -171,13 +120,29 @@ def build_spending_projection(
     )
 
 
+def persist_spending_projection(
+    projection: SpendingProjection,
+    output_path: Path,
+    *,
+    financial_output_path: Path | None = None,
+) -> None:
+    """Write projection files inside an already-owned commit boundary."""
+    financial_projection = projection.financial_projection
+    write_spending_statistics_json(projection.payload, output_path)
+    if financial_projection is None:
+        return
+    if financial_output_path is None:
+        financial_output_path = output_path.with_name(FINANCIAL_SUMMARY_FILE.name)
+    write_financial_projection(financial_projection, financial_output_path)
+
+
 def write_spending_projection(
     projection: SpendingProjection,
     output_path: Path,
     *,
     financial_output_path: Path | None = None,
 ) -> None:
-    """Persist spending and its financial sidecar as one recoverable derived-state write."""
+    """Persist spending and its financial sidecar through one shared file unit of work."""
     financial_projection = projection.financial_projection
     if financial_projection is None:
         write_spending_statistics_json(projection.payload, output_path)
@@ -185,13 +150,16 @@ def write_spending_projection(
 
     if financial_output_path is None:
         financial_output_path = output_path.with_name(FINANCIAL_SUMMARY_FILE.name)
-    snapshots = (
-        _snapshot_projection_file(output_path),
-        _snapshot_projection_file(financial_output_path),
-    )
     try:
-        write_spending_statistics_json(projection.payload, output_path)
-        write_financial_projection(financial_projection, financial_output_path)
-    except Exception as exc:
-        _restore_projection_files(snapshots, exc)
-        raise
+        with FileUnitOfWork(
+            (output_path, financial_output_path),
+            label="Projection write",
+        ) as unit_of_work:
+            persist_spending_projection(
+                projection,
+                output_path,
+                financial_output_path=financial_output_path,
+            )
+            unit_of_work.commit()
+    except FileUnitOfWorkRollbackError as exc:
+        raise OSError(str(exc)) from exc
