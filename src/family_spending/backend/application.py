@@ -9,8 +9,15 @@ from family_spending.application import (
     ApplicationStateError,
     ApplicationValidationError,
     FamilySpendingApplication,
+    ManualInputCorrectionView,
+    ManualInputDeletionView,
     ManualInputRecordView,
+    ManualInputView,
     TransactionView,
+)
+from family_spending.backend.manual_commands import (
+    ManualInputCommandRollbackError,
+    ManualInputCommandService,
 )
 from family_spending.backend.paths import BackendPaths
 from family_spending.backend.runtime import (
@@ -29,6 +36,10 @@ from family_spending.enrichment_store import write_enrichment_states
 from family_spending.infrastructure.file_uow import (
     FileUnitOfWork,
     FileUnitOfWorkRollbackError,
+)
+from family_spending.manual_source import (
+    ManualSourceDataError,
+    create_manual_source_entry,
 )
 from family_spending.mapping import load_merchant_mappings
 from family_spending.mapping_review import (
@@ -81,6 +92,7 @@ class RuntimeFamilySpendingApplication(FamilySpendingApplication):
             )
         self.runtime = runtime or BackendRuntime(backend_paths)
         self.backend_paths = backend_paths
+        self._manual_commands = ManualInputCommandService(self.runtime)
         self._scheduled_job_runner = ScheduledInputJobRunner(
             self.runtime,
             self._scheduled_rules_path,
@@ -160,6 +172,140 @@ class RuntimeFamilySpendingApplication(FamilySpendingApplication):
                 )
             )
         return tuple(views)
+
+    def create_manual_input(
+        self,
+        *,
+        transaction_type: object,
+        transaction_date: object,
+        amount: object,
+        description: object,
+        note: object = None,
+    ) -> ManualInputView:
+        """Create one Manual Source through the runtime-owned Source-sync command boundary."""
+        type_value, parsed_date, parsed_amount, description_value = self._manual_source_values(
+            transaction_type=transaction_type,
+            transaction_date=transaction_date,
+            amount=amount,
+            description=description,
+        )
+        note_value = self._optional_text(note, "note")
+        entry = create_manual_source_entry(
+            transaction_type=type_value,
+            transaction_date=parsed_date,
+            amount=parsed_amount,
+            description=description_value,
+            note=note_value,
+        )
+        try:
+            result = self._manual_commands.create(entry)
+        except ReconciliationError as exc:
+            raise ApplicationConflictError(str(exc)) from exc
+        except ManualSourceDataError as exc:
+            raise ApplicationStateError(str(exc)) from exc
+        except ManualInputCommandRollbackError as exc:
+            raise ApplicationStateError(str(exc)) from exc
+        except BackendStateError as exc:
+            raise ApplicationStateError(str(exc)) from exc
+        return ManualInputView(
+            source_record_id=result.source_record_id,
+            action=result.action,
+            transaction=self.get_transaction(result.transaction_id),
+        )
+
+    def correct_manual_input(
+        self,
+        source_record_id: str,
+        *,
+        transaction_type: object,
+        transaction_date: object,
+        amount: object,
+        description: object,
+        note: object = _UNSET,
+    ) -> ManualInputCorrectionView:
+        """Replace one Manual Source identity through the runtime-owned Source-sync boundary."""
+        snapshot = self._load_snapshot()
+        current = next(
+            (
+                entry
+                for entry in snapshot.manual_entries
+                if entry.id == source_record_id
+            ),
+            None,
+        )
+        if current is None:
+            raise ApplicationNotFoundError(
+                f"Manual source record {source_record_id!r} does not exist"
+            )
+        type_value, parsed_date, parsed_amount, description_value = self._manual_source_values(
+            transaction_type=transaction_type,
+            transaction_date=transaction_date,
+            amount=amount,
+            description=description,
+        )
+        update_note = note is not _UNSET
+        note_value = (
+            current.note
+            if not update_note
+            else self._optional_text(note, "note")
+        )
+        replacement = create_manual_source_entry(
+            transaction_type=type_value,
+            transaction_date=parsed_date,
+            amount=parsed_amount,
+            description=description_value,
+            merchant_name=current.merchant_name,
+            category=current.category,
+            note=note_value,
+            currency=current.currency,
+        )
+        try:
+            result = self._manual_commands.correct(
+                source_record_id,
+                replacement,
+                update_note=update_note,
+            )
+        except ReconciliationError as exc:
+            raise ApplicationConflictError(str(exc)) from exc
+        except ManualSourceDataError as exc:
+            raise ApplicationStateError(str(exc)) from exc
+        except ManualInputCommandRollbackError as exc:
+            raise ApplicationStateError(str(exc)) from exc
+        except BackendStateError as exc:
+            raise ApplicationStateError(str(exc)) from exc
+        return ManualInputCorrectionView(
+            replaced_source_record_id=source_record_id,
+            manual_input=ManualInputView(
+                source_record_id=result.source_record_id,
+                action=result.action,
+                transaction=self.get_transaction(result.transaction_id),
+            ),
+        )
+
+    def delete_manual_input(self, source_record_id: str) -> ManualInputDeletionView:
+        """Delete one Manual Source through the runtime-owned Source-sync command boundary."""
+        if not any(
+            entry.id == source_record_id
+            for entry in self._load_snapshot().manual_entries
+        ):
+            raise ApplicationNotFoundError(
+                f"Manual source record {source_record_id!r} does not exist"
+            )
+        try:
+            result = self._manual_commands.delete(source_record_id)
+        except ReconciliationError as exc:
+            raise ApplicationConflictError(str(exc)) from exc
+        except ManualSourceDataError as exc:
+            raise ApplicationStateError(str(exc)) from exc
+        except ManualInputCommandRollbackError as exc:
+            raise ApplicationStateError(str(exc)) from exc
+        except BackendStateError as exc:
+            raise ApplicationStateError(str(exc)) from exc
+        return ManualInputDeletionView(
+            source_record_id=result.source_record_id,
+            transaction_id=result.transaction_id,
+            transaction_removed=result.transaction_removed,
+        )
 
     def apply_mapping_review(
         self,

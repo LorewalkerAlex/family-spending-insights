@@ -1,6 +1,6 @@
 # Family Spending Insights Backend Technical Architecture
 
-> Status: current technical baseline after Backend Runtime / Pipeline foundation
+> Status: current technical baseline after Backend Runtime / Pipeline foundation and Manual Input command migration
 > Scope: Python backend runtime, application orchestration, pipeline execution, file-backed commit boundaries, operator CLI, and compatibility strategy.
 
 ## 1. Purpose
@@ -34,6 +34,7 @@ Application
 BackendRuntime
 ├── CurrentHouseholdSnapshot
 ├── HouseholdPipeline
+├── ManualInputCommandService
 └── ScheduledInputJobRunner
           ↓
 Domain / existing business rules
@@ -54,7 +55,7 @@ This is a **modular monolith**, not a distributed architecture. The file system 
 
 ### `family_spending.backend`
 
-The new `backend/` package contains runtime/application orchestration that previously existed implicitly inside feature-oriented modules.
+The `backend/` package contains runtime/application orchestration that previously existed implicitly inside feature-oriented modules.
 
 ```text
 backend/
@@ -63,14 +64,16 @@ backend/
 ├── pipeline.py
 ├── runtime.py
 ├── application.py
+├── manual_commands.py
 └── scheduled_jobs.py
 ```
 
 - `paths.py` collects the persistent files that participate in the financial runtime.
 - `state.py` reconstructs a coherent already-reconciled `CurrentHouseholdSnapshot` without rerunning identity decisions.
-- `pipeline.py` owns explicit Source Sync and downstream Projection rebuild lifecycles.
+- `pipeline.py` owns explicit Source Sync and downstream Projection rebuild lifecycles, including the correction semantics needed when one Manual Source identity replaces another.
 - `runtime.py` owns the in-process current snapshot and its refresh lifecycle.
-- `application.py` bridges the existing Application/API surface onto the runtime-backed Query and mutation paths that have already migrated.
+- `application.py` bridges the existing Application/API surface onto the runtime-backed Query and mutation paths that have migrated.
+- `manual_commands.py` owns Manual Input create / correct / delete orchestration over one Source-sync plan and one shared file UoW.
 - `scheduled_jobs.py` batches Scheduled Input catch-up and submits the resulting Manual Source candidates through one Source Sync.
 
 ### `family_spending.infrastructure`
@@ -79,7 +82,9 @@ backend/
 
 ### Existing root modules
 
-The repository is intentionally in a staged migration instead of a large directory move. Existing modules such as `reconciliation.py`, `enrichment.py`, `mapping.py`, `manual_input.py`, and `scheduled_input.py` still contain validated business rules or compatibility orchestration.
+The repository is intentionally in a staged migration instead of a large directory move. Existing modules such as `reconciliation.py`, `enrichment.py`, `mapping.py`, `manual_input.py`, and `scheduled_input.py` still contain validated business rules or compatibility entrypoints.
+
+`manual_input.py` is no longer the Application/API orchestration path for Manual Input create / correct / delete. Its existing functions and direct module CLI remain as compatibility surfaces while the product-facing runtime path uses `ManualInputCommandService`.
 
 The physical package structure therefore does **not yet** claim that every root module has been classified into final `domain/`, `application/`, and `infrastructure/` folders. Directory migration should happen only after responsibilities have actually moved.
 
@@ -143,6 +148,8 @@ If those files have not changed, repeated Queries reuse the same snapshot instea
 
 If a tracked file changes externally, `current_state()` performs `refresh()`, which reloads already-reconciled state without Reconciliation. If an external Source change makes links stale, refresh fails explicitly and the caller must run Source Sync.
 
+A failed file-backed mutation can restore the original bytes while changing filesystem metadata such as mtime. In that case the next `current_state()` may legitimately reload an equivalent snapshot. Runtime correctness therefore depends on coherent observable state, not Python object identity across rollback.
+
 The runtime snapshot is a **rebuildable in-process read model**, not a new persistent authority.
 
 ## 6. Pipeline entry points
@@ -166,7 +173,17 @@ CMB / Manual Source facts
 → Runtime refresh
 ```
 
-`HouseholdPipeline.plan_source_sync()` evaluates the candidate next state before persistence. `write_source_sync_plan()` writes an already evaluated plan inside an owning UoW. This split also allows Scheduled Input to add Manual Source records and include the rule cursor in a larger commit boundary without running the financial pipeline separately for every occurrence.
+`HouseholdPipeline.plan_source_sync()` evaluates the candidate next state before persistence. `write_source_sync_plan()` writes an already evaluated plan inside an owning UoW.
+
+The planning API also accepts explicit Manual command context instead of forcing each caller to duplicate reconciliation details:
+
+- `submitted_source_ids` identifies newly submitted Manual Sources whose non-null Note must update current Enrichment even when the new Source matches an existing Transaction;
+- `ManualSourceReplacement` carries correction context so the pipeline can preserve the prior Transaction identity when the corrected authoritative Manual Source still represents the same unmatched real-world transaction;
+- when a correction instead uniquely matches another existing Transaction, normal Reconciliation wins and the replacement Source converges onto that Transaction;
+- when Transaction identity is preserved, description Mapping is reapplied only if current Merchant still follows the old description Mapping; explicit Merchant / Category exceptions remain user-owned;
+- correction Note is changed only when the command explicitly requested a Note update.
+
+This plan/write split allows Manual Input and Scheduled Input to include their own authoritative files in a larger commit boundary without performing redundant complete Source → Projection rebuilds.
 
 ### 6.2 Enrichment / Mapping downstream mutation
 
@@ -205,7 +222,40 @@ $env:PYTHONPATH="src"; uv run --frozen python -m family_spending rebuild project
 
 This path does not rewrite Source identity, Source Links, or Enrichment.
 
-## 7. Scheduled Input batching
+## 7. Manual Input runtime commands
+
+Manual Input create / correct / delete now use `ManualInputCommandService` instead of the legacy `manual_input.py` Application orchestration.
+
+All three commands start from `BackendRuntime.current_state()`, evaluate one candidate Source-sync plan, and commit their authoritative Manual Source change together with all downstream files:
+
+```text
+Runtime current snapshot
+→ candidate Manual Source set
+→ one HouseholdPipeline.plan_source_sync()
+→ one FileUnitOfWork
+   ├── Manual Source
+   ├── Source Links
+   ├── Enrichment
+   ├── spending Projection
+   └── financial Projection
+→ Runtime refresh
+```
+
+Create appends one source-native Manual record and uses its actual Reconciliation decision for `created` / `matched` / `reused` behavior.
+
+Correction replaces the Source Record identity rather than editing Transaction Core in place. The pipeline preserves the established correction semantics:
+
+- an unmatched manual-only correction keeps the prior Transaction identity;
+- a replacement that uniquely matches another current Transaction converges to that Transaction instead;
+- Mapping-following Merchant/default Category can follow the corrected description;
+- explicit Merchant or Category exceptions remain attached to the preserved Transaction;
+- omitted Note preserves current Enrichment Note, while an explicitly supplied Note, including null, updates it.
+
+Delete removes only the selected Manual Source from the candidate Source set. The resulting Source Sync determines whether its Transaction survives because another authoritative/supporting Source still backs it.
+
+A normal captured failure restores Manual Source, Source Links, Enrichment, and both Projections through the shared `FileUnitOfWork`; the command never publishes a partially written runtime state.
+
+## 8. Scheduled Input batching
 
 Scheduled Input remains orchestration, not a financial Source type.
 
@@ -233,7 +283,7 @@ Stable `rule_id + occurrence_date` Source identity preserves idempotency. If a p
 
 V1 still has no daemon or system scheduler. It runs during Application initialization, rule mutation when due work must execute, or explicit `jobs run-due` / API Run Due.
 
-## 8. FileUnitOfWork
+## 9. FileUnitOfWork
 
 `FileUnitOfWork` centralizes a pattern that was previously duplicated in feature modules.
 
@@ -251,7 +301,7 @@ If an exception escapes, or the context exits without `commit()`, participants a
 
 This is an **application-level local file transaction**, not a durable database transaction or crash journal. It protects coordinated mutations from ordinary captured failures; process-level crash durability remains bounded by the atomic-write behavior of the individual stores.
 
-## 9. Application and compatibility boundary
+## 10. Application and compatibility boundary
 
 `RuntimeFamilySpendingApplication` subclasses the existing `FamilySpendingApplication` so the HTTP contract did not need to be rewritten during the architecture migration.
 
@@ -259,19 +309,20 @@ Already runtime-backed:
 
 - Transaction / Mapping Review and related snapshot-based Queries via the overridden `_load_snapshot()`;
 - Category and Manual description/input Queries;
+- Manual Input create / correct / delete through `ManualInputCommandService`;
 - Mapping Review Apply;
 - transaction Enrichment mutation;
 - Scheduled due execution.
 
-Still using compatibility orchestration:
+Still using compatibility surfaces:
 
-- Manual Input create / correct / delete;
-- some existing feature-level helpers and module CLIs;
-- legacy direct `python -m family_spending.http_api` and `python -m family_spending.statistics_generation` entrypoints.
+- some existing feature-level helpers and direct module CLIs, including `python -m family_spending.manual_input`;
+- legacy direct `python -m family_spending.http_api` and `python -m family_spending.statistics_generation` entrypoints;
+- the base `FamilySpendingApplication`, which remains available for compatibility tests and callers while managed runtime/HTTP uses `RuntimeFamilySpendingApplication`.
 
-Those compatibility paths remain tested and functional. They are migration debt, not a second intended architecture. Future refactors should move one coherent command family at a time onto the runtime/pipeline/UoW boundaries before considering broad package relocation.
+Those compatibility paths remain tested and functional. They are not a second intended architecture. Any further migration should be justified by duplicated orchestration or product value rather than by a desire to make the directory tree look more layered.
 
-## 10. Operator CLI and process lifecycle
+## 11. Operator CLI and process lifecycle
 
 The canonical backend operator surface is:
 
@@ -305,7 +356,7 @@ npm run dev
 
 Desktop and Mini H5 proxies therefore hit the same backend runtime that the standalone operator CLI uses.
 
-## 11. Dependency direction
+## 12. Dependency direction
 
 The desired dependency direction is:
 
@@ -321,13 +372,13 @@ infrastructure implementations
 
 The staged migration is not yet perfectly expressed by physical imports because validated legacy modules still combine responsibilities. New work should avoid making that worse:
 
-- Query/UI code must not perform Vault/file I/O or financial recomputation directly;
+- Query/UI code must not perform file I/O or financial recomputation directly;
 - Application commands should call explicit pipeline stages rather than reproduce Source → Projection steps;
 - rollback mechanics belong in the shared UoW, not copied into every new feature;
 - domain identity rules must remain independent of JSON/YAML/HTTP concerns;
 - persistent storage changes should be hidden behind the existing read/write boundaries and future repository abstractions rather than leaking into clients.
 
-## 12. Concurrency and runtime scope
+## 13. Concurrency and runtime scope
 
 The current backend is a local single-process product. `BackendRuntime` is an in-process state owner; it is not a cross-process cache or lock manager.
 
@@ -335,7 +386,7 @@ The current architecture therefore assumes one authoritative mutation flow per l
 
 This is intentionally deferred until the product actually requires remote concurrent writers.
 
-## 13. Validation baseline
+## 14. Validation baseline
 
 The architecture is protected by dedicated tests for:
 
@@ -343,15 +394,26 @@ The architecture is protected by dedicated tests for:
 - full Source Sync and downstream-only Projection rebuild separation;
 - runtime snapshot reuse, refresh, and stale-state detection;
 - runtime-backed Query / Mapping / Enrichment behavior;
+- Manual Input create / correct / delete through one runtime-owned Source-sync command boundary;
+- Manual correction Transaction identity preservation versus convergence to an existing Transaction;
+- preservation of explicit Merchant / Category / Note semantics during Manual correction;
+- Manual deletion behavior for manual-only versus CMB-backed Transactions;
+- rollback of Manual Source, Source Links, Enrichment, and both Projections on mutation failure;
 - preservation of transaction-only Mapping/Enrichment exceptions;
 - Scheduled catch-up batching, idempotency, recovery, and rollback;
 - the canonical CLI parser;
 - the managed development runtime launching `family_spending serve`.
 
-The broader existing Python, legacy Dashboard, shared frontend, Desktop, H5, and WeChat build regressions remain the final release gate for this refactor because the goal is architectural replacement with no product-contract regression.
+The broader existing Python, legacy Dashboard, shared frontend, Desktop, H5, and WeChat build regressions remain the final release gate for architecture changes because the goal is architectural replacement with no product-contract regression.
 
-## 14. Next architecture work
+## 15. Next architecture work
 
-The next useful backend architecture slice should be driven by remaining duplicated orchestration, not folder aesthetics. The strongest candidate is migrating Manual Input create / correct / delete from `manual_input.py` into runtime-owned Application commands using `HouseholdPipeline` and `FileUnitOfWork`.
+Manual Input create / correct / delete is no longer a major runtime compatibility gap. The main financial product mutations now share the same Runtime / Pipeline / UoW model: Manual Source mutation, Mapping Review Apply, transaction Enrichment mutation, and Scheduled due execution.
 
-After those command families are migrated and behavior-equivalence tests remain green, the project can safely consider physical package consolidation such as `domain/`, `application/commands`, and `infrastructure/storage` without merely moving the old coupling into prettier folders.
+The next backend step should therefore start with a **compatibility and responsibility audit**, not another predetermined migration. In particular, review the remaining direct module CLIs, base `FamilySpendingApplication`, feature helpers, and root-module responsibilities to distinguish:
+
+- compatibility surfaces that are cheap and useful to keep;
+- orchestration that still duplicates the runtime model and is worth migrating;
+- stable domain/storage modules that merely live at the repository root and do not need to move.
+
+Only after that audit should the project decide whether a physical consolidation such as `domain/`, `application/commands`, or `infrastructure/storage` produces real maintenance value. Broad directory relocation is not itself a backend architecture milestone.

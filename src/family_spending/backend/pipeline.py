@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from decimal import Decimal
+from pathlib import Path
 from types import MappingProxyType
 
 from family_spending.backend.paths import BackendPaths
@@ -14,6 +14,7 @@ from family_spending.enrichment import (
     INCOME_DEFAULT_CATEGORY,
     TransactionEnrichmentState,
     materialize_enrichment_state,
+    update_merchant_enrichment_state,
     update_note_enrichment_state,
 )
 from family_spending.enrichment_store import (
@@ -90,6 +91,16 @@ class HouseholdSourceSyncPlan:
     summary: HouseholdSyncSummary
 
 
+@dataclass(frozen=True)
+class ManualSourceReplacement:
+    """Describe correction semantics that must be applied inside one Source-sync plan."""
+
+    previous_entry: ManualSourceEntry
+    replacement_entry: ManualSourceEntry
+    previous_link: TransactionSourceLink
+    update_note: bool
+
+
 def _normalize_legacy_income_states(
     transactions: tuple[Transaction, ...],
     states: tuple[TransactionEnrichmentState, ...],
@@ -150,11 +161,14 @@ class HouseholdPipeline:
         *,
         manual_entries: tuple[ManualSourceEntry, ...] | None = None,
         submitted_source_ids: tuple[str, ...] = (),
+        manual_replacement: ManualSourceReplacement | None = None,
     ) -> HouseholdSourceSyncPlan:
         """Evaluate Source/Reconciliation/Enrichment/Projection once without writing files.
 
-        `submitted_source_ids` identifies explicit Manual commands whose non-null Note must
+        `submitted_source_ids` identifies explicit Manual creates whose non-null Note must
         update current Enrichment even when reconciliation matched an existing Transaction.
+        `manual_replacement` preserves correction identity and explicit Note semantics inside
+        the same Source-sync planning boundary.
         """
         raw_transactions = read_transactions_csv(self.paths.transactions)
         if manual_entries is None:
@@ -165,48 +179,138 @@ class HouseholdPipeline:
             self.paths.merchants,
             self.paths.categories,
         )
+        existing_enrichment_by_id = {
+            item.transaction_id: item for item in existing_enrichment_states
+        }
         state = build_household_domain_state(
             raw_transactions,
             manual_entries,
             mappings,
             existing_links=existing_links,
-            existing_enrichment_states={
-                item.transaction_id: item for item in existing_enrichment_states
-            },
+            existing_enrichment_states=existing_enrichment_by_id,
         )
+
+        preserved_replacement_identity = False
+        if manual_replacement is not None:
+            replacement = manual_replacement
+            if replacement.previous_link not in existing_links:
+                raise ValueError(
+                    "Manual replacement previous link is not part of current Source Link state"
+                )
+            provisional_decision = next(
+                (
+                    item
+                    for item in state.reconciliation.decisions
+                    if item.source_record_id == replacement.replacement_entry.id
+                ),
+                None,
+            )
+            if provisional_decision is None:
+                raise ValueError(
+                    "Manual replacement Source was not present in reconciliation decisions: "
+                    f"{replacement.replacement_entry.id!r}"
+                )
+            if (
+                replacement.previous_link.role == "authoritative"
+                and replacement.previous_link.transaction_id
+                not in state.transactions_by_id
+                and provisional_decision.action == "created"
+            ):
+                remapped_links = tuple(
+                    TransactionSourceLink(
+                        transaction_id=item.transaction_id,
+                        source_record_id=(
+                            replacement.replacement_entry.id
+                            if item.source_record_id == replacement.previous_entry.id
+                            else item.source_record_id
+                        ),
+                        role=item.role,
+                    )
+                    for item in existing_links
+                )
+                state = build_household_domain_state(
+                    raw_transactions,
+                    manual_entries,
+                    mappings,
+                    existing_links=remapped_links,
+                    existing_enrichment_states=existing_enrichment_by_id,
+                )
+                preserved_replacement_identity = True
+
         enrichment_states = _normalize_legacy_income_states(
             state.reconciliation.transactions,
             state.enrichment_states,
         )
+        entries_by_id = {entry.id: entry for entry in manual_entries}
+        decisions_by_source = {
+            decision.source_record_id: decision
+            for decision in state.reconciliation.decisions
+        }
+        states_by_id = {
+            item.transaction_id: item for item in enrichment_states
+        }
 
-        if submitted_source_ids:
-            entries_by_id = {entry.id: entry for entry in manual_entries}
-            decisions_by_source = {
-                decision.source_record_id: decision
-                for decision in state.reconciliation.decisions
-            }
-            states_by_id = {
-                item.transaction_id: item for item in enrichment_states
-            }
-            for source_record_id in submitted_source_ids:
-                entry = entries_by_id.get(source_record_id)
-                decision = decisions_by_source.get(source_record_id)
-                if entry is None or decision is None:
-                    raise ValueError(
-                        "Submitted Manual Source must exist in the evaluated reconciliation state: "
-                        f"{source_record_id!r}"
-                    )
-                if entry.note is None:
-                    continue
-                states_by_id[decision.transaction_id] = update_note_enrichment_state(
-                    states_by_id[decision.transaction_id],
-                    entry.note,
+        for source_record_id in submitted_source_ids:
+            entry = entries_by_id.get(source_record_id)
+            decision = decisions_by_source.get(source_record_id)
+            if entry is None or decision is None:
+                raise ValueError(
+                    "Submitted Manual Source must exist in the evaluated reconciliation state: "
+                    f"{source_record_id!r}"
                 )
-            enrichment_states = tuple(
-                states_by_id[transaction.id]
-                for transaction in state.reconciliation.transactions
+            if entry.note is None:
+                continue
+            states_by_id[decision.transaction_id] = update_note_enrichment_state(
+                states_by_id[decision.transaction_id],
+                entry.note,
             )
 
+        if manual_replacement is not None:
+            replacement = manual_replacement
+            decision = decisions_by_source.get(replacement.replacement_entry.id)
+            if decision is None:
+                raise ValueError(
+                    "Manual replacement Source must exist in the final reconciliation state: "
+                    f"{replacement.replacement_entry.id!r}"
+                )
+            corrected_state = states_by_id[decision.transaction_id]
+            if preserved_replacement_identity:
+                previous_mapping_merchant = (
+                    mappings.description_to_merchant.get(
+                        replacement.previous_entry.description
+                    )
+                    if replacement.previous_entry.description is not None
+                    else None
+                )
+                if corrected_state.merchant_name == previous_mapping_merchant:
+                    replacement_merchant = (
+                        mappings.description_to_merchant.get(
+                            replacement.replacement_entry.description
+                        )
+                        if replacement.replacement_entry.description is not None
+                        else None
+                    )
+                    replacement_default = (
+                        mappings.merchant_to_category.get(replacement_merchant)
+                        if replacement_merchant is not None
+                        else None
+                    )
+                    corrected_state = update_merchant_enrichment_state(
+                        corrected_state,
+                        merchant_name=replacement_merchant,
+                        default_category=replacement_default,
+                    )
+            if replacement.update_note:
+                corrected_state = update_note_enrichment_state(
+                    corrected_state,
+                    replacement.replacement_entry.note,
+                )
+            states_by_id[decision.transaction_id] = corrected_state
+
+        enrichment_states = tuple(
+            states_by_id[transaction.id]
+            for transaction in state.reconciliation.transactions
+        )
         enrichment_states_by_id = {
             item.transaction_id: item for item in enrichment_states
         }
