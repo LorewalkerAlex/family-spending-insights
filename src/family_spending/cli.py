@@ -7,7 +7,7 @@ from typing import Sequence
 from family_spending.backend import BackendPaths, BackendRuntime
 from family_spending.backend.application import RuntimeFamilySpendingApplication
 from family_spending.backend.http_server import create_runtime_http_server
-from family_spending.statistics_generation import format_statistics_generation_report
+from family_spending.backend.pipeline import HouseholdSyncSummary
 
 
 def _iso_date(value: str) -> date:
@@ -69,10 +69,34 @@ def _serve(host: str, port: int) -> None:
         server.server_close()
 
 
+def _format_household_sync_summary(summary: HouseholdSyncSummary) -> str:
+    """Format the runtime-owned Source-sync summary without relying on compatibility-only fields."""
+    return "\n".join(
+        (
+            f"Raw transactions: {summary.raw_transactions}",
+            f"Zero-amount transactions ignored: {summary.zero_amount_transactions}",
+            f"Refund transactions: {summary.refund_transactions}",
+            f"Same-merchant refund matches: {summary.same_merchant_refund_matches}",
+            f"Same-merchant matched amount: {format(summary.same_merchant_matched_amount, 'f')}",
+            f"Net consumption transactions: {summary.net_consumption_transactions}",
+            f"Fully refunded transactions: {summary.fully_refunded_transactions}",
+            f"Partially refunded transactions: {summary.partially_refunded_transactions}",
+            f"Unmatched refunds: {summary.unmatched_refund_count}",
+            f"Unmatched refund amount: {format(summary.unmatched_refund_amount, 'f')}",
+            f"Unclassified net transactions: {summary.unclassified_net_transactions}",
+            f"Months: {summary.months}",
+            f"Total net spending: {format(summary.total_net_spending, 'f')}",
+            f"Shown months: {summary.shown_months}",
+            f"Shown net spending: {format(summary.shown_net_spending, 'f')}",
+        )
+    )
+
+
 def _sync() -> None:
+    """Run the runtime Source-sync lifecycle and report only fields owned by its summary contract."""
     runtime = BackendRuntime(BackendPaths())
     summary = runtime.sync_sources()
-    print(format_statistics_generation_report(summary))
+    print(_format_household_sync_summary(summary))
 
 
 def _run_due(as_of: date | None) -> None:

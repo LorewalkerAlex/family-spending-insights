@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from datetime import date
 from decimal import Decimal
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,7 +16,8 @@ from family_spending.backend import (
     BackendStateError,
     HouseholdPipeline,
 )
-from family_spending.cli import build_parser
+from family_spending.backend.pipeline import HouseholdSyncSummary
+from family_spending.cli import build_parser, main
 from family_spending.ingestion.cmb_email_transactions import (
     CmbTransaction,
     read_transactions_csv,
@@ -166,6 +169,40 @@ class BackendArchitectureTests(unittest.TestCase):
         self.assertEqual(rebuild.rebuild_target, "projections")
         diagnose = parser.parse_args(["diagnose", "state"])
         self.assertEqual(diagnose.diagnose_target, "state")
+
+    def test_sync_cli_reports_runtime_summary_without_legacy_output_path(self) -> None:
+        summary = HouseholdSyncSummary(
+            raw_transactions=12,
+            zero_amount_transactions=1,
+            refund_transactions=2,
+            same_merchant_refund_matches=1,
+            same_merchant_matched_amount=Decimal("8.50"),
+            net_consumption_transactions=9,
+            fully_refunded_transactions=1,
+            partially_refunded_transactions=1,
+            unmatched_refund_count=1,
+            unmatched_refund_amount=Decimal("3.25"),
+            unclassified_net_transactions=2,
+            months=4,
+            total_net_spending=Decimal("123.45"),
+            shown_months=3,
+            shown_net_spending=Decimal("100.00"),
+        )
+        output = StringIO()
+
+        with (
+            patch("family_spending.cli.BackendPaths", return_value=self.paths),
+            patch("family_spending.cli.BackendRuntime") as runtime_type,
+            redirect_stdout(output),
+        ):
+            runtime_type.return_value.sync_sources.return_value = summary
+            main(["sync"])
+
+        report = output.getvalue()
+        runtime_type.return_value.sync_sources.assert_called_once_with()
+        self.assertIn("Raw transactions: 12", report)
+        self.assertIn("Shown net spending: 100.00", report)
+        self.assertNotIn("Output:", report)
 
 
 if __name__ == "__main__":
