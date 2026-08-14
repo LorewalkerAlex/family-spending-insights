@@ -6,7 +6,7 @@ from typing import Sequence
 
 from family_spending.backend import BackendPaths, BackendRuntime
 from family_spending.backend.application import RuntimeFamilySpendingApplication
-from family_spending.http_api import create_http_server
+from family_spending.backend.http_server import create_runtime_http_server
 from family_spending.statistics_generation import format_statistics_generation_report
 
 
@@ -59,7 +59,7 @@ def _serve(host: str, port: int) -> None:
     """Keep HTTP transport startup separate from the command parser and testable lifecycle."""
     application = RuntimeFamilySpendingApplication()
     application.initialize()
-    server = create_http_server(application, host, port)
+    server = create_runtime_http_server(application, host, port)
     print(f"Family Spending API: http://{host}:{port}")
     try:
         server.serve_forever()

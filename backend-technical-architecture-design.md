@@ -1,6 +1,6 @@
 # Family Spending Insights Backend Technical Architecture
 
-> Status: current technical baseline after Backend Runtime / Pipeline foundation and Manual Input command migration
+> Status: current technical baseline after Backend Runtime / Pipeline foundation, Manual Input command migration, and runtime-owned Spending Statistics query exposure
 > Scope: Python backend runtime, application orchestration, pipeline execution, file-backed commit boundaries, operator CLI, and compatibility strategy.
 
 ## 1. Purpose
@@ -65,7 +65,9 @@ backend/
 ├── runtime.py
 ├── application.py
 ├── manual_commands.py
-└── scheduled_jobs.py
+├── scheduled_jobs.py
+├── projection_queries.py
+└── http_server.py
 ```
 
 - `paths.py` collects the persistent files that participate in the financial runtime.
@@ -75,6 +77,8 @@ backend/
 - `application.py` bridges the existing Application/API surface onto the runtime-backed Query and mutation paths that have migrated.
 - `manual_commands.py` owns Manual Input create / correct / delete orchestration over one Source-sync plan and one shared file UoW.
 - `scheduled_jobs.py` batches Scheduled Input catch-up and submits the resulting Manual Source candidates through one Source Sync.
+- `projection_queries.py` reads generated Projection JSON for read-only Application queries without hiding a rebuild behind GET.
+- `http_server.py` is the canonical runtime HTTP transport. It preserves the existing compatibility routes and adds runtime-owned read endpoints without giving the request handler direct file-I/O responsibility.
 
 ### `family_spending.infrastructure`
 
@@ -133,7 +137,7 @@ BackendRuntime.bootstrap()
 
 A normal `serve` startup bootstraps once before accepting client traffic, then executes due Scheduled Input orchestration.
 
-### Query reuse
+### Snapshot-backed Query reuse
 
 ```text
 HTTP Query
@@ -151,6 +155,10 @@ If a tracked file changes externally, `current_state()` performs `refresh()`, wh
 A failed file-backed mutation can restore the original bytes while changing filesystem metadata such as mtime. In that case the next `current_state()` may legitimately reload an equivalent snapshot. Runtime correctness therefore depends on coherent observable state, not Python object identity across rollback.
 
 The runtime snapshot is a **rebuildable in-process read model**, not a new persistent authority.
+
+### Generated Projection reads
+
+Generated report queries have a different read source from snapshot-backed entity queries. `RuntimeFamilySpendingApplication.get_spending_statistics()` delegates to `projection_queries.py`, which validates and reads the already-generated `spending_statistics.json` schema-v2 document. The canonical runtime HTTP handler calls that Application method; it does not open the Projection file itself. A GET therefore exposes current persisted Projection state without running Source Sync, Reconciliation, or Projection rebuild.
 
 ## 6. Pipeline entry points
 
@@ -308,6 +316,7 @@ This is an **application-level local file transaction**, not a durable database 
 Already runtime-backed:
 
 - Transaction / Mapping Review and related snapshot-based Queries via the overridden `_load_snapshot()`;
+- generated Spending Statistics projection reads through `get_spending_statistics()` and `projection_queries.py`;
 - Category and Manual description/input Queries;
 - Manual Input create / correct / delete through `ManualInputCommandService`;
 - Mapping Review Apply;
@@ -340,7 +349,7 @@ python -m family_spending
 
 Meanings:
 
-- `serve`: bootstrap current Source state, run due orchestration, then serve the local JSON API;
+- `serve`: bootstrap current Source state, run due orchestration, then serve the canonical runtime JSON API through `backend/http_server.py`;
 - `sync`: full Source Sync and downstream Projection refresh;
 - `jobs run-due`: materialize Scheduled Input occurrences due through today or `--as-of`;
 - `rebuild projections`: downstream-only rebuild from already-reconciled state;
@@ -354,7 +363,7 @@ npm run dev
 → python -m family_spending serve --port <managed-port>
 ```
 
-Desktop and Mini H5 proxies therefore hit the same backend runtime that the standalone operator CLI uses.
+Desktop and Mini H5 proxies therefore hit the same backend runtime that the standalone operator CLI uses. The runtime server delegates financial reads to `RuntimeFamilySpendingApplication`; for example `GET /api/spending-statistics` reads the already-generated schema-v2 projection through the Application query boundary and does not run Source Sync or Projection rebuild. Legacy `python -m family_spending.http_api` remains a compatibility transport entry rather than the managed-runtime server.
 
 ## 12. Dependency direction
 
@@ -372,7 +381,7 @@ infrastructure implementations
 
 The staged migration is not yet perfectly expressed by physical imports because validated legacy modules still combine responsibilities. New work should avoid making that worse:
 
-- Query/UI code must not perform file I/O or financial recomputation directly;
+- Query/UI and HTTP transport code must not perform financial file I/O or recomputation directly; read-only Projection access belongs behind an Application/query boundary;
 - Application commands should call explicit pipeline stages rather than reproduce Source → Projection steps;
 - rollback mechanics belong in the shared UoW, not copied into every new feature;
 - domain identity rules must remain independent of JSON/YAML/HTTP concerns;
@@ -394,6 +403,7 @@ The architecture is protected by dedicated tests for:
 - full Source Sync and downstream-only Projection rebuild separation;
 - runtime snapshot reuse, refresh, and stale-state detection;
 - runtime-backed Query / Mapping / Enrichment behavior;
+- read-only Spending Statistics API behavior, including Application-owned Projection access, no Source Sync on GET, missing-projection error handling, and preservation of existing runtime routes;
 - Manual Input create / correct / delete through one runtime-owned Source-sync command boundary;
 - Manual correction Transaction identity preservation versus convergence to an existing Transaction;
 - preservation of explicit Merchant / Category / Note semantics during Manual correction;

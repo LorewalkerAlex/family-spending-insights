@@ -43,6 +43,10 @@ import {
   type ScheduledInputRun,
   type Transaction,
 } from "./contracts";
+import {
+  spendingStatisticsResponseSchema,
+  type SpendingStatistics,
+} from "./spending-analytics";
 import { requireHttpStatus, type HttpTransport } from "./transport";
 
 function requireId(value: string, label: string): string {
@@ -59,6 +63,11 @@ export class FamilySpendingService {
   async getFinancialSummary(): Promise<FinancialSummary> {
     const response = await this.transport.request({ method: "GET", path: "/api/financial-summary" });
     return financialSummaryResponseSchema.parse(requireHttpStatus(response, 200)).financial_summary;
+  }
+
+  async getSpendingStatistics(): Promise<SpendingStatistics> {
+    const response = await this.transport.request({ method: "GET", path: "/api/spending-statistics" });
+    return spendingStatisticsResponseSchema.parse(requireHttpStatus(response, 200)).spending_statistics;
   }
 
   async listFeedback(): Promise<readonly FeedbackItem[]> {
@@ -240,5 +249,4 @@ export class FamilySpendingService {
     const response = await this.transport.request({ method: "POST", path: "/api/scheduled-inputs/run-due" });
     return scheduledInputRunResponseSchema.parse(requireHttpStatus(response, 200)).scheduled_input_run;
   }
-
 }

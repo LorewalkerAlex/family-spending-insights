@@ -1,13 +1,13 @@
 # Family Spending Insights Frontend Product Architecture
 
-> Status: V1 canonical baseline validated through the PC Web workspace-completion batch on 2026-08-14
+> Status: V1 canonical baseline through the PC Web Spending Analytics slice on 2026-08-14
 > Design origin baseline: `LorewalkerAlex/family-spending-insights` `main` @ `f06e0dac733eb80804fb0342895a72a9c4ea0fd6`
 > POC implementation started from: `main` @ `898b238fbad25a5da1545cd4a5c7f9dd58a12dd7`
 > Scope: frontend product information architecture, Desktop/Mini presentation model, cross-platform boundaries, technology baseline, POC scope, and Design System V1.
 
 ## 1. Purpose
 
-The existing `local_dashboard/` proved the backend/Application contracts and multiple product workflows, but it is still a development-oriented flat page. Financial Summary, Manual Input, Scheduled Input, Mapping Review, transaction management, and charts are all presented in one long document. The cross-platform foundation POC established the replacement presentation architecture, the Transactions migration validated a larger read/write workflow, and the current PC Web stabilization batch has now promoted all five canonical Desktop workspaces to real Application/API-backed surfaces. Further work should prioritize Desktop stability and missing analytical value before pursuing Mini presentation parity, without changing the backend domain truth that has already been validated.
+The existing `local_dashboard/` proved the backend/Application contracts and multiple product workflows, but it is still a development-oriented flat page. Financial Summary, Manual Input, Scheduled Input, Mapping Review, transaction management, and charts are all presented in one long document. The cross-platform foundation POC established the replacement presentation architecture, the Transactions migration validated a larger read/write workflow, and the PC Web stabilization batch promoted all five canonical Desktop workspaces to real Application/API-backed surfaces. The current Spending Analytics slice starts closing the remaining Overview analytical gap by exposing the existing Spending Statistics projection through the formal runtime API and rendering month/category/merchant structure without moving financial aggregation into React. Further work should continue PC Web-first product value and real-use feedback before pursuing Mini presentation parity.
 
 The target product has two formal presentation surfaces:
 
@@ -113,7 +113,7 @@ Overview is read-first. It should prioritize:
 
 1. Financial Hero.
 2. Main financial trend/period context.
-3. Secondary breakdowns and changes.
+3. Secondary breakdowns and changes, including month-level spending structure by Category and Merchant/display when the backend already provides those aggregates.
 4. Needs Attention summary linking to Review.
 
 It must not become another collection of equally weighted KPI cards.
@@ -328,13 +328,14 @@ The root npm workspace continues to use the repository's npm/package-lock workfl
 
 The new cross-platform frontend must not depend on reading repository-relative `data/reports/*.json` files directly.
 
-The existing Financial Summary projection should be exposed through the formal Application/HTTP boundary:
+The existing generated financial projections are exposed through formal read-only Application/HTTP boundaries:
 
 ~~~text
 GET /api/financial-summary
+GET /api/spending-statistics
 ~~~
 
-This is a read operation only. It returns the current generated projection and must not hide a rebuild or mutation behind GET.
+Both are read operations only. They return the current generated projections and must not hide Source Sync, Projection rebuild, or another mutation behind GET. `GET /api/spending-statistics` exposes schema v2 for Overview spending analytics while keeping repository-relative `data/reports/*.json` paths out of client code.
 
 Feedback V1 requires:
 
@@ -373,7 +374,7 @@ DELETE /api/scheduled-inputs/{rule_id}
 POST   /api/scheduled-inputs/run-due
 ~~~
 
-The shared frontend owns decoding, request semantics, formatting, and presentation transforms for these endpoints. Source identity, Reconciliation, Expense Mapping, Income non-Mapping behavior, Mapping Review propagation/token semantics, Scheduled Input due/idempotency, Enrichment propagation, and downstream Projection refresh remain backend responsibilities.
+The shared frontend owns decoding, request semantics, formatting, and presentation transforms for these endpoints. For Spending Statistics it also validates safe-integer amounts, month uniqueness, all/shown aggregates, and per-month Category/Merchant reconciliation before building display-only shares and rankings. Source identity, Reconciliation, Expense Mapping, Income non-Mapping behavior, Mapping Review propagation/token semantics, Scheduled Input due/idempotency, Enrichment propagation, month completeness, and downstream Projection refresh remain backend responsibilities.
 
 ## 11. Cross-platform frontend POC
 
@@ -561,6 +562,31 @@ Validation strategy after this milestone:
 
 The combined Desktop smoke for this batch covered Overview, Transactions, Review, Automation, and Feedback as one product surface. Automation additionally created and deleted a paused future rule so the real form/API connection was exercised without generating a scheduled occurrence.
 
+### 11.8 PC Web Spending Analytics
+
+After the five Desktop workspaces became functional, the next product gap was not another workspace but richer read-first analysis inside Overview. This slice exposes the already-generated `spending_statistics.json` schema v2 through the runtime Application/API boundary and consumes it through shared frontend semantics.
+
+Backend/Application/API:
+
+- `python -m family_spending serve` uses the canonical runtime HTTP server, which preserves existing routes and adds `GET /api/spending-statistics`;
+- the HTTP handler delegates the read to `RuntimeFamilySpendingApplication.get_spending_statistics()` rather than reading a Projection file directly from transport code;
+- the query reads the current generated schema-v2 Projection only and returns a state error when it is missing or structurally unsupported; it does not run Source Sync or Projection rebuild on GET.
+
+Shared frontend core:
+
+- adds strict Spending Statistics decoding for schema version, safe integers, unique months, `all_data` / `shown_data` reconciliation, and each month's Category / Merchant amount-and-count reconciliation;
+- adds `FamilySpendingService.getSpendingStatistics()` over the formal endpoint;
+- builds month options, formatted totals, Category share/ranking, and top Merchant/display rows as presentation transforms only; backend ordering, `show`, `is_complete`, `待分类`, merchant identity, and aggregated amounts remain authoritative.
+
+Desktop Overview:
+
+- keeps Financial Hero, income/net-spending trend, and recent-month summary;
+- adds a Spending Structure section with a selector limited to backend `show=true` months, selected-month net spending/count/coverage facts, Category composition/ranking, and top Merchant/display rows;
+- preserves unmapped Expense visibility through the backend `待分类` Category and raw-description display row instead of inventing a frontend Merchant;
+- loads Financial Summary and Spending Statistics independently so a spending-analytics refresh failure does not erase an already-loaded financial Overview.
+
+This slice intentionally does not migrate the legacy six-chart experiment or add growth-rate / MoM / YoY reasoning. It closes the Category/Merchant structural read gap first, using the same automated-business-correctness and PC-Web-first acceptance strategy established in 11.7.
+
 ## 12. Design System V1
 
 ### 12.1 Visual character
@@ -694,11 +720,11 @@ Migration proceeds by complete vertical capabilities:
 4. retire equivalent `local_dashboard/` functionality only after the replacement has real validation coverage.
 5. remove the legacy Dashboard only when all required functionality has migrated and regression coverage proves parity.
 
-The new frontend should improve presentation architecture without destabilizing the already-validated Python domain pipeline. Foundation, Transactions, and the PC Web Review / Automation / Overview-trend stabilization batch are now complete. All five canonical Desktop workspaces are real Application/API-backed surfaces, so the next phase should prioritize PC Web stability, analytical gaps, and real-use feedback before pursuing Mini parity. Mini Review is already migrated; Mini Automation and broader mobile product acceptance remain deferred to a dedicated Mini phase. Legacy capability should still be retired only after its replacement has equivalent product value and regression coverage.
+The new frontend should improve presentation architecture without destabilizing the already-validated Python domain pipeline. Foundation, Transactions, the PC Web Review / Automation / Overview-trend stabilization batch, and the first Spending Analytics slice are now complete. All five canonical Desktop workspaces are real Application/API-backed surfaces, and Overview now consumes both Financial Summary and formal Spending Statistics reads. The next phase should continue PC Web stability, remaining analytical gaps, and real-use feedback before pursuing Mini parity. Mini Review is already migrated; Mini Automation and broader mobile product acceptance remain deferred to a dedicated Mini phase. Legacy capability should still be retired only after its replacement has equivalent product value and regression coverage.
 
 ## 14. Decision status
 
-This document is the V1 canonical frontend product architecture baseline validated through the PC Web workspace-completion milestone. Low-level implementation details and validation mechanics may continue to adapt to repository/toolchain facts, but changes to the following require an explicit design decision rather than accidental drift:
+This document is the V1 canonical frontend product architecture baseline through the PC Web Spending Analytics milestone. Low-level implementation details and validation mechanics may continue to adapt to repository/toolchain facts, but changes to the following require an explicit design decision rather than accidental drift:
 
 - canonical workspaces and global commands
 - Desktop vs Mini product/presentation distinction

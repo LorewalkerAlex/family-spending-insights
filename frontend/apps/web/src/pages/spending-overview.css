@@ -1,0 +1,262 @@
+.spending-analytics {
+  min-width: 0;
+}
+
+.spending-analytics__heading {
+  align-items: center;
+}
+
+.spending-analytics__controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--fsi-space-2);
+  min-width: 250px;
+}
+
+.spending-analytics__refreshing {
+  color: var(--fsi-color-text-muted);
+  font-size: 11px;
+}
+
+.spending-analytics__month-control {
+  display: flex;
+  align-items: center;
+  gap: var(--fsi-space-2);
+  color: var(--fsi-color-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.spending-analytics__month-control select {
+  min-height: var(--fsi-control-height);
+  max-width: 190px;
+  padding: 0 32px 0 11px;
+  border: 1px solid var(--fsi-color-border);
+  border-radius: var(--fsi-radius-medium);
+  background: var(--fsi-color-surface);
+  color: var(--fsi-color-text);
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    background 120ms ease;
+}
+
+.spending-analytics__month-control select:hover {
+  background: #f8faf8;
+  border-color: #bdc5bf;
+}
+
+.spending-analytics__month-control select:focus-visible {
+  outline: 2px solid var(--fsi-color-accent);
+  outline-offset: 2px;
+}
+
+.spending-analytics__state {
+  min-height: 116px;
+  display: grid;
+  place-items: center;
+  gap: var(--fsi-space-3);
+  padding: var(--fsi-space-6);
+  border: 1px solid var(--fsi-color-border);
+  border-radius: var(--fsi-radius-large);
+  background: var(--fsi-color-surface);
+  color: var(--fsi-color-text-muted);
+  text-align: center;
+}
+
+.spending-analytics__state p {
+  margin: 0;
+}
+
+.spending-analytics__state--error {
+  color: var(--fsi-color-negative);
+}
+
+.spending-analytics__snapshot {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--fsi-space-3);
+}
+
+.spending-analytics__snapshot > div {
+  display: grid;
+  gap: 4px;
+  padding: var(--fsi-space-4) var(--fsi-space-5);
+  border: 1px solid var(--fsi-color-border);
+  border-radius: var(--fsi-radius-large);
+  background: var(--fsi-color-surface);
+}
+
+.spending-analytics__snapshot span {
+  color: var(--fsi-color-text-muted);
+  font-size: 11px;
+}
+
+.spending-analytics__snapshot strong {
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 620;
+}
+
+.spending-analytics__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+  gap: var(--fsi-space-4);
+}
+
+.spending-analytics__panel {
+  min-width: 0;
+  padding: var(--fsi-space-5);
+  border: 1px solid var(--fsi-color-border);
+  border-radius: var(--fsi-radius-large);
+  background: var(--fsi-color-surface);
+  box-shadow: 0 1px 0 rgba(35, 52, 43, 0.02);
+}
+
+.spending-analytics__panel-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--fsi-space-4);
+  padding-bottom: var(--fsi-space-4);
+  border-bottom: 1px solid var(--fsi-color-border);
+}
+
+.spending-analytics__panel-heading h3 {
+  margin: 4px 0 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.spending-analytics__panel-heading > span {
+  color: var(--fsi-color-text-muted);
+  font-size: 11px;
+}
+
+.spending-analytics__ranking,
+.spending-analytics__merchant-list {
+  display: grid;
+}
+
+.spending-analytics__rank-row,
+.spending-analytics__merchant-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--fsi-space-3);
+  padding: 13px 0;
+  border-bottom: 1px solid var(--fsi-color-border);
+}
+
+.spending-analytics__rank-row:last-child,
+.spending-analytics__merchant-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.spending-analytics__rank {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  background: #f2f4f1;
+  color: var(--fsi-color-text-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
+.spending-analytics__rank-main,
+.spending-analytics__merchant-copy {
+  min-width: 0;
+}
+
+.spending-analytics__rank-copy {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+
+.spending-analytics__rank-copy strong,
+.spending-analytics__merchant-copy strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 620;
+}
+
+.spending-analytics__rank-copy small,
+.spending-analytics__merchant-copy small {
+  color: var(--fsi-color-text-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.spending-analytics__merchant-copy {
+  display: grid;
+  gap: 3px;
+}
+
+.spending-analytics__badge {
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: #f3eee3;
+  color: #735f32;
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.spending-analytics__bar {
+  height: 4px;
+  margin-top: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #eef1ed;
+}
+
+.spending-analytics__bar span {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: inherit;
+  background: var(--fsi-color-accent);
+  transition: width 180ms ease;
+}
+
+.spending-analytics__rank-row:hover .spending-analytics__bar span {
+  opacity: 0.76;
+}
+
+.spending-analytics__amount {
+  color: var(--fsi-color-text);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 620;
+  white-space: nowrap;
+}
+
+@media (max-width: 1180px) {
+  .spending-analytics__heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .spending-analytics__controls {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .spending-analytics__snapshot {
+    grid-template-columns: 1fr;
+  }
+}

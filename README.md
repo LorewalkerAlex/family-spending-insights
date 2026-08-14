@@ -41,7 +41,7 @@ BackendRuntime
 
 `BackendRuntime` 在进程内持有可重建的当前 household snapshot，Query 优先复用该 snapshot；Source Sync、downstream Projection rebuild、runtime-backed Enrichment / Mapping mutation 与 Scheduled due batch 通过显式 Pipeline / commit boundary 运行。具体技术边界见 `backend-technical-architecture-design.md`；领域事实与长期数据模型仍以 `family-consumption-data-architecture-design.md` 为准。
 
-项目当前已经实现邮件获取、CMB Source Record / Transaction 身份分离、Manual Source 与跨来源 Reconciliation、Manual Input 查询 / 更正 / 删除生命周期、Scheduled Input 月度规则管理与幂等到期生成、支出侧 Merchant Mapping 与 Mapping Review / Mapping Correction、独立持久化的当前 Enrichment、退款归并、消费统计 Projection、收入 / 净消费 / 净现金流 Financial Summary Projection、本地 JSON Application/API，以及支持 source-native Manual Input 管理、Scheduled Input 管理、Mapping Review、家庭现金流概览、逐笔 Transaction 浏览和 transaction-only Enrichment exception 的本地 HTML Dashboard。跨端前端已经从基础 POC 进入 PC Web-first 稳定化阶段：Desktop Web 的 Overview、Transactions、Review、Automation、Feedback 五个正式 workspace 与全局 Add Transaction / Send Feedback 都已接入真实 Application/API；Overview 在 Financial Hero 与近期月份之外增加最近最多 12 个 `show=true` 自然月的收入 / 净消费趋势，Transactions 提供桌面 master-detail、Expense transaction-only Merchant / Category / Note、Income Note-only 与 Manual Source 更正 / 删除，Review 提供 Mapping Review 聚合、Merchant 建议、Preview / Apply 与新 Merchant 二次确认，Automation 提供 Scheduled Input 创建、编辑、启停、删除与 Run Due。Mini 已真实接入 Overview、Transactions、Review、Add Transaction 与 Feedback；Automation 仍留在后续 Mini 收敛阶段。Desktop 与 Mini 继续共用 TypeScript contracts/service/view-model core，业务事实仍由既有 Python Domain / Application / API 负责，legacy `local_dashboard/` 继续作为功能 fallback。Taro WeChat production build 已通过，但真机联网、正式 AppID / HTTPS API 域名配置和公网部署仍不属于当前已验证范围。增长率/环比分析、收入分类体系、AI 报告以及面向公网部署与认证的远程 API 也仍未实现。
+项目当前已经实现邮件获取、CMB Source Record / Transaction 身份分离、Manual Source 与跨来源 Reconciliation、Manual Input 查询 / 更正 / 删除生命周期、Scheduled Input 月度规则管理与幂等到期生成、支出侧 Merchant Mapping 与 Mapping Review / Mapping Correction、独立持久化的当前 Enrichment、退款归并、消费统计 Projection、收入 / 净消费 / 净现金流 Financial Summary Projection、本地 JSON Application/API，以及支持 source-native Manual Input 管理、Scheduled Input 管理、Mapping Review、家庭现金流概览、逐笔 Transaction 浏览和 transaction-only Enrichment exception 的本地 HTML Dashboard。跨端前端已经从基础 POC 进入 PC Web-first 稳定化阶段：Desktop Web 的 Overview、Transactions、Review、Automation、Feedback 五个正式 workspace 与全局 Add Transaction / Send Feedback 都已接入真实 Application/API；Overview 除 Financial Hero、近期月份和最近最多 12 个 `show=true` 自然月的收入 / 净消费趋势外，现在还通过正式 `GET /api/spending-statistics` 读取 schema v2，提供月份选择、Category 消费构成/排行与 Top Merchant/display；这些模块只消费后端已经聚合和对账的 Projection，不在 React 中重新计算消费事实。Transactions 提供桌面 master-detail、Expense transaction-only Merchant / Category / Note、Income Note-only 与 Manual Source 更正 / 删除，Review 提供 Mapping Review 聚合、Merchant 建议、Preview / Apply 与新 Merchant 二次确认，Automation 提供 Scheduled Input 创建、编辑、启停、删除与 Run Due。Mini 已真实接入 Overview、Transactions、Review、Add Transaction 与 Feedback；Automation 仍留在后续 Mini 收敛阶段。Desktop 与 Mini 继续共用 TypeScript contracts/service/view-model core，业务事实仍由既有 Python Domain / Application / API 负责，legacy `local_dashboard/` 继续作为功能 fallback。Taro WeChat production build 已通过，但真机联网、正式 AppID / HTTPS API 域名配置和公网部署仍不属于当前已验证范围。增长率/环比分析、收入分类体系、AI 报告以及面向公网部署与认证的远程 API 也仍未实现。
 
 ## 数据与隐私边界
 
@@ -417,6 +417,7 @@ $env:PYTHONPATH="src"; uv run --frozen python -m family_spending serve
 ```text
 GET   /api/health
 GET   /api/financial-summary
+GET   /api/spending-statistics
 GET   /api/feedback
 GET   /api/categories
 GET   /api/manual-descriptions
@@ -439,11 +440,11 @@ POST  /api/mapping-reviews/apply
 PATCH /api/transactions/{transaction_id}/enrichment
 ```
 
-`GET /api/financial-summary` 只读取当前已经生成的 Financial Summary Projection，不在 GET 后隐藏重建或其他 mutation。Feedback API 只维护本地产品反馈，不触发 Financial Transaction / Enrichment / Projection Pipeline。
+`GET /api/financial-summary` 与 `GET /api/spending-statistics` 都只读取当前已经生成的 Projection，不在 GET 后隐藏 Source Sync、Projection rebuild 或其他 mutation。Spending Statistics 读取通过 `RuntimeFamilySpendingApplication` 的 Query 边界和 `backend/projection_queries.py` 完成，HTTP transport 不直接承担财务文件读取；缺失或不支持的 Projection 会作为当前状态错误返回。Feedback API 只维护本地产品反馈，不触发 Financial Transaction / Enrichment / Projection Pipeline。
 
 统一 `serve` 入口创建 `RuntimeFamilySpendingApplication`。初始化时先执行 `BackendRuntime.bootstrap()`：运行一次完整 Source Sync、发布 `CurrentHouseholdSnapshot`，再执行截至当天的 Scheduled Input due occurrences。正常 Query 从 runtime snapshot 读取；如果受跟踪的 Source / Link / Enrichment / Mapping 文件被外部修改，runtime 会先检测 filesystem fingerprint 并重新装载已 reconciled current state，而不是在每个 GET 中重复跑 Reconciliation。若外部 Source 变化已经使持久化 links 失效，则 refresh 会明确报错并要求重新执行 Source Sync。
 
-Runtime-backed mutation 保持 authoritative state 与可重建 Projection 的提交边界。Enrichment PATCH 与 Mapping Review Apply 使用共享 `FileUnitOfWork` 协调 Enrichment / Mapping 与两个 Projection；Scheduled due batch 把规则、Manual Source 和 downstream state 纳入同一 commit boundary。历史 Manual Input create/correct/delete compatibility path 暂时继续使用原有 rollback 实现，后续再迁入统一 runtime command pipeline。所有路径都不得静默留下已知的半提交 Application state。
+Runtime-backed mutation 保持 authoritative state 与可重建 Projection 的提交边界。Manual Input create/correct/delete 已通过 `ManualInputCommandService` 进入统一 Runtime / Source Sync / `FileUnitOfWork` 路径；Enrichment PATCH 与 Mapping Review Apply 使用共享 `FileUnitOfWork` 协调 Enrichment / Mapping 与两个 Projection；Scheduled due batch 把规则、Manual Source 和 downstream state 纳入同一 commit boundary。历史 `manual_input.py` 直接模块入口只作为 compatibility surface 保留。所有路径都不得静默留下已知的半提交 Application state。
 
 ## 退款归并
 
@@ -580,7 +581,7 @@ Financial Summary 对同一覆盖事实使用更明确的字段名 `spending_dat
 
 ## 跨端前端
 
-首个跨端前端 POC 已完成，Transactions 纵向迁移与当前 PC Web workspace 稳定化批次也已经通过自动验证和阶段性浏览器 smoke：
+首个跨端前端 POC 已完成，Transactions 纵向迁移、PC Web workspace 稳定化批次以及当前 Spending Analytics 纵向切片都已经进入同一 PC Web-first 主线：
 
 ```text
 frontend/
@@ -595,12 +596,12 @@ frontend/
 当前迁移范围：
 
 - Desktop Web：Overview、Transactions、Review、Automation、Feedback 五个正式 workspace 与全局 Add Transaction / Send Feedback 均已接真实 Application/API；当前已经不存在顶层 migration-state workspace；
-- Overview：保留 Financial Hero 与近期月份表，并通过 shared presentation transform 展示最近最多 12 个后端 `show=true` 自然月的收入 / 净消费趋势；趋势只转换现有 Financial Summary，不在前端重算月份完整性或财务事实；
+- Overview：保留 Financial Hero 与近期月份表，并通过 shared presentation transform 展示最近最多 12 个后端 `show=true` 自然月的收入 / 净消费趋势；同时通过 `GET /api/spending-statistics` 读取后端 schema v2，只展示 `show=true` 月份的净消费总额/笔数、Category 构成与排行、Top Merchant/display 和待分类状态；前端只计算展示占比，不重算月份完整性、退款归并、Category/Merchant 聚合或财务事实；
 - Transactions：使用桌面 master-detail，支持月份筛选、Expense transaction-only Merchant / Category / Note、Income Note-only 语义，以及 Manual Source 更正 / 删除；Add Transaction 继续只创建 source-native Manual Source；
 - Review：使用桌面 master-detail 展示按 Expense description 聚合的待审核项，提供 Merchant 建议 / 已有 Merchant 复用、默认 Category、Preview 影响范围、Preview 失效保护、Apply 和新 Merchant 二次确认；Mapping propagation / token / rollback 仍完全由后端负责；
 - Automation：使用 List + Editor 管理 Scheduled Input，支持创建、编辑未来规则、启停、删除和显式 Run Due；前端不实现 recurrence、due 判断、幂等、恢复或 Reconciliation；
 - Mini：Overview、Transactions、Review 与 Feedback 已接真实 Application/API；Transactions 使用触屏列表 → Detail，Review 使用列表 → Review Detail，Add Transaction 使用独立页面；Automation 暂留在 More 中等待 Mini 专门收敛阶段；
-- Desktop 与 Mini 共用 Financial Summary / Feedback / Transaction / Manual Input / Mapping Review / Scheduled Input 的 schema、service、view-model 与格式化语义，但分别使用 BrowserTransport 与 TaroTransport，不共享平台 UI；
+- Desktop 与 Mini 共用 Financial Summary / Spending Statistics / Feedback / Transaction / Manual Input / Mapping Review / Scheduled Input 的 schema、service、view-model 与格式化语义，但分别使用 BrowserTransport 与 TaroTransport，不共享平台 UI；
 - 当前产品开发优先把 PC Web 做到稳定可用。只要 backend/shared contract 未改变，不再为同一业务语义重复执行 Desktop + Mini 人工 E2E；Mini 继续通过类型检查与 H5 / WeChat build 防止集成断裂，并在进入 Mini 专门阶段后做集中人工验收；
 - 业务正确性优先由隔离自动测试证明：Python Application/API 使用临时目录和 fixture 验证 Mapping Review / Scheduled Input 等状态变化，shared frontend 使用 mock transport / schema / presentation 单元测试验证请求与展示语义；人工 E2E 主要承担阶段性的真实浏览器可用性、布局与交互 smoke；
 - Mini H5 仅作为桌面浏览器中的开发预览，使用居中的 phone-sized viewport 和 H5-only typography/layout 校准，不是第三个正式产品；Taro dev server 显式关闭自动打开浏览器；
@@ -853,11 +854,14 @@ src/family_spending/
 │   ├── state.py                      # CurrentHouseholdSnapshot rehydration
 │   ├── pipeline.py                   # Source Sync + Projection rebuild lifecycle
 │   ├── runtime.py                    # in-process current snapshot + fingerprint refresh
-│   ├── application.py                # runtime-backed Application compatibility facade
-│   └── scheduled_jobs.py             # batched Scheduled due → one Source Sync
+│   ├── application.py                # runtime-backed Application/query compatibility facade
+│   ├── manual_commands.py            # Manual Input create/correct/delete runtime command family
+│   ├── scheduled_jobs.py             # batched Scheduled due → one Source Sync
+│   ├── projection_queries.py         # read-only generated Projection query helpers
+│   └── http_server.py                # canonical runtime HTTP transport
 ├── infrastructure/
 │   └── file_uow.py                   # shared cross-file rollback / commit boundary
-├── application.py                    # legacy Application surface; remaining compatibility commands
+├── application.py                    # legacy/base Application surface kept for compatibility callers/tests
 ├── http_api.py                       # JSON transport + legacy module entry
 ├── feedback.py                       # local product Feedback V1 store/domain
 ├── source_records.py                 # SourceRecord + SourceAdapter 扩展契约
@@ -890,6 +894,7 @@ tests/
 ├── test_backend_architecture.py
 ├── test_backend_runtime_application.py
 ├── test_backend_scheduled_jobs.py
+├── test_backend_manual_input_commands.py
 ├── test_cmb_domain.py
 ├── test_cmb_email_transactions.py
 ├── test_enrichment_store.py
@@ -909,6 +914,7 @@ tests/
 ├── test_month_coverage.py
 ├── test_refund_reconciliation.py
 ├── test_spending_statistics.py
+├── test_spending_statistics_api.py
 ├── test_statistics_generation.py
 ├── test_statistics_serialization.py
 └── test_transaction_resolution.py
@@ -925,7 +931,7 @@ tests/
 - 最终图表组合收敛；
 - AI 消费 / 财务报告；
 - 退款分配等更细的诊断明细界面；
-- legacy Dashboard 的完整消费 chart / category / merchant analytics 尚未全部迁入新 PC Web；当前新 Overview 只使用 Financial Summary 提供 Hero、近期月份与收入 / 净消费趋势；
+- legacy Dashboard 的六种实验性消费图表与更复杂的 chart 组合尚未迁入新 PC Web；当前 Overview 已迁入正式 Spending Statistics 的月份选择、Category 构成/排行与 Top Merchant/display，但还没有迁移这些实验图表或增长率/变化原因分析；
 - 后端 Query 已移除主要路径上的逐请求完整 state rebuild，并改为复用 `BackendRuntime` current snapshot；尚未建立正式性能基准，后续性能优化仍按实际阶段耗时与 I/O / Pipeline 证据处理，不依据界面交易条数直接推断瓶颈；
 - Mini Automation workspace 的正式迁移，以及微信小程序真机联网与正式发布；当前 Taro WeChat production build 已通过，但仍未配置正式 AppID、HTTPS API 域名和部署环境；
 - 面向公网部署的 API、登录、云同步或多用户；

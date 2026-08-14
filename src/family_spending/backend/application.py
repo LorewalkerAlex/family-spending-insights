@@ -20,6 +20,10 @@ from family_spending.backend.manual_commands import (
     ManualInputCommandService,
 )
 from family_spending.backend.paths import BackendPaths
+from family_spending.backend.projection_queries import (
+    ProjectionQueryError,
+    read_spending_statistics_projection,
+)
 from family_spending.backend.runtime import (
     BackendRuntime,
     BackendRuntimeNotReadyError,
@@ -125,6 +129,13 @@ class RuntimeFamilySpendingApplication(FamilySpendingApplication):
             except BackendRuntimeNotReadyError:
                 return self.runtime.refresh()
         except BackendStateError as exc:
+            raise ApplicationStateError(str(exc)) from exc
+
+    def get_spending_statistics(self) -> dict[str, object]:
+        """Read the generated spending projection through the runtime Application boundary."""
+        try:
+            return read_spending_statistics_projection(self.backend_paths.spending_statistics)
+        except ProjectionQueryError as exc:
             raise ApplicationStateError(str(exc)) from exc
 
     def list_categories(self) -> tuple[str, ...]:
