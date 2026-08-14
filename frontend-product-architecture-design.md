@@ -1,13 +1,13 @@
 # Family Spending Insights Frontend Product Architecture
 
-> Status: V1 canonical baseline validated by the cross-platform foundation POC and the first Transactions workspace migration on 2026-08-14
+> Status: V1 canonical baseline validated through the PC Web workspace-completion batch on 2026-08-14
 > Design origin baseline: `LorewalkerAlex/family-spending-insights` `main` @ `f06e0dac733eb80804fb0342895a72a9c4ea0fd6`
 > POC implementation started from: `main` @ `898b238fbad25a5da1545cd4a5c7f9dd58a12dd7`
 > Scope: frontend product information architecture, Desktop/Mini presentation model, cross-platform boundaries, technology baseline, POC scope, and Design System V1.
 
 ## 1. Purpose
 
-The existing `local_dashboard/` proved the backend/Application contracts and multiple product workflows, but it is still a development-oriented flat page. Financial Summary, Manual Input, Scheduled Input, Mapping Review, transaction management, and charts are all presented in one long document. The cross-platform foundation POC established the replacement presentation architecture, and the first Transactions workspace migration has now validated that architecture against a larger read/write workflow. Subsequent migration must continue capability by capability without changing the backend domain truth that has already been validated.
+The existing `local_dashboard/` proved the backend/Application contracts and multiple product workflows, but it is still a development-oriented flat page. Financial Summary, Manual Input, Scheduled Input, Mapping Review, transaction management, and charts are all presented in one long document. The cross-platform foundation POC established the replacement presentation architecture, the Transactions migration validated a larger read/write workflow, and the current PC Web stabilization batch has now promoted all five canonical Desktop workspaces to real Application/API-backed surfaces. Further work should prioritize Desktop stability and missing analytical value before pursuing Mini presentation parity, without changing the backend domain truth that has already been validated.
 
 The target product has two formal presentation surfaces:
 
@@ -360,7 +360,20 @@ DELETE /api/manual-inputs/{source_record_id}
 PATCH  /api/transactions/{transaction_id}/enrichment
 ~~~
 
-The shared frontend owns decoding, request semantics, formatting, and presentation transforms for these endpoints. Source identity, Reconciliation, Expense Mapping, Income non-Mapping behavior, Enrichment propagation, and downstream Projection refresh remain backend responsibilities.
+Review and Automation reuse the already-defined backend workflows rather than introducing frontend-specific mutation rules:
+
+~~~text
+GET    /api/mapping-reviews
+POST   /api/mapping-reviews/preview
+POST   /api/mapping-reviews/apply
+GET    /api/scheduled-inputs
+POST   /api/scheduled-inputs
+PATCH  /api/scheduled-inputs/{rule_id}
+DELETE /api/scheduled-inputs/{rule_id}
+POST   /api/scheduled-inputs/run-due
+~~~
+
+The shared frontend owns decoding, request semantics, formatting, and presentation transforms for these endpoints. Source identity, Reconciliation, Expense Mapping, Income non-Mapping behavior, Mapping Review propagation/token semantics, Scheduled Input due/idempotency, Enrichment propagation, and downstream Projection refresh remain backend responsibilities.
 
 ## 11. Cross-platform frontend POC
 
@@ -460,7 +473,7 @@ The first POC satisfied the success criteria and is now the implementation basel
 
 The POC does **not** claim that a real WeChat client has already connected to the local backend. WeChat production compilation is validated; actual Mini Program networking still requires a valid AppID/runtime environment and an HTTPS API origin/domain configuration.
 
-The statements above describe the historical first-POC checkpoint. The current implementation has advanced beyond that checkpoint through the Transactions migration described in 11.6.
+The statements above describe the historical first-POC checkpoint. The current implementation has advanced beyond that checkpoint through the Transactions migration in 11.6 and the PC Web stabilization batch in 11.7.
 
 ### 11.5 Managed local development runtime
 
@@ -507,6 +520,46 @@ Mini:
 Validation of this migration includes shared/Desktop/Mini typecheck and unit tests, Desktop/H5/WeChat production builds, managed-runtime tests, the Python full suite, compileall, and the legacy Dashboard JavaScript suite. Real local browser smoke used temporary Manual Income and Expense entries to validate cross-platform Transaction presentation and the create/delete lifecycle, then removed the temporary test data.
 
 Observed loading latency is a non-blocking follow-up rather than part of this slice. A future performance slice should measure actual read/mutation stages and repeated state loading/revalidation before choosing a cache or read-model strategy; visible Transaction count alone is not a performance diagnosis.
+
+### 11.7 PC Web stabilization batch: Review + Automation + Overview trend
+
+After Transactions, product work shifted from one-feature-at-a-time cross-platform acceptance toward making the Desktop Web product stable and usable as one coherent workspace. This batch keeps the existing backend contracts and completes the remaining canonical Desktop workspaces.
+
+Desktop Review:
+
+- promotes Review from placeholder to a real master-detail Mapping Review workspace;
+- shows Expense description groups with transaction count, aggregate amount, latest date, source types, and transaction-only exception evidence;
+- supports existing-Merchant selection and lightweight similarity suggestions without silently merging names;
+- invalidates a Preview whenever Merchant or Category changes, requires a fresh backend Preview token before Apply, and uses explicit confirmation before creating a new Merchant;
+- delegates Mapping propagation, preserved transaction-only exceptions, Preview conflict detection, rollback, and Projection refresh to the existing Application/API.
+
+Desktop Automation:
+
+- promotes Automation from placeholder to a real List + Editor workspace over Scheduled Input;
+- supports rule creation, future-rule editing, enable/pause, deletion, last-run state, and explicit Run Due;
+- keeps monthly recurrence constraints visible but does not reproduce due calculation, catch-up, stable occurrence identity, idempotency, recovery, Reconciliation, or rollback logic in React.
+
+Desktop Overview:
+
+- retains the Financial Hero and recent-month table;
+- adds a compact income vs. net-spending trend for at most the latest 12 backend `show=true` months;
+- derives only chart-ready presentation geometry/text from the existing Financial Summary contract; it does not add a new statistics endpoint or recompute month completeness / financial totals on the client.
+
+Mini status during this batch:
+
+- Review has been migrated to list → Review Detail using the same shared contracts/services;
+- Automation remains a lower-frequency capability under More and is intentionally deferred while Desktop is stabilized;
+- ongoing product acceptance is PC Web-first rather than forcing Desktop and Mini to repeat the same manual workflow whenever backend/shared semantics are unchanged.
+
+Validation strategy after this milestone:
+
+1. **Backend business correctness is automated.** Domain/Application/HTTP workflows use isolated temporary paths, fixture Source/Mapping state, and local test servers so Mapping Review, Scheduled Input, rollback, idempotency, and propagation can be proven without touching household data.
+2. **Shared frontend semantics are automated.** Strict runtime decoding, service method/path/body, formatting, and pure presentation transforms are covered with shared-core tests and mock transports.
+3. **Platform integration is checked by typecheck/build.** Desktop and Mini builds catch runtime/toolchain integration breakage; a platform is not manually re-tested merely because the same shared backend behavior was already proven elsewhere.
+4. **Manual E2E is a stage-level UX smoke.** Human browser testing focuses on whether the real PC Web product opens, reads naturally, and supports the intended workflow. Multiple capabilities should be accepted together rather than one button at a time.
+5. **Real-data mutation tests are exceptional.** When they are necessary, use a pre-test snapshot, a fixed operation protocol, post-test impact inspection, and deterministic restore rather than leaving ad-hoc test records in authoritative local state.
+
+The combined Desktop smoke for this batch covered Overview, Transactions, Review, Automation, and Feedback as one product surface. Automation additionally created and deleted a paused future rule so the real form/API connection was exercised without generating a scheduled occurrence.
 
 ## 12. Design System V1
 
@@ -641,11 +694,11 @@ Migration proceeds by complete vertical capabilities:
 4. retire equivalent `local_dashboard/` functionality only after the replacement has real validation coverage.
 5. remove the legacy Dashboard only when all required functionality has migrated and regression coverage proves parity.
 
-The new frontend should improve presentation architecture without destabilizing the already-validated Python domain pipeline. The foundation/real Desktop-Mini validation and the first Transactions workspace migration are now complete. Review and Automation remain migration-state capabilities; later work should continue with one coherent workspace/workflow migration at a time.
+The new frontend should improve presentation architecture without destabilizing the already-validated Python domain pipeline. Foundation, Transactions, and the PC Web Review / Automation / Overview-trend stabilization batch are now complete. All five canonical Desktop workspaces are real Application/API-backed surfaces, so the next phase should prioritize PC Web stability, analytical gaps, and real-use feedback before pursuing Mini parity. Mini Review is already migrated; Mini Automation and broader mobile product acceptance remain deferred to a dedicated Mini phase. Legacy capability should still be retired only after its replacement has equivalent product value and regression coverage.
 
 ## 14. Decision status
 
-This document is the V1 canonical frontend product architecture baseline validated by the foundation POC and the first Transactions migration. Low-level implementation details may continue to adapt to repository/toolchain facts, but changes to the following require an explicit design decision rather than accidental drift:
+This document is the V1 canonical frontend product architecture baseline validated through the PC Web workspace-completion milestone. Low-level implementation details and validation mechanics may continue to adapt to repository/toolchain facts, but changes to the following require an explicit design decision rather than accidental drift:
 
 - canonical workspaces and global commands
 - Desktop vs Mini product/presentation distinction
@@ -653,4 +706,5 @@ This document is the V1 canonical frontend product architecture baseline validat
 - backend/shared/presentation ownership boundary
 - shared-core no-React/Taro dependency rule
 - POC vertical scope and legacy coexistence strategy
+- PC Web-first stabilization direction and stage-level manual acceptance strategy
 - Design System principles, especially neutral-first hierarchy and no-card-by-default

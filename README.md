@@ -26,7 +26,7 @@ Scheduled Rule
 → 上述同一 Pipeline
 ```
 
-项目当前已经实现邮件获取、CMB Source Record / Transaction 身份分离、Manual Source 与跨来源 Reconciliation、Manual Input 查询 / 更正 / 删除生命周期、Scheduled Input 月度规则管理与幂等到期生成、支出侧 Merchant Mapping 与 Mapping Review / Mapping Correction、独立持久化的当前 Enrichment、退款归并、消费统计 Projection、收入 / 净消费 / 净现金流 Financial Summary Projection、本地 JSON Application/API，以及支持 source-native Manual Input 管理、Scheduled Input 管理、Mapping Review、家庭现金流概览、逐笔 Transaction 浏览和 transaction-only Enrichment exception 的本地 HTML Dashboard。跨端前端已经完成基础 POC 与第一项 workspace 迁移：Desktop Web 与 Taro Mini 共用 TypeScript contracts/service/view-model core；Desktop Web 已真实接入 Overview、Transactions、Feedback、全局 Add Transaction 与 Send Feedback，Mini H5 已真实接入 Overview、Transactions 列表/详情、Add Transaction 与 Feedback。Transactions 继续复用现有 Application/API：Expense 可编辑 transaction-only Merchant / Category / Note，Income 不进入 Merchant Mapping 且只允许编辑 Note，Manual Source 可在 Transaction Detail 中更正或删除。Review 与 Automation 仍按完整纵向能力逐步迁移，legacy `local_dashboard/` 继续作为功能 fallback。Taro WeChat production build 已通过，但真机联网、正式 AppID / HTTPS API 域名配置和公网部署仍不属于当前已验证范围。增长率/环比分析、收入分类体系、AI 报告以及面向公网部署与认证的远程 API 也仍未实现。
+项目当前已经实现邮件获取、CMB Source Record / Transaction 身份分离、Manual Source 与跨来源 Reconciliation、Manual Input 查询 / 更正 / 删除生命周期、Scheduled Input 月度规则管理与幂等到期生成、支出侧 Merchant Mapping 与 Mapping Review / Mapping Correction、独立持久化的当前 Enrichment、退款归并、消费统计 Projection、收入 / 净消费 / 净现金流 Financial Summary Projection、本地 JSON Application/API，以及支持 source-native Manual Input 管理、Scheduled Input 管理、Mapping Review、家庭现金流概览、逐笔 Transaction 浏览和 transaction-only Enrichment exception 的本地 HTML Dashboard。跨端前端已经从基础 POC 进入 PC Web-first 稳定化阶段：Desktop Web 的 Overview、Transactions、Review、Automation、Feedback 五个正式 workspace 与全局 Add Transaction / Send Feedback 都已接入真实 Application/API；Overview 在 Financial Hero 与近期月份之外增加最近最多 12 个 `show=true` 自然月的收入 / 净消费趋势，Transactions 提供桌面 master-detail、Expense transaction-only Merchant / Category / Note、Income Note-only 与 Manual Source 更正 / 删除，Review 提供 Mapping Review 聚合、Merchant 建议、Preview / Apply 与新 Merchant 二次确认，Automation 提供 Scheduled Input 创建、编辑、启停、删除与 Run Due。Mini 已真实接入 Overview、Transactions、Review、Add Transaction 与 Feedback；Automation 仍留在后续 Mini 收敛阶段。Desktop 与 Mini 继续共用 TypeScript contracts/service/view-model core，业务事实仍由既有 Python Domain / Application / API 负责，legacy `local_dashboard/` 继续作为功能 fallback。Taro WeChat production build 已通过，但真机联网、正式 AppID / HTTPS API 域名配置和公网部署仍不属于当前已验证范围。增长率/环比分析、收入分类体系、AI 报告以及面向公网部署与认证的远程 API 也仍未实现。
 
 ## 数据与隐私边界
 
@@ -543,9 +543,9 @@ Financial Summary 对同一覆盖事实使用更明确的字段名 `spending_dat
 
 `spending_statistics.json` 金额和 `financial_summary.json` 的 Income / Spending 金额均使用人民币最小单位“分”的安全整数表示；Financial Summary 的净现金流允许负安全整数。两个文件都保持确定性字段顺序和原子替换，不包含逐笔来源邮件或退款分配历史。
 
-## 跨端前端 POC
+## 跨端前端
 
-首个跨端前端纵向切片已经完成并通过真实本地数据 smoke：
+首个跨端前端 POC 已完成，Transactions 纵向迁移与当前 PC Web workspace 稳定化批次也已经通过自动验证和阶段性浏览器 smoke：
 
 ```text
 frontend/
@@ -559,13 +559,17 @@ frontend/
 
 当前迁移范围：
 
-- Desktop Web：Overview、Transactions、Feedback workspace 与全局 Add Transaction / Send Feedback 已接真实 Application/API；Transactions 使用桌面 master-detail，支持月份筛选、Expense transaction-only Merchant / Category / Note、Income Note-only 语义，以及 Manual Source 更正 / 删除；Review 与 Automation 仍显示明确 migration state；
-- Mini：Overview、Transactions 与 Feedback 已接真实 Application/API；Transactions 使用触屏列表 → 独立 Detail 页面，并提供 Add Transaction、Expense transaction-only Enrichment、Income Note-only 与 Manual Source 更正 / 删除；Review 仍为 migration state，Automation 暂放在 More 中作为待迁移能力；
-- Desktop 与 Mini 共用 Financial Summary / Feedback / Transaction / Manual Input 的 schema、service、view-model 与格式化语义，但分别使用 BrowserTransport 与 TaroTransport，不共享平台 UI；
-- Add Transaction 只创建 source-native Manual Source，description 复用提示继续保持轻量且显式，不把前端提示变成 Merchant Mapping 或模糊合并规则；
-- Transactions 迁移未新增 Python Domain / Application / HTTP API；新前端复用既有 Transaction、Manual Input、Category 与 Enrichment endpoints，并继续由后端负责 Reconciliation、Mapping、Enrichment 与 Projection 事实；
+- Desktop Web：Overview、Transactions、Review、Automation、Feedback 五个正式 workspace 与全局 Add Transaction / Send Feedback 均已接真实 Application/API；当前已经不存在顶层 migration-state workspace；
+- Overview：保留 Financial Hero 与近期月份表，并通过 shared presentation transform 展示最近最多 12 个后端 `show=true` 自然月的收入 / 净消费趋势；趋势只转换现有 Financial Summary，不在前端重算月份完整性或财务事实；
+- Transactions：使用桌面 master-detail，支持月份筛选、Expense transaction-only Merchant / Category / Note、Income Note-only 语义，以及 Manual Source 更正 / 删除；Add Transaction 继续只创建 source-native Manual Source；
+- Review：使用桌面 master-detail 展示按 Expense description 聚合的待审核项，提供 Merchant 建议 / 已有 Merchant 复用、默认 Category、Preview 影响范围、Preview 失效保护、Apply 和新 Merchant 二次确认；Mapping propagation / token / rollback 仍完全由后端负责；
+- Automation：使用 List + Editor 管理 Scheduled Input，支持创建、编辑未来规则、启停、删除和显式 Run Due；前端不实现 recurrence、due 判断、幂等、恢复或 Reconciliation；
+- Mini：Overview、Transactions、Review 与 Feedback 已接真实 Application/API；Transactions 使用触屏列表 → Detail，Review 使用列表 → Review Detail，Add Transaction 使用独立页面；Automation 暂留在 More 中等待 Mini 专门收敛阶段；
+- Desktop 与 Mini 共用 Financial Summary / Feedback / Transaction / Manual Input / Mapping Review / Scheduled Input 的 schema、service、view-model 与格式化语义，但分别使用 BrowserTransport 与 TaroTransport，不共享平台 UI；
+- 当前产品开发优先把 PC Web 做到稳定可用。只要 backend/shared contract 未改变，不再为同一业务语义重复执行 Desktop + Mini 人工 E2E；Mini 继续通过类型检查与 H5 / WeChat build 防止集成断裂，并在进入 Mini 专门阶段后做集中人工验收；
+- 业务正确性优先由隔离自动测试证明：Python Application/API 使用临时目录和 fixture 验证 Mapping Review / Scheduled Input 等状态变化，shared frontend 使用 mock transport / schema / presentation 单元测试验证请求与展示语义；人工 E2E 主要承担阶段性的真实浏览器可用性、布局与交互 smoke；
 - Mini H5 仅作为桌面浏览器中的开发预览，使用居中的 phone-sized viewport 和 H5-only typography/layout 校准，不是第三个正式产品；Taro dev server 显式关闭自动打开浏览器；
-- Desktop 与 Mini H5 已用临时 Manual Income / Expense 验证真实 Transaction 展示与创建 / 删除生命周期，并在验证后删除测试数据；
+- Transactions 真实本地数据 create/delete smoke、Review Desktop Preview smoke 与当前五 workspace PC Web 组合 smoke 均已完成；临时 Review fixture 在测试后从快照恢复，不保留测试 Mapping / Transaction 数据；
 - WeChat production build 已验证通过；真实 WeChat runtime 仍需要有效的 Mini Program 配置与可访问的 HTTPS API origin，当前实现不声称已经完成真机联网或正式发布。
 
 ### Managed local development runtime
@@ -615,6 +619,14 @@ npm run build:web
 npm run build:mini:h5
 npm run build:mini:weapp
 ```
+
+验证按责任层拆分，而不是把所有正确性都交给人工 E2E：
+
+- Domain / Application / HTTP 业务行为使用临时目录、fixture Source / Mapping 与本地测试 Server 自动验证，不触碰真实家庭数据；
+- shared frontend 自动验证严格 schema decoding、service method/path/body、纯 presentation transform 与错误边界；
+- Desktop / Mini 的 typecheck 和 production build 用于发现平台集成断裂；
+- 人工浏览器验收按阶段合并执行，只证明页面在真实运行环境中可用、布局合理、交互顺畅，不重复证明已经由同一 backend/shared core 自动覆盖的业务语义；
+- 当前阶段以 PC Web 为主，Mini 的重复人工验收延后到 Mini 专门收敛阶段；只有修改了 Mini 平台 UI、shared contract 或底层业务语义时，才按风险补对应验证。
 
 `local_dashboard/` 在迁移完成前继续保留，并与上述新前端共享同一后端事实而不是被 iframe 或半迁移进新 shell。
 
@@ -864,9 +876,9 @@ tests/
 - 最终图表组合收敛；
 - AI 消费 / 财务报告；
 - 退款分配等更细的诊断明细界面；
-- 新跨端前端中的 Review / Automation 和 legacy chart capabilities 尚未完成迁移；Transactions 与 Add Transaction 已完成第一项 workspace 纵向迁移；
+- legacy Dashboard 的完整消费 chart / category / merchant analytics 尚未全部迁入新 PC Web；当前新 Overview 只使用 Financial Summary 提供 Hero、近期月份与收入 / 净消费趋势；
 - Transactions 当前读写路径仍有可感知的加载等待，性能优化留待独立切片按实际阶段耗时与重复状态装载证据处理，不依据界面交易条数直接推断瓶颈；
-- 微信小程序真机联网与正式发布；当前 Taro WeChat production build 已通过，但仍未配置正式 AppID、HTTPS API 域名和部署环境；
+- Mini Automation workspace 的正式迁移，以及微信小程序真机联网与正式发布；当前 Taro WeChat production build 已通过，但仍未配置正式 AppID、HTTPS API 域名和部署环境；
 - 面向公网部署的 API、登录、云同步或多用户；
 - 数据库、增量统计或常驻 / 系统级后台调度；Scheduled Input V1 只在 Application 初始化、规则 mutation 和显式 Run Due 时执行；
 - 其他银行、微信或支付宝独立账单接入。

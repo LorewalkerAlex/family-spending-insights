@@ -79,6 +79,8 @@ describe("workspace navigation", () => {
     expect(workspaceNavigation.filter((item) => item.implemented).map((item) => item.id)).toEqual([
       "overview",
       "transactions",
+      "review",
+      "automation",
       "feedback",
     ]);
   });

@@ -6,6 +6,7 @@ export default defineAppConfig({
     "pages/more/index",
     "pages/add-transaction/index",
     "pages/transaction-detail/index",
+    "pages/review-detail/index",
   ],
   window: {
     backgroundTextStyle: "light",

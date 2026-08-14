@@ -11,6 +11,16 @@ import {
   manualInputDeletionResponseSchema,
   manualInputListResponseSchema,
   manualInputResultResponseSchema,
+  mappingReviewApplyCommandSchema,
+  mappingReviewApplyResponseSchema,
+  mappingReviewCommandSchema,
+  mappingReviewPreviewResponseSchema,
+  mappingReviewWorkspaceResponseSchema,
+  scheduledInputCommandSchema,
+  scheduledInputDeletionResponseSchema,
+  scheduledInputListResponseSchema,
+  scheduledInputResponseSchema,
+  scheduledInputRunResponseSchema,
   transactionListResponseSchema,
   transactionResponseSchema,
   updateFeedbackStatusCommandSchema,
@@ -24,6 +34,13 @@ import {
   type ManualInputDeletion,
   type ManualInputRecord,
   type ManualInputResult,
+  type MappingReviewApplyCommand,
+  type MappingReviewCommand,
+  type MappingReviewPreview,
+  type MappingReviewWorkspace,
+  type ScheduledInputCommand,
+  type ScheduledInputRule,
+  type ScheduledInputRun,
   type Transaction,
 } from "./contracts";
 import { requireHttpStatus, type HttpTransport } from "./transport";
@@ -139,4 +156,89 @@ export class FamilySpendingService {
     });
     return transactionResponseSchema.parse(requireHttpStatus(response, 200)).transaction;
   }
+
+  async getMappingReviewWorkspace(): Promise<MappingReviewWorkspace> {
+    const response = await this.transport.request({ method: "GET", path: "/api/mapping-reviews" });
+    return mappingReviewWorkspaceResponseSchema.parse(requireHttpStatus(response, 200)).mapping_review;
+  }
+
+  async previewMappingReview(command: MappingReviewCommand): Promise<MappingReviewPreview> {
+    const body = mappingReviewCommandSchema.parse(command);
+    const response = await this.transport.request({
+      method: "POST",
+      path: "/api/mapping-reviews/preview",
+      body,
+    });
+    return mappingReviewPreviewResponseSchema.parse(requireHttpStatus(response, 200)).preview;
+  }
+
+  async applyMappingReview(command: MappingReviewApplyCommand): Promise<MappingReviewPreview> {
+    const input = mappingReviewApplyCommandSchema.parse(command);
+    const body = {
+      description: input.description,
+      merchant: input.merchant,
+      category: input.category,
+      preview_token: input.previewToken,
+      confirm_new_merchant: input.confirmNewMerchant ?? false,
+    };
+    const response = await this.transport.request({
+      method: "POST",
+      path: "/api/mapping-reviews/apply",
+      body,
+    });
+    return mappingReviewApplyResponseSchema.parse(requireHttpStatus(response, 200)).mapping_review;
+  }
+
+  async listScheduledInputs(): Promise<readonly ScheduledInputRule[]> {
+    const response = await this.transport.request({ method: "GET", path: "/api/scheduled-inputs" });
+    return scheduledInputListResponseSchema.parse(requireHttpStatus(response, 200)).scheduled_inputs;
+  }
+
+  async createScheduledInput(command: ScheduledInputCommand): Promise<ScheduledInputRule> {
+    const input = scheduledInputCommandSchema.parse(command);
+    const body = {
+      type: input.type,
+      amount: input.amount,
+      description: input.description,
+      note: input.note ?? null,
+      next_date: input.nextDate,
+      enabled: input.enabled,
+    };
+    const response = await this.transport.request({ method: "POST", path: "/api/scheduled-inputs", body });
+    return scheduledInputResponseSchema.parse(requireHttpStatus(response, 201)).scheduled_input;
+  }
+
+  async updateScheduledInput(id: string, command: ScheduledInputCommand): Promise<ScheduledInputRule> {
+    const ruleId = requireId(id, "Scheduled Input id");
+    const input = scheduledInputCommandSchema.parse(command);
+    const body = {
+      type: input.type,
+      amount: input.amount,
+      description: input.description,
+      note: input.note ?? null,
+      next_date: input.nextDate,
+      enabled: input.enabled,
+    };
+    const response = await this.transport.request({
+      method: "PATCH",
+      path: `/api/scheduled-inputs/${encodeURIComponent(ruleId)}`,
+      body,
+    });
+    return scheduledInputResponseSchema.parse(requireHttpStatus(response, 200)).scheduled_input;
+  }
+
+  async deleteScheduledInput(id: string): Promise<string> {
+    const ruleId = requireId(id, "Scheduled Input id");
+    const response = await this.transport.request({
+      method: "DELETE",
+      path: `/api/scheduled-inputs/${encodeURIComponent(ruleId)}`,
+    });
+    return scheduledInputDeletionResponseSchema.parse(requireHttpStatus(response, 200)).scheduled_input_deletion.id;
+  }
+
+  async runDueScheduledInputs(): Promise<ScheduledInputRun> {
+    const response = await this.transport.request({ method: "POST", path: "/api/scheduled-inputs/run-due" });
+    return scheduledInputRunResponseSchema.parse(requireHttpStatus(response, 200)).scheduled_input_run;
+  }
+
 }

@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
 
-import { workspaceById, workspaceForPath, workspaceNavigation } from "./app/workspaces";
+import { workspaceForPath, workspaceNavigation } from "./app/workspaces";
 import { AddTransactionDialog } from "./components/AddTransactionDialog";
 import { FeedbackDialog } from "./components/FeedbackDialog";
+import { AutomationPage } from "./pages/AutomationPage";
 import { FeedbackPage } from "./pages/FeedbackPage";
 import { OverviewPage } from "./pages/OverviewPage";
-import { PlaceholderPage } from "./pages/PlaceholderPage";
+import { ReviewPage } from "./pages/ReviewPage";
 import { TransactionsPage } from "./pages/TransactionsPage";
 
 function AppShell() {
@@ -51,8 +52,8 @@ function AppShell() {
           <Routes>
             <Route path="/overview" element={<OverviewPage />} />
             <Route path="/transactions" element={<TransactionsPage refreshKey={transactionRefreshKey} focusTransactionId={focusTransactionId} />} />
-            <Route path="/review" element={<PlaceholderPage workspace={workspaceById("review")} />} />
-            <Route path="/automation" element={<PlaceholderPage workspace={workspaceById("automation")} />} />
+            <Route path="/review" element={<ReviewPage />} />
+            <Route path="/automation" element={<AutomationPage />} />
             <Route path="/feedback" element={<FeedbackPage refreshKey={feedbackRefreshKey} />} />
             <Route path="/" element={<Navigate to="/overview" replace />} />
             <Route path="*" element={<Navigate to="/overview" replace />} />

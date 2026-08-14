@@ -1,15 +1,19 @@
 import {
   toFinancialSummaryViewModel,
+  toFinancialTrendViewModel,
   type FinancialSummaryViewModel,
+  type FinancialTrendViewModel,
 } from "@family-spending/core";
 import { useCallback, useEffect, useState } from "react";
 
 import { familySpendingService } from "../api/client";
 import { Button } from "../components/ui/Button";
+import "./overview-analytics.css";
 
 /** Read-first Overview: all financial semantics come from the generated backend projection. */
 export function OverviewPage() {
   const [summary, setSummary] = useState<FinancialSummaryViewModel | null>(null);
+  const [trend, setTrend] = useState<FinancialTrendViewModel | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -19,6 +23,7 @@ export function OverviewPage() {
     try {
       const payload = await familySpendingService.getFinancialSummary();
       setSummary(toFinancialSummaryViewModel(payload));
+      setTrend(toFinancialTrendViewModel(payload));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -72,6 +77,53 @@ export function OverviewPage() {
             <dd>{hero.totalSpendingText}</dd>
           </div>
         </dl>
+      </section>
+
+      <section className="section-block overview-trend" aria-labelledby="trend-title">
+        <div className="section-heading">
+          <div>
+            <h2 id="trend-title">收支趋势</h2>
+            <p>最近最多 12 个后端 show=true 的自然月；这里只改变展示，不重新判断月份完整性。</p>
+          </div>
+          {trend && trend.points.length > 0 ? <span className="overview-trend__scale">最高月度规模 {trend.maxAmountText}</span> : null}
+        </div>
+
+        {!trend || trend.points.length === 0 ? (
+          <div className="empty-state">暂无可绘制的完整月份。</div>
+        ) : (
+          <>
+            <div className="overview-trend__legend" aria-hidden="true">
+              <span><i className="overview-trend__swatch overview-trend__swatch--income" />收入</span>
+              <span><i className="overview-trend__swatch overview-trend__swatch--spending" />净消费</span>
+            </div>
+            <div
+              className="overview-trend__chart"
+              role="img"
+              aria-label={`最近 ${trend.points.length} 个展示月的收入与净消费趋势`}
+            >
+              {trend.points.map((point) => (
+                <div className="overview-trend__point" key={point.month}>
+                  <div className="overview-trend__bars">
+                    <span
+                      className="overview-trend__bar overview-trend__bar--income"
+                      style={{ height: `${point.incomeHeightPercent}%` }}
+                      title={`${point.month} 收入 ${point.totalIncomeText}`}
+                    />
+                    <span
+                      className="overview-trend__bar overview-trend__bar--spending"
+                      style={{ height: `${point.spendingHeightPercent}%` }}
+                      title={`${point.month} 净消费 ${point.totalSpendingText}`}
+                    />
+                  </div>
+                  <span className="overview-trend__month">{point.month}</span>
+                  <span className={`overview-trend__net${point.netCashFlowMinor < 0 ? " overview-trend__net--negative" : ""}`}>
+                    净 {point.netCashFlowText}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </section>
 
       <section className="section-block" aria-labelledby="months-title">

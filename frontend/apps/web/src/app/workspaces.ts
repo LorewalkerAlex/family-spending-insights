@@ -16,8 +16,8 @@ export interface WorkspaceNavigationItem {
 export const workspaceNavigation: readonly WorkspaceNavigationItem[] = [
   { id: "overview", path: "/overview", label: "概览", description: "家庭现金流与近期月份", implemented: true },
   { id: "transactions", path: "/transactions", label: "交易", description: "交易查询与维护", implemented: true },
-  { id: "review", path: "/review", label: "审核", description: "待分类与 Mapping Review", implemented: false },
-  { id: "automation", path: "/automation", label: "自动化", description: "定期录入与运行状态", implemented: false },
+  { id: "review", path: "/review", label: "审核", description: "待分类与 Mapping Review", implemented: true },
+  { id: "automation", path: "/automation", label: "自动化", description: "定期录入与运行状态", implemented: true },
   { id: "feedback", path: "/feedback", label: "反馈", description: "产品反馈收集与处理", implemented: true },
 ] as const;
 

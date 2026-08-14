@@ -7,11 +7,13 @@ const safeIntegerSchema = z
   .max(Number.MAX_SAFE_INTEGER);
 
 const nonNegativeSafeIntegerSchema = safeIntegerSchema.min(0);
+const positiveSafeIntegerSchema = safeIntegerSchema.min(1);
 const monthNameSchema = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/);
 const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const decimalAmountSchema = z.string().trim().regex(/^-?\d+(?:\.\d+)?$/);
 const nonEmptyTextSchema = z.string().trim().min(1);
 const nullableTextSchema = nonEmptyTextSchema.nullable();
+const sha256TokenSchema = z.string().regex(/^[0-9a-f]{64}$/);
 
 const financialAggregateSchema = z
   .object({
@@ -340,6 +342,175 @@ export const enrichmentPatchSchema = z
     }
   });
 
+export const mappingReviewItemSchema = z
+  .object({
+    description: nonEmptyTextSchema,
+    transaction_count: positiveSafeIntegerSchema,
+    total_amount: decimalAmountSchema,
+    currency: nonEmptyTextSchema,
+    latest_date: isoDateSchema,
+    source_types: z.array(nonEmptyTextSchema).min(1),
+    transaction_only_exception_count: nonNegativeSafeIntegerSchema,
+  })
+  .strict();
+
+export const merchantMappingOptionSchema = z
+  .object({
+    name: nonEmptyTextSchema,
+    default_category: nonEmptyTextSchema,
+  })
+  .strict();
+
+export const mappingReviewWorkspaceSchema = z
+  .object({
+    items: z.array(mappingReviewItemSchema),
+    merchants: z.array(merchantMappingOptionSchema),
+    categories: z.array(nonEmptyTextSchema),
+  })
+  .strict();
+
+export const mappingReviewPreviewSchema = z
+  .object({
+    token: sha256TokenSchema,
+    description: nonEmptyTextSchema,
+    merchant: nonEmptyTextSchema,
+    category: nonEmptyTextSchema,
+    is_new_merchant: z.boolean(),
+    previous_default_category: nullableTextSchema,
+    description_transaction_count: positiveSafeIntegerSchema,
+    description_affected_transaction_count: nonNegativeSafeIntegerSchema,
+    default_category_affected_transaction_count: nonNegativeSafeIntegerSchema,
+    total_affected_transaction_count: nonNegativeSafeIntegerSchema,
+    preserved_merchant_exception_count: nonNegativeSafeIntegerSchema,
+    preserved_category_exception_count: nonNegativeSafeIntegerSchema,
+  })
+  .strict();
+
+export const mappingReviewWorkspaceResponseSchema = z
+  .object({ mapping_review: mappingReviewWorkspaceSchema })
+  .strict();
+export const mappingReviewPreviewResponseSchema = z
+  .object({ preview: mappingReviewPreviewSchema })
+  .strict();
+export const mappingReviewApplyResponseSchema = z
+  .object({ mapping_review: mappingReviewPreviewSchema })
+  .strict();
+
+export const mappingReviewCommandSchema = z
+  .object({
+    description: nonEmptyTextSchema,
+    merchant: nonEmptyTextSchema,
+    category: nonEmptyTextSchema,
+  })
+  .strict();
+
+export const mappingReviewApplyCommandSchema = mappingReviewCommandSchema
+  .extend({
+    previewToken: sha256TokenSchema,
+    confirmNewMerchant: z.boolean().optional(),
+  })
+  .strict();
+
+
+
+export const scheduledInputActionSchema = z.enum(["created", "matched", "reused", "recovered"]);
+const scheduledDateSchema = isoDateSchema.refine(
+  (value) => {
+    const day = Number(value.slice(8, 10));
+    return day >= 1 && day <= 28;
+  },
+  "Scheduled Input V1 only supports monthly occurrence days 1-28",
+);
+
+export const scheduledInputRuleSchema = z
+  .object({
+    id: nonEmptyTextSchema,
+    enabled: z.boolean(),
+    type: transactionTypeSchema,
+    amount: decimalAmountSchema,
+    currency: nonEmptyTextSchema,
+    description: nonEmptyTextSchema,
+    note: nullableTextSchema,
+    next_date: scheduledDateSchema,
+    last_occurrence_date: scheduledDateSchema.nullable(),
+    last_source_record_id: nullableTextSchema,
+    last_transaction_id: nullableTextSchema,
+    last_action: scheduledInputActionSchema.nullable(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const lastValues = [
+      value.last_occurrence_date,
+      value.last_source_record_id,
+      value.last_transaction_id,
+      value.last_action,
+    ];
+    const presentCount = lastValues.filter((item) => item !== null).length;
+    if (presentCount !== 0 && presentCount !== lastValues.length) {
+      context.addIssue({
+        code: "custom",
+        message: "Scheduled Input last execution metadata must be all present or all absent",
+      });
+    }
+    if (value.last_occurrence_date !== null && value.next_date <= value.last_occurrence_date) {
+      context.addIssue({
+        code: "custom",
+        message: "Scheduled Input next_date must be after the last generated occurrence",
+        path: ["next_date"],
+      });
+    }
+  });
+
+export const scheduledInputListResponseSchema = z
+  .object({ scheduled_inputs: z.array(scheduledInputRuleSchema) })
+  .strict();
+export const scheduledInputResponseSchema = z
+  .object({ scheduled_input: scheduledInputRuleSchema })
+  .strict();
+
+export const scheduledInputCommandSchema = z
+  .object({
+    type: transactionTypeSchema,
+    amount: decimalAmountSchema,
+    description: nonEmptyTextSchema,
+    note: nullableTextSchema.optional(),
+    nextDate: scheduledDateSchema,
+    enabled: z.boolean(),
+  })
+  .strict();
+
+export const scheduledInputOccurrenceSchema = z
+  .object({
+    rule_id: nonEmptyTextSchema,
+    occurrence_date: scheduledDateSchema,
+    source_record_id: nonEmptyTextSchema,
+    transaction_id: nonEmptyTextSchema,
+    action: scheduledInputActionSchema,
+  })
+  .strict();
+
+export const scheduledInputRunSchema = z
+  .object({
+    generated_count: nonNegativeSafeIntegerSchema,
+    occurrences: z.array(scheduledInputOccurrenceSchema),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.generated_count !== value.occurrences.length) {
+      context.addIssue({
+        code: "custom",
+        message: "Scheduled Input generated_count must equal occurrences length",
+        path: ["generated_count"],
+      });
+    }
+  });
+export const scheduledInputRunResponseSchema = z
+  .object({ scheduled_input_run: scheduledInputRunSchema })
+  .strict();
+export const scheduledInputDeletionResponseSchema = z
+  .object({ scheduled_input_deletion: z.object({ id: nonEmptyTextSchema }).strict() })
+  .strict();
+
 export type FinancialSummary = z.infer<typeof financialSummarySchema>;
 export type FinancialMonth = z.infer<typeof financialMonthSchema>;
 export type FeedbackStatus = z.infer<typeof feedbackStatusSchema>;
@@ -357,3 +528,14 @@ export type ManualInputCorrection = z.infer<typeof manualInputCorrectionSchema>;
 export type ManualInputDeletion = z.infer<typeof manualInputDeletionSchema>;
 export type ManualInputCommand = z.input<typeof manualInputCommandSchema>;
 export type EnrichmentPatch = z.input<typeof enrichmentPatchSchema>;
+export type MappingReviewItem = z.infer<typeof mappingReviewItemSchema>;
+export type MerchantMappingOption = z.infer<typeof merchantMappingOptionSchema>;
+export type MappingReviewWorkspace = z.infer<typeof mappingReviewWorkspaceSchema>;
+export type MappingReviewPreview = z.infer<typeof mappingReviewPreviewSchema>;
+export type MappingReviewCommand = z.input<typeof mappingReviewCommandSchema>;
+export type MappingReviewApplyCommand = z.input<typeof mappingReviewApplyCommandSchema>;
+export type ScheduledInputAction = z.infer<typeof scheduledInputActionSchema>;
+export type ScheduledInputRule = z.infer<typeof scheduledInputRuleSchema>;
+export type ScheduledInputCommand = z.input<typeof scheduledInputCommandSchema>;
+export type ScheduledInputOccurrence = z.infer<typeof scheduledInputOccurrenceSchema>;
+export type ScheduledInputRun = z.infer<typeof scheduledInputRunSchema>;
