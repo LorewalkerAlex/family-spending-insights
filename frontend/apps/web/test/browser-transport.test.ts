@@ -68,7 +68,7 @@ describe("BrowserTransport", () => {
 });
 
 describe("workspace navigation", () => {
-  it("keeps the canonical five workspaces and marks only the first POC surfaces as implemented", () => {
+  it("keeps the canonical five workspaces and marks migrated surfaces as implemented", () => {
     expect(workspaceNavigation.map((item) => item.id)).toEqual([
       "overview",
       "transactions",
@@ -78,6 +78,7 @@ describe("workspace navigation", () => {
     ]);
     expect(workspaceNavigation.filter((item) => item.implemented).map((item) => item.id)).toEqual([
       "overview",
+      "transactions",
       "feedback",
     ]);
   });

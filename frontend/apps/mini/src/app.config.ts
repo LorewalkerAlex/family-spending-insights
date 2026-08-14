@@ -4,6 +4,8 @@ export default defineAppConfig({
     "pages/transactions/index",
     "pages/review/index",
     "pages/more/index",
+    "pages/add-transaction/index",
+    "pages/transaction-detail/index",
   ],
   window: {
     backgroundTextStyle: "light",
@@ -18,22 +20,10 @@ export default defineAppConfig({
     backgroundColor: "#ffffff",
     borderStyle: "white",
     list: [
-      {
-        pagePath: "pages/overview/index",
-        text: "总览",
-      },
-      {
-        pagePath: "pages/transactions/index",
-        text: "交易",
-      },
-      {
-        pagePath: "pages/review/index",
-        text: "审核",
-      },
-      {
-        pagePath: "pages/more/index",
-        text: "更多",
-      },
+      { pagePath: "pages/overview/index", text: "总览" },
+      { pagePath: "pages/transactions/index", text: "交易" },
+      { pagePath: "pages/review/index", text: "审核" },
+      { pagePath: "pages/more/index", text: "更多" },
     ],
   },
 });

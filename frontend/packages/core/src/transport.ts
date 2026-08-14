@@ -1,4 +1,4 @@
-export type HttpMethod = "GET" | "POST" | "PATCH";
+export type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
 
 export interface HttpRequest {
   method: HttpMethod;
@@ -29,8 +29,16 @@ export class ApiResponseError extends Error {
 
 export function requireHttpStatus(response: HttpResponse, expectedStatus: number): unknown {
   if (response.status !== expectedStatus) {
+    const backendMessage =
+      response.body &&
+      typeof response.body === "object" &&
+      "error" in response.body &&
+      typeof (response.body as { error?: unknown }).error === "string"
+        ? (response.body as { error: string }).error.trim()
+        : "";
     throw new ApiResponseError(
-      `Unexpected API response status: expected ${expectedStatus}, received ${response.status}`,
+      backendMessage ||
+        `Unexpected API response status: expected ${expectedStatus}, received ${response.status}`,
       response.status,
       response.body,
     );

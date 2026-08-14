@@ -1,13 +1,13 @@
 # Family Spending Insights Frontend Product Architecture
 
-> Status: V1 canonical baseline validated by the first cross-platform frontend POC on 2026-08-13
+> Status: V1 canonical baseline validated by the cross-platform foundation POC and the first Transactions workspace migration on 2026-08-14
 > Design origin baseline: `LorewalkerAlex/family-spending-insights` `main` @ `f06e0dac733eb80804fb0342895a72a9c4ea0fd6`
 > POC implementation started from: `main` @ `898b238fbad25a5da1545cd4a5c7f9dd58a12dd7`
 > Scope: frontend product information architecture, Desktop/Mini presentation model, cross-platform boundaries, technology baseline, POC scope, and Design System V1.
 
 ## 1. Purpose
 
-The existing `local_dashboard/` proved the backend/Application contracts and multiple product workflows, but it is still a development-oriented flat page. Financial Summary, Manual Input, Scheduled Input, Mapping Review, transaction management, and charts are all presented in one long document. The first cross-platform POC has now established the replacement presentation architecture; subsequent migration must continue capability by capability without changing the backend domain truth that has already been validated.
+The existing `local_dashboard/` proved the backend/Application contracts and multiple product workflows, but it is still a development-oriented flat page. Financial Summary, Manual Input, Scheduled Input, Mapping Review, transaction management, and charts are all presented in one long document. The cross-platform foundation POC established the replacement presentation architecture, and the first Transactions workspace migration has now validated that architecture against a larger read/write workflow. Subsequent migration must continue capability by capability without changing the backend domain truth that has already been validated.
 
 The target product has two formal presentation surfaces:
 
@@ -145,7 +145,7 @@ The baseline shell uses four bottom destinations:
 
 `More` contains lower-frequency capabilities including Automation and Feedback, with room for future Settings/Data Sources/About without consuming premium bottom-tab positions.
 
-Add Transaction remains a global action rather than a tab. Once that capability is migrated, it may use a visible floating/global action entry plus context-specific `+` actions.
+Add Transaction remains a global action rather than a tab. The first Transactions migration exposes it as a prominent action from the Mini Transactions workspace while Desktop keeps it as a shell-level dialog; neither presentation spends a permanent navigation slot on creation.
 
 ### 5.2 Mini interaction grammar
 
@@ -346,6 +346,22 @@ PATCH /api/feedback/{id}
 
 Feedback persistence may use a small local runtime file such as `data/feedback.jsonl`, ignored by Git like other local runtime data.
 
+The Transactions + Manual Source migration reuses the existing Application/HTTP boundary rather than introducing frontend-specific backend rules:
+
+~~~text
+GET    /api/categories
+GET    /api/manual-descriptions
+GET    /api/manual-inputs
+GET    /api/transactions
+GET    /api/transactions/{transaction_id}
+POST   /api/manual-inputs
+POST   /api/manual-inputs/{source_record_id}/corrections
+DELETE /api/manual-inputs/{source_record_id}
+PATCH  /api/transactions/{transaction_id}/enrichment
+~~~
+
+The shared frontend owns decoding, request semantics, formatting, and presentation transforms for these endpoints. Source identity, Reconciliation, Expense Mapping, Income non-Mapping behavior, Enrichment propagation, and downstream Projection refresh remain backend responsibilities.
+
 ## 11. Cross-platform frontend POC
 
 The first implementation slice was **Frontend Cross-platform Foundation + Financial Summary + Feedback POC**.
@@ -444,6 +460,8 @@ The first POC satisfied the success criteria and is now the implementation basel
 
 The POC does **not** claim that a real WeChat client has already connected to the local backend. WeChat production compilation is validated; actual Mini Program networking still requires a valid AppID/runtime environment and an HTTPS API origin/domain configuration.
 
+The statements above describe the historical first-POC checkpoint. The current implementation has advanced beyond that checkpoint through the Transactions migration described in 11.6.
+
 ### 11.5 Managed local development runtime
 
 Cross-platform local development uses one repository-managed runtime instead of repeatedly starting unrelated fixed-port processes:
@@ -458,6 +476,37 @@ npm run dev:restart  stop then start
 The preferred ports are API `18765`, Desktop `15173`, and Mini H5 `11087`. If another project already owns a preferred port, the runtime selects a free port from that starting point; it never kills a process merely because a port is occupied. State and logs live under Git-ignored `.runtime/`, and a repeated `npm run dev` reuses the same runtime id, PIDs, and ports while it remains healthy. The runtime prints URLs but does not open browser windows.
 
 Environment overrides are `FAMILY_SPENDING_API_PORT`, `FAMILY_SPENDING_WEB_PORT`, and `FAMILY_SPENDING_MINI_H5_PORT`. WeChat builds use `TARO_APP_API_BASE_URL` for the compiled absolute API origin; H5 continues to use same-origin `/api` proxying.
+
+### 11.6 First workspace migration: Transactions + Manual Source
+
+The first post-foundation vertical slice migrates **Transactions + Add Transaction + Manual Source lifecycle** without changing the backend domain model.
+
+Shared frontend core:
+
+- adds strict Transaction, Category, Manual Input, correction, deletion, and Enrichment request/response contracts;
+- adds shared services for list/detail Transaction reads, Category and Manual-description reads, Manual Input create/correct/delete, and Transaction Enrichment updates;
+- adds shared Transaction list-item formatting and lightweight Manual description reuse helpers;
+- extends the transport contract with `DELETE` while keeping browser/Taro implementations platform-specific.
+
+Desktop Web:
+
+- promotes Transactions from migration placeholder to a real master-detail workspace;
+- supports month filtering and current Source / description / Category-source inspection;
+- allows Expense transaction-only Merchant / Category / Note edits while keeping stable Mapping correction in Review;
+- keeps Income outside Merchant Mapping and exposes Note editing only;
+- exposes Manual Source role/identity plus correction and deletion from Transaction detail;
+- implements Add Transaction as a global dialog backed by the existing Manual Input Application flow.
+
+Mini:
+
+- promotes Transactions to a real touch list with navigated Transaction Detail;
+- implements Add Transaction as a dedicated navigated page;
+- preserves the same Expense vs Income editing semantics as Desktop through shared contracts/services;
+- supports Manual Source correction/deletion and redirects to a new Transaction identity when Reconciliation legitimately converges the corrected Source onto another existing Transaction.
+
+Validation of this migration includes shared/Desktop/Mini typecheck and unit tests, Desktop/H5/WeChat production builds, managed-runtime tests, the Python full suite, compileall, and the legacy Dashboard JavaScript suite. Real local browser smoke used temporary Manual Income and Expense entries to validate cross-platform Transaction presentation and the create/delete lifecycle, then removed the temporary test data.
+
+Observed loading latency is a non-blocking follow-up rather than part of this slice. A future performance slice should measure actual read/mutation stages and repeated state loading/revalidation before choosing a cache or read-model strategy; visible Transaction count alone is not a performance diagnosis.
 
 ## 12. Design System V1
 
@@ -592,11 +641,11 @@ Migration proceeds by complete vertical capabilities:
 4. retire equivalent `local_dashboard/` functionality only after the replacement has real validation coverage.
 5. remove the legacy Dashboard only when all required functionality has migrated and regression coverage proves parity.
 
-The new frontend should improve presentation architecture without destabilizing the already-validated Python domain pipeline. The first two migration steps—foundation plus real Desktop/Mini validation—are now complete; later work should continue with one coherent workspace/workflow migration at a time.
+The new frontend should improve presentation architecture without destabilizing the already-validated Python domain pipeline. The foundation/real Desktop-Mini validation and the first Transactions workspace migration are now complete. Review and Automation remain migration-state capabilities; later work should continue with one coherent workspace/workflow migration at a time.
 
 ## 14. Decision status
 
-This document is the V1 canonical frontend product architecture baseline validated by the completed first POC. Low-level implementation details may continue to adapt to repository/toolchain facts, but changes to the following require an explicit design decision rather than accidental drift:
+This document is the V1 canonical frontend product architecture baseline validated by the foundation POC and the first Transactions migration. Low-level implementation details may continue to adapt to repository/toolchain facts, but changes to the following require an explicit design decision rather than accidental drift:
 
 - canonical workspaces and global commands
 - Desktop vs Mini product/presentation distinction

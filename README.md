@@ -26,7 +26,7 @@ Scheduled Rule
 → 上述同一 Pipeline
 ```
 
-项目当前已经实现邮件获取、CMB Source Record / Transaction 身份分离、Manual Source 与跨来源 Reconciliation、Manual Input 查询 / 更正 / 删除生命周期、Scheduled Input 月度规则管理与幂等到期生成、支出侧 Merchant Mapping 与 Mapping Review / Mapping Correction、独立持久化的当前 Enrichment、退款归并、消费统计 Projection、收入 / 净消费 / 净现金流 Financial Summary Projection、本地 JSON Application/API，以及支持 source-native Manual Input 管理、Scheduled Input 管理、Mapping Review、家庭现金流概览、逐笔 Transaction 浏览和 transaction-only Enrichment exception 的本地 HTML Dashboard。首个跨端前端 POC 也已落地：Desktop Web 与 Taro Mini 共用 TypeScript contracts/service/view-model core，Desktop 与 Mini H5 已真实接入 Financial Summary 与 Feedback；Transactions、Review、Automation 和 Add Transaction 仍按完整纵向能力逐步迁移，legacy `local_dashboard/` 继续作为功能 fallback。Taro WeChat production build 已通过，但真机联网、正式 AppID / HTTPS API 域名配置和公网部署仍不属于当前已验证范围。增长率/环比分析、收入分类体系、AI 报告以及面向公网部署与认证的远程 API 也仍未实现。
+项目当前已经实现邮件获取、CMB Source Record / Transaction 身份分离、Manual Source 与跨来源 Reconciliation、Manual Input 查询 / 更正 / 删除生命周期、Scheduled Input 月度规则管理与幂等到期生成、支出侧 Merchant Mapping 与 Mapping Review / Mapping Correction、独立持久化的当前 Enrichment、退款归并、消费统计 Projection、收入 / 净消费 / 净现金流 Financial Summary Projection、本地 JSON Application/API，以及支持 source-native Manual Input 管理、Scheduled Input 管理、Mapping Review、家庭现金流概览、逐笔 Transaction 浏览和 transaction-only Enrichment exception 的本地 HTML Dashboard。跨端前端已经完成基础 POC 与第一项 workspace 迁移：Desktop Web 与 Taro Mini 共用 TypeScript contracts/service/view-model core；Desktop Web 已真实接入 Overview、Transactions、Feedback、全局 Add Transaction 与 Send Feedback，Mini H5 已真实接入 Overview、Transactions 列表/详情、Add Transaction 与 Feedback。Transactions 继续复用现有 Application/API：Expense 可编辑 transaction-only Merchant / Category / Note，Income 不进入 Merchant Mapping 且只允许编辑 Note，Manual Source 可在 Transaction Detail 中更正或删除。Review 与 Automation 仍按完整纵向能力逐步迁移，legacy `local_dashboard/` 继续作为功能 fallback。Taro WeChat production build 已通过，但真机联网、正式 AppID / HTTPS API 域名配置和公网部署仍不属于当前已验证范围。增长率/环比分析、收入分类体系、AI 报告以及面向公网部署与认证的远程 API 也仍未实现。
 
 ## 数据与隐私边界
 
@@ -559,11 +559,14 @@ frontend/
 
 当前迁移范围：
 
-- Desktop Web：Overview、Feedback workspace 与全局 Send Feedback 已接真实 Application/API；Transactions、Review、Automation 仍显示明确 migration state，Add Transaction 仍禁用，避免把占位控件伪装成已完成能力；
-- Mini：Overview 与 Feedback 已接真实 Application/API；Transactions / Review 仍为 migration state，Automation 暂放在 More 中作为待迁移能力；
-- Desktop 与 Mini 共用 Financial Summary / Feedback 的 schema、service、view-model 与格式化语义，但分别使用 BrowserTransport 与 TaroTransport，不共享平台 UI；
+- Desktop Web：Overview、Transactions、Feedback workspace 与全局 Add Transaction / Send Feedback 已接真实 Application/API；Transactions 使用桌面 master-detail，支持月份筛选、Expense transaction-only Merchant / Category / Note、Income Note-only 语义，以及 Manual Source 更正 / 删除；Review 与 Automation 仍显示明确 migration state；
+- Mini：Overview、Transactions 与 Feedback 已接真实 Application/API；Transactions 使用触屏列表 → 独立 Detail 页面，并提供 Add Transaction、Expense transaction-only Enrichment、Income Note-only 与 Manual Source 更正 / 删除；Review 仍为 migration state，Automation 暂放在 More 中作为待迁移能力；
+- Desktop 与 Mini 共用 Financial Summary / Feedback / Transaction / Manual Input 的 schema、service、view-model 与格式化语义，但分别使用 BrowserTransport 与 TaroTransport，不共享平台 UI；
+- Add Transaction 只创建 source-native Manual Source，description 复用提示继续保持轻量且显式，不把前端提示变成 Merchant Mapping 或模糊合并规则；
+- Transactions 迁移未新增 Python Domain / Application / HTTP API；新前端复用既有 Transaction、Manual Input、Category 与 Enrichment endpoints，并继续由后端负责 Reconciliation、Mapping、Enrichment 与 Projection 事实；
 - Mini H5 仅作为桌面浏览器中的开发预览，使用居中的 phone-sized viewport 和 H5-only typography/layout 校准，不是第三个正式产品；Taro dev server 显式关闭自动打开浏览器；
-- WeChat production build 已验证通过；真实 WeChat runtime 仍需要有效的 Mini Program 配置与可访问的 HTTPS API origin，当前 POC 不声称已经完成真机联网或正式发布。
+- Desktop 与 Mini H5 已用临时 Manual Income / Expense 验证真实 Transaction 展示与创建 / 删除生命周期，并在验证后删除测试数据；
+- WeChat production build 已验证通过；真实 WeChat runtime 仍需要有效的 Mini Program 配置与可访问的 HTTPS API origin，当前实现不声称已经完成真机联网或正式发布。
 
 ### Managed local development runtime
 
@@ -861,7 +864,8 @@ tests/
 - 最终图表组合收敛；
 - AI 消费 / 财务报告；
 - 退款分配等更细的诊断明细界面；
-- 新跨端前端中的 Transactions / Review / Automation / Add Transaction 和 legacy chart capabilities 尚未完成迁移；
+- 新跨端前端中的 Review / Automation 和 legacy chart capabilities 尚未完成迁移；Transactions 与 Add Transaction 已完成第一项 workspace 纵向迁移；
+- Transactions 当前读写路径仍有可感知的加载等待，性能优化留待独立切片按实际阶段耗时与重复状态装载证据处理，不依据界面交易条数直接推断瓶颈；
 - 微信小程序真机联网与正式发布；当前 Taro WeChat production build 已通过，但仍未配置正式 AppID、HTTPS API 域名和部署环境；
 - 面向公网部署的 API、登录、云同步或多用户；
 - 数据库、增量统计或常驻 / 系统级后台调度；Scheduled Input V1 只在 Application 初始化、规则 mutation 和显式 Run Due 时执行；

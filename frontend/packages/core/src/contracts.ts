@@ -8,6 +8,10 @@ const safeIntegerSchema = z
 
 const nonNegativeSafeIntegerSchema = safeIntegerSchema.min(0);
 const monthNameSchema = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/);
+const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const decimalAmountSchema = z.string().trim().regex(/^-?\d+(?:\.\d+)?$/);
+const nonEmptyTextSchema = z.string().trim().min(1);
+const nullableTextSchema = nonEmptyTextSchema.nullable();
 
 const financialAggregateSchema = z
   .object({
@@ -188,15 +192,11 @@ export const feedbackItemSchema = z
   .strict();
 
 export const feedbackListResponseSchema = z
-  .object({
-    feedback: z.array(feedbackItemSchema),
-  })
+  .object({ feedback: z.array(feedbackItemSchema) })
   .strict();
 
 export const feedbackItemResponseSchema = z
-  .object({
-    feedback: feedbackItemSchema,
-  })
+  .object({ feedback: feedbackItemSchema })
   .strict();
 
 export const createFeedbackCommandSchema = z
@@ -207,10 +207,138 @@ export const createFeedbackCommandSchema = z
   .strict();
 
 export const updateFeedbackStatusCommandSchema = z
+  .object({ status: feedbackStatusSchema })
+  .strict();
+
+export const transactionTypeSchema = z.enum(["income", "expense"]);
+export const categorySourceSchema = z.enum([
+  "merchant_default",
+  "transaction_override",
+  "manual_override",
+  "income_default",
+  "unclassified",
+]);
+export const manualInputActionSchema = z.enum(["created", "matched", "reused"]);
+export const sourceRoleSchema = z.enum(["authoritative", "supporting"]);
+
+export const transactionSchema = z
   .object({
-    status: feedbackStatusSchema,
+    id: nonEmptyTextSchema,
+    type: transactionTypeSchema,
+    date: isoDateSchema,
+    amount: decimalAmountSchema,
+    currency: nonEmptyTextSchema,
+    source: z
+      .object({
+        id: nonEmptyTextSchema,
+        type: nonEmptyTextSchema,
+        description: nullableTextSchema,
+      })
+      .strict(),
+    enrichment: z
+      .object({
+        merchant: nullableTextSchema,
+        display_name: nonEmptyTextSchema,
+        default_category: nullableTextSchema,
+        category: nonEmptyTextSchema,
+        category_source: categorySourceSchema,
+        note: nullableTextSchema,
+        is_unclassified: z.boolean(),
+        review_signals: z.array(nonEmptyTextSchema),
+      })
+      .strict(),
   })
   .strict();
+
+export const transactionListResponseSchema = z
+  .object({ transactions: z.array(transactionSchema) })
+  .strict();
+export const transactionResponseSchema = z
+  .object({ transaction: transactionSchema })
+  .strict();
+export const categoriesResponseSchema = z
+  .object({ categories: z.array(nonEmptyTextSchema) })
+  .strict();
+export const manualDescriptionsResponseSchema = z
+  .object({ descriptions: z.array(nonEmptyTextSchema) })
+  .strict();
+
+export const manualInputResultSchema = z
+  .object({
+    source_record_id: nonEmptyTextSchema,
+    action: manualInputActionSchema,
+    transaction: transactionSchema,
+  })
+  .strict();
+
+export const manualInputRecordSchema = z
+  .object({
+    source_record_id: nonEmptyTextSchema,
+    transaction_id: nonEmptyTextSchema,
+    source_role: sourceRoleSchema,
+    type: transactionTypeSchema,
+    date: isoDateSchema,
+    amount: decimalAmountSchema,
+    currency: nonEmptyTextSchema,
+    description: nullableTextSchema,
+    note: nullableTextSchema,
+    transaction: transactionSchema,
+  })
+  .strict();
+
+export const manualInputListResponseSchema = z
+  .object({ manual_inputs: z.array(manualInputRecordSchema) })
+  .strict();
+export const manualInputResultResponseSchema = z
+  .object({ manual_input: manualInputResultSchema })
+  .strict();
+
+export const manualInputCorrectionSchema = z
+  .object({
+    replaced_source_record_id: nonEmptyTextSchema,
+    manual_input: manualInputResultSchema,
+  })
+  .strict();
+export const manualInputCorrectionResponseSchema = z
+  .object({ manual_input_correction: manualInputCorrectionSchema })
+  .strict();
+
+export const manualInputDeletionSchema = z
+  .object({
+    source_record_id: nonEmptyTextSchema,
+    transaction_id: nonEmptyTextSchema,
+    transaction_removed: z.boolean(),
+  })
+  .strict();
+export const manualInputDeletionResponseSchema = z
+  .object({ manual_input_deletion: manualInputDeletionSchema })
+  .strict();
+
+export const manualInputCommandSchema = z
+  .object({
+    type: transactionTypeSchema,
+    date: isoDateSchema,
+    amount: decimalAmountSchema,
+    description: nonEmptyTextSchema,
+    note: nullableTextSchema.optional(),
+  })
+  .strict();
+
+export const enrichmentPatchSchema = z
+  .object({
+    merchant: nullableTextSchema.optional(),
+    category: nullableTextSchema.optional(),
+    note: nullableTextSchema.optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.merchant === undefined && value.category === undefined && value.note === undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "Enrichment patch requires at least one field",
+      });
+    }
+  });
 
 export type FinancialSummary = z.infer<typeof financialSummarySchema>;
 export type FinancialMonth = z.infer<typeof financialMonthSchema>;
@@ -219,3 +347,13 @@ export type FeedbackRuntime = z.infer<typeof feedbackRuntimeSchema>;
 export type FeedbackContext = z.infer<typeof feedbackContextSchema>;
 export type FeedbackItem = z.infer<typeof feedbackItemSchema>;
 export type CreateFeedbackCommand = z.input<typeof createFeedbackCommandSchema>;
+export type TransactionType = z.infer<typeof transactionTypeSchema>;
+export type Transaction = z.infer<typeof transactionSchema>;
+export type CategorySource = z.infer<typeof categorySourceSchema>;
+export type ManualInputAction = z.infer<typeof manualInputActionSchema>;
+export type ManualInputResult = z.infer<typeof manualInputResultSchema>;
+export type ManualInputRecord = z.infer<typeof manualInputRecordSchema>;
+export type ManualInputCorrection = z.infer<typeof manualInputCorrectionSchema>;
+export type ManualInputDeletion = z.infer<typeof manualInputDeletionSchema>;
+export type ManualInputCommand = z.input<typeof manualInputCommandSchema>;
+export type EnrichmentPatch = z.input<typeof enrichmentPatchSchema>;
