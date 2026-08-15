@@ -1,0 +1,16 @@
+[storage]
+data_root = "./.runtime/household"
+
+[server]
+host = "127.0.0.1"
+port = 8765
+
+[runtime]
+email_poll_interval_seconds = 900
+
+[sources.cmb_email]
+enabled = true
+host = "imap.163.com"
+port = 993
+mailbox = "\u62db\u884c\u4fe1\u7528\u5361"
+subject_keyword = "\u62db\u5546\u94f6\u884c\u4fe1\u7528\u5361\u7535\u5b50\u8d26\u5355"
