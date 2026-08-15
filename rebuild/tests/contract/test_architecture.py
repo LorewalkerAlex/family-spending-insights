@@ -88,6 +88,14 @@ class ArchitectureContractTests(unittest.TestCase):
                     violations.append(f"{path.relative_to(PACKAGE_ROOT)}: {module}")
         self.assertEqual(violations, [])
 
+    def test_sources_do_not_depend_on_concrete_persistence(self) -> None:
+        violations: list[str] = []
+        for path in sorted((PACKAGE_ROOT / "sources").rglob("*.py")):
+            for module in imported_modules(path):
+                if module.startswith("family_spending.persistence"):
+                    violations.append(f"{path.relative_to(PACKAGE_ROOT)}: {module}")
+        self.assertEqual(violations, [])
+
 
 if __name__ == "__main__":
     unittest.main()
