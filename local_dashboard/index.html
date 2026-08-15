@@ -38,7 +38,7 @@
         <p data-error-details>请检查统计文件后重新加载。</p>
         <div class="recovery-command">
           <p>请先在项目根目录运行：</p>
-          <code>$env:PYTHONPATH="src"; uv run python -m family_spending.statistics_generation</code>
+          <code>$env:PYTHONPATH="src"; uv run --frozen python -m family_spending sync</code>
         </div>
         <button class="primary-button" type="button" data-action="reload">重新加载</button>
       </section>

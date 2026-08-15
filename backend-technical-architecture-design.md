@@ -1,7 +1,7 @@
 # Family Spending Insights Backend Technical Architecture
 
-> Status: current technical baseline after Backend Runtime / Pipeline foundation, Manual Input command migration, and runtime-owned Spending Statistics query exposure
-> Scope: Python backend runtime, application orchestration, pipeline execution, file-backed commit boundaries, operator CLI, and compatibility strategy.
+> Status: canonical backend baseline after runtime/pipeline consolidation and orchestration teardown
+> Scope: Python backend runtime, application orchestration, pipeline execution, file-backed commit boundaries, operator CLI, and local JSON HTTP transport.
 
 ## 1. Purpose
 
@@ -15,8 +15,8 @@ The architecture goal is concrete:
 one current backend state
 + explicit pipeline entry points
 + explicit commit boundaries
-+ one operator/runtime entry surface
-+ compatibility while older feature modules are migrated gradually
++ one canonical Application / HTTP / operator surface
++ no parallel feature-level orchestration path
 ```
 
 ## 2. Technical shape
@@ -29,7 +29,7 @@ Interfaces
 └── local JSON HTTP
           ↓
 Application
-└── RuntimeFamilySpendingApplication
+└── FamilySpendingApplication
           ↓
 BackendRuntime
 ├── CurrentHouseholdSnapshot
@@ -74,23 +74,23 @@ backend/
 - `state.py` reconstructs a coherent already-reconciled `CurrentHouseholdSnapshot` without rerunning identity decisions.
 - `pipeline.py` owns explicit Source Sync and downstream Projection rebuild lifecycles, including the correction semantics needed when one Manual Source identity replaces another.
 - `runtime.py` owns the in-process current snapshot and its refresh lifecycle.
-- `application.py` bridges the existing Application/API surface onto the runtime-backed Query and mutation paths that have migrated.
+- `application.py` is the canonical Application/API boundary. It owns client validation and view assembly while delegating Source mutation, scheduling, Mapping/Enrichment mutation, and Projection reads to explicit backend services.
 - `manual_commands.py` owns Manual Input create / correct / delete orchestration over one Source-sync plan and one shared file UoW.
 - `scheduled_jobs.py` batches Scheduled Input catch-up and submits the resulting Manual Source candidates through one Source Sync.
 - `projection_queries.py` reads generated Projection JSON for read-only Application queries without hiding a rebuild behind GET.
-- `http_server.py` is the canonical runtime HTTP transport. It preserves the existing compatibility routes and adds runtime-owned read endpoints without giving the request handler direct file-I/O responsibility.
+- `http_server.py` is the canonical local JSON HTTP transport. The handler delegates all financial reads and mutations to `FamilySpendingApplication` and performs no direct financial file I/O.
 
 ### `family_spending.infrastructure`
 
 `infrastructure/file_uow.py` provides the shared file-backed Unit of Work. Existing stores still own file formats and writes; the UoW owns only the cross-file commit/rollback boundary.
 
-### Existing root modules
+### Existing root domain/storage modules
 
-The repository is intentionally in a staged migration instead of a large directory move. Existing modules such as `reconciliation.py`, `enrichment.py`, `mapping.py`, `manual_input.py`, and `scheduled_input.py` still contain validated business rules or compatibility entrypoints.
+Validated domain, source, projection, and file-format modules remain at `family_spending/` package root when their responsibility is already singular and moving them would only create path churn. Examples include `reconciliation.py`, `transactions.py`, `enrichment.py`, `mapping.py`, `manual_source.py`, `scheduled_input.py`, `spending_projection.py`, and `transaction_resolution.py`.
 
-`manual_input.py` is no longer the Application/API orchestration path for Manual Input create / correct / delete. Its existing functions and direct module CLI remain as compatibility surfaces while the product-facing runtime path uses `ManualInputCommandService`.
+These root modules are not alternate Application entry paths. `scheduled_input.py` owns the monthly rule model, persistence, calendar advance, and deterministic occurrence identity only; due execution belongs to `backend/scheduled_jobs.py`. `transaction_resolution.py` owns shared household domain assembly and pure review helpers used by `HouseholdPipeline` and tests; operator lifecycle belongs to `family_spending.cli`.
 
-The physical package structure therefore does **not yet** claim that every root module has been classified into final `domain/`, `application/`, and `infrastructure/` folders. Directory migration should happen only after responsibilities have actually moved.
+There is now one Application/HTTP/runtime orchestration path. Physical relocation into deeper `domain/` or `storage/` folders is optional future organization work, not unfinished backend migration.
 
 ## 4. CurrentHouseholdSnapshot
 
@@ -141,7 +141,7 @@ A normal `serve` startup bootstraps once before accepting client traffic, then e
 
 ```text
 HTTP Query
-→ RuntimeFamilySpendingApplication
+→ FamilySpendingApplication
 → BackendRuntime.current_state()
 → cached CurrentHouseholdSnapshot
 ```
@@ -158,7 +158,7 @@ The runtime snapshot is a **rebuildable in-process read model**, not a new persi
 
 ### Generated Projection reads
 
-Generated report queries have a different read source from snapshot-backed entity queries. `RuntimeFamilySpendingApplication.get_spending_statistics()` delegates to `projection_queries.py`, which validates and reads the already-generated `spending_statistics.json` schema-v2 document. The canonical runtime HTTP handler calls that Application method; it does not open the Projection file itself. A GET therefore exposes current persisted Projection state without running Source Sync, Reconciliation, or Projection rebuild.
+Generated report queries have a different read source from snapshot-backed entity queries. `FamilySpendingApplication.get_spending_statistics()` and `get_financial_summary()` delegate to `projection_queries.py`, which validates and reads the already-generated Projection documents. The canonical HTTP handler calls those Application methods; it does not open financial Projection files itself. A GET therefore exposes current persisted Projection state without running Source Sync, Reconciliation, or Projection rebuild.
 
 ## 6. Pipeline entry points
 
@@ -232,7 +232,7 @@ This path does not rewrite Source identity, Source Links, or Enrichment.
 
 ## 7. Manual Input runtime commands
 
-Manual Input create / correct / delete now use `ManualInputCommandService` instead of the legacy `manual_input.py` Application orchestration.
+Manual Input create / correct / delete use `ManualInputCommandService` as the single Source-mutation command family.
 
 All three commands start from `BackendRuntime.current_state()`, evaluate one candidate Source-sync plan, and commit their authoritative Manual Source change together with all downstream files:
 
@@ -309,27 +309,21 @@ If an exception escapes, or the context exits without `commit()`, participants a
 
 This is an **application-level local file transaction**, not a durable database transaction or crash journal. It protects coordinated mutations from ordinary captured failures; process-level crash durability remains bounded by the atomic-write behavior of the individual stores.
 
-## 10. Application and compatibility boundary
+## 10. Canonical Application boundary
 
-`RuntimeFamilySpendingApplication` subclasses the existing `FamilySpendingApplication` so the HTTP contract did not need to be rewritten during the architecture migration.
+`family_spending.backend.application.FamilySpendingApplication` is the only local Application/API orchestration class. It is backed by one `BackendRuntime`; there is no base Application subclass or parallel feature-level write path.
 
-Already runtime-backed:
+Its responsibilities are deliberately narrow:
 
-- Transaction / Mapping Review and related snapshot-based Queries via the overridden `_load_snapshot()`;
-- generated Spending Statistics projection reads through `get_spending_statistics()` and `projection_queries.py`;
-- Category and Manual description/input Queries;
-- Manual Input create / correct / delete through `ManualInputCommandService`;
-- Mapping Review Apply;
-- transaction Enrichment mutation;
-- Scheduled due execution.
+- normalize and validate client-facing command values;
+- assemble Transaction / Manual Input / Mapping Review views from `CurrentHouseholdSnapshot`;
+- expose generated Spending Statistics and Financial Summary through `projection_queries.py`;
+- delegate Manual Input mutations to `ManualInputCommandService`;
+- delegate due Scheduled Input execution to `ScheduledInputJobRunner`;
+- coordinate Mapping Review and transaction Enrichment downstream mutations through `FileUnitOfWork`;
+- manage local product Feedback, which remains outside the financial pipeline.
 
-Still using compatibility surfaces:
-
-- some existing feature-level helpers and direct module CLIs, including `python -m family_spending.manual_input`;
-- legacy direct `python -m family_spending.http_api` and `python -m family_spending.statistics_generation` entrypoints;
-- the base `FamilySpendingApplication`, which remains available for compatibility tests and callers while managed runtime/HTTP uses `RuntimeFamilySpendingApplication`.
-
-Those compatibility paths remain tested and functional. They are not a second intended architecture. Any further migration should be justified by duplicated orchestration or product value rather than by a desire to make the directory tree look more layered.
+The HTTP server and CLI both construct this same Application boundary. Query, command, and rollback semantics therefore have one implementation path.
 
 ## 11. Operator CLI and process lifecycle
 
@@ -363,7 +357,7 @@ npm run dev
 → python -m family_spending serve --port <managed-port>
 ```
 
-Desktop and Mini H5 proxies therefore hit the same backend runtime that the standalone operator CLI uses. The runtime server delegates financial reads to `RuntimeFamilySpendingApplication`; for example `GET /api/spending-statistics` reads the already-generated schema-v2 projection through the Application query boundary and does not run Source Sync or Projection rebuild. Legacy `python -m family_spending.http_api` remains a compatibility transport entry rather than the managed-runtime server.
+Desktop and Mini H5 proxies therefore hit the same backend runtime that the standalone operator CLI uses. The server delegates financial reads to `FamilySpendingApplication`; for example `GET /api/spending-statistics` reads the already-generated schema-v2 projection through the Application query boundary and does not run Source Sync or Projection rebuild.
 
 ## 12. Dependency direction
 
@@ -379,7 +373,7 @@ domain rules
 infrastructure implementations
 ```
 
-The staged migration is not yet perfectly expressed by physical imports because validated legacy modules still combine responsibilities. New work should avoid making that worse:
+The physical package layout intentionally keeps stable domain/storage modules shallow. Dependency correctness is defined by responsibility and call direction rather than by forcing every module into a deeper folder tree:
 
 - Query/UI and HTTP transport code must not perform financial file I/O or recomputation directly; read-only Projection access belongs behind an Application/query boundary;
 - Application commands should call explicit pipeline stages rather than reproduce Source → Projection steps;
@@ -403,7 +397,7 @@ The architecture is protected by dedicated tests for:
 - full Source Sync and downstream-only Projection rebuild separation;
 - runtime snapshot reuse, refresh, and stale-state detection;
 - runtime-backed Query / Mapping / Enrichment behavior;
-- read-only Spending Statistics API behavior, including Application-owned Projection access, no Source Sync on GET, missing-projection error handling, and preservation of existing runtime routes;
+- read-only Spending Statistics / Financial Summary API behavior, including Application-owned Projection access, no Source Sync on GET, missing-projection error handling, and canonical HTTP route behavior;
 - Manual Input create / correct / delete through one runtime-owned Source-sync command boundary;
 - Manual correction Transaction identity preservation versus convergence to an existing Transaction;
 - preservation of explicit Merchant / Category / Note semantics during Manual correction;
@@ -416,14 +410,10 @@ The architecture is protected by dedicated tests for:
 
 The broader existing Python, legacy Dashboard, shared frontend, Desktop, H5, and WeChat build regressions remain the final release gate for architecture changes because the goal is architectural replacement with no product-contract regression.
 
-## 15. Next architecture work
+## 15. Backend rebuild completion and next work
 
-Manual Input create / correct / delete is no longer a major runtime compatibility gap. The main financial product mutations now share the same Runtime / Pipeline / UoW model: Manual Source mutation, Mapping Review Apply, transaction Enrichment mutation, and Scheduled due execution.
+The backend orchestration rebuild is complete at the current local-product boundary. Source mutation, Mapping Review, transaction Enrichment, Scheduled due execution, Projection rebuild/query, CLI, and HTTP now converge on one Runtime / Pipeline / Application model. No second root-level Application, HTTP, Manual Input, or statistics-generation orchestration entry remains.
 
-The next backend step should therefore start with a **compatibility and responsibility audit**, not another predetermined migration. In particular, review the remaining direct module CLIs, base `FamilySpendingApplication`, feature helpers, and root-module responsibilities to distinguish:
+The remaining root modules are intentionally retained because they own domain rules, source/storage formats, or pure projection logic rather than competing lifecycle orchestration. File count is therefore not a cleanup target by itself.
 
-- compatibility surfaces that are cheap and useful to keep;
-- orchestration that still duplicates the runtime model and is worth migrating;
-- stable domain/storage modules that merely live at the repository root and do not need to move.
-
-Only after that audit should the project decide whether a physical consolidation such as `domain/`, `application/commands`, or `infrastructure/storage` produces real maintenance value. Broad directory relocation is not itself a backend architecture milestone.
+Future backend work should be driven by product evidence: new Source types, richer analytics, measured performance bottlenecks, public deployment, durable concurrency, or storage requirements. A broad directory move is not a backend milestone unless it materially reduces maintenance cost.

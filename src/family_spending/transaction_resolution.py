@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
@@ -20,37 +19,24 @@ from family_spending.enrichment import (
     materialize_enrichment_state,
     validate_enrichment_state_categories,
 )
-from family_spending.ingestion.cmb_email_transactions import (
-    CmbTransaction,
-    CmbTransactionCsvError,
-    read_transactions_csv,
-)
+from family_spending.ingestion.cmb_email_transactions import CmbTransaction
 from family_spending.ingestion.cmb_source_adapter import CmbSourceAdapter
 from family_spending.manual_source import ManualSourceAdapter, ManualSourceEntry
 from family_spending.mapping import (
-    MappingDataError,
     MappingEnrichmentResolver,
     MappingResolutionError,
     MerchantMappings,
-    load_merchant_mappings,
 )
 from family_spending.reconciliation import (
     CmbReconciler,
     ManualReconciler,
     ReconciliationContext,
-    ReconciliationError,
     ReconciliationResult,
 )
-from family_spending.refund_reconciliation import (
-    NetConsumption,
-    RefundReconciliationError,
-    reconcile_refunds,
-)
-from family_spending.settings import CATEGORIES_FILE, MERCHANTS_FILE, TRANSACTIONS_FILE
+from family_spending.refund_reconciliation import NetConsumption, reconcile_refunds
 from family_spending.source_records import SourceRecord
 from family_spending.transactions import (
     Transaction,
-    TransactionDataError,
     TransactionSourceLink,
     index_authoritative_source_records,
     index_source_records,
@@ -71,7 +57,7 @@ REVIEW_SIGNALS = (
 
 
 class TransactionResolutionError(RuntimeError):
-    """Raised when the complete source, identity, and Enrichment snapshot is internally inconsistent."""
+    """Raised when Source, Transaction, and Enrichment state is internally inconsistent."""
 
 
 @dataclass(frozen=True)
@@ -126,7 +112,7 @@ def _retain_current_link_groups(
     links: tuple[TransactionSourceLink, ...],
     source_records: tuple[SourceRecord[Any], ...],
 ) -> tuple[TransactionSourceLink, ...]:
-    """Drop stale Transaction relations as units when their authoritative source no longer exists."""
+    """Drop stale Transaction relations as units when their authoritative Source disappears."""
     current_source_ids = {record.id for record in source_records}
     links_by_transaction: dict[str, list[TransactionSourceLink]] = {}
     for link in links:
@@ -151,8 +137,10 @@ def _manual_enrichment_inputs(
     entries: tuple[ManualSourceEntry, ...],
     links: tuple[TransactionSourceLink, ...],
 ) -> Mapping[str, _ManualEnrichmentInput]:
-    """Fold linked Manual inputs in entry order so later explicit user values refine earlier optional values."""
-    transaction_by_source = {link.source_record_id: link.transaction_id for link in links}
+    """Fold legacy optional Manual enrichment evidence while preserving current source data."""
+    transaction_by_source = {
+        link.source_record_id: link.transaction_id for link in links
+    }
     values: dict[str, _ManualEnrichmentInput] = {}
     for entry in entries:
         transaction_id = transaction_by_source.get(entry.id)
@@ -165,7 +153,9 @@ def _manual_enrichment_inputs(
                 if entry.merchant_name is not None
                 else previous.merchant_name
             ),
-            category=entry.category if entry.category is not None else previous.category,
+            category=(
+                entry.category if entry.category is not None else previous.category
+            ),
             note=entry.note if entry.note is not None else previous.note,
         )
     return MappingProxyType(values)
@@ -179,13 +169,14 @@ def _merchant_hints(
     mappings: MerchantMappings,
     current_enrichment_states: Mapping[str, TransactionEnrichmentState],
 ) -> Mapping[str, str | None]:
-    """Expose current Merchant only as Reconciliation evidence without resolving or copying Category."""
+    """Expose current Merchant only as Reconciliation evidence; Category never identifies a Transaction."""
     authoritative = index_authoritative_source_records(source_records, links)
     manual_values = _manual_enrichment_inputs(manual_entries, links)
     hints: dict[str, str | None] = {}
     for transaction in transactions:
-        if transaction.id in current_enrichment_states:
-            hints[transaction.id] = current_enrichment_states[transaction.id].merchant_name
+        persisted = current_enrichment_states.get(transaction.id)
+        if persisted is not None:
+            hints[transaction.id] = persisted.merchant_name
             continue
         manual_value = manual_values.get(transaction.id)
         if manual_value is not None and manual_value.merchant_name is not None:
@@ -205,7 +196,7 @@ def _record_merchant_hints(
     manual_entries: tuple[ManualSourceEntry, ...],
     mappings: MerchantMappings,
 ) -> Mapping[str, str | None]:
-    """Resolve only the Merchant signal needed for candidate matching; Category remains outside identity decisions."""
+    """Resolve only the Merchant signal used by candidate matching; Category remains outside identity."""
     manual_by_id = {entry.id: entry for entry in manual_entries}
     hints: dict[str, str | None] = {}
     for record in source_records:
@@ -224,11 +215,13 @@ def _apply_manual_enrichment(
     manual: _ManualEnrichmentInput | None,
     mappings: MerchantMappings,
 ) -> TransactionEnrichment:
-    """Overlay explicit Manual Enrichment while leaving Transaction Core and source authority untouched."""
+    """Overlay persisted legacy Manual enrichment evidence without changing Transaction Core."""
     if manual is None:
         return base
     merchant_name = (
-        manual.merchant_name if manual.merchant_name is not None else base.merchant_name
+        manual.merchant_name
+        if manual.merchant_name is not None
+        else base.merchant_name
     )
     display_name = merchant_name or base.display_name
     default_category = base.default_category
@@ -254,12 +247,12 @@ def _apply_manual_enrichment(
     if manual.category is not None:
         if manual.category not in mappings.categories:
             raise MappingResolutionError(
-                f"Manual category {manual.category!r} is not defined in {mappings.categories_path}"
+                f"Manual category {manual.category!r} is not defined in "
+                f"{mappings.categories_path}"
             )
         category = manual.category
         category_source = "manual_override"
         review_signals = ()
-    is_unclassified = category == UNCLASSIFIED_CATEGORY
     return TransactionEnrichment(
         transaction_id=base.transaction_id,
         merchant_name=merchant_name,
@@ -267,7 +260,7 @@ def _apply_manual_enrichment(
         default_category=default_category,
         category=category,
         category_source=category_source,
-        is_unclassified=is_unclassified,
+        is_unclassified=category == UNCLASSIFIED_CATEGORY,
         review_signals=review_signals,
         note=manual.note if manual.note is not None else base.note,
     )
@@ -281,7 +274,7 @@ def build_household_domain_state(
     existing_links: tuple[TransactionSourceLink, ...] = (),
     existing_enrichment_states: Mapping[str, TransactionEnrichmentState] | None = None,
 ) -> HouseholdDomainState:
-    """Run source-aware identity stages while preserving current Enrichment for already-known Transactions."""
+    """Run source-aware identity stages while preserving current Enrichment for known Transactions."""
     current_enrichment_states = (
         existing_enrichment_states
         if existing_enrichment_states is not None
@@ -291,7 +284,11 @@ def build_household_domain_state(
     manual_records = ManualSourceAdapter().adapt_all(manual_entries)
     source_records = cmb_records + manual_records
     records_by_id = index_source_records(source_records)
-    record_merchants = _record_merchant_hints(source_records, manual_entries, mappings)
+    record_merchants = _record_merchant_hints(
+        source_records,
+        manual_entries,
+        mappings,
+    )
     current_links = _retain_current_link_groups(existing_links, source_records)
     existing_transactions = rebuild_transactions_from_source_links(
         source_records,
@@ -309,16 +306,15 @@ def build_household_domain_state(
         if existing_transactions
         else MappingProxyType({})
     )
-    cmb_context = ReconciliationContext(
-        source_records_by_id=records_by_id,
-        merchant_by_transaction_id=existing_merchants,
-        merchant_by_source_record_id=record_merchants,
-    )
     cmb_result = CmbReconciler().reconcile(
         cmb_records,
         existing_transactions=existing_transactions,
         existing_links=current_links,
-        context=cmb_context,
+        context=ReconciliationContext(
+            source_records_by_id=records_by_id,
+            merchant_by_transaction_id=existing_merchants,
+            merchant_by_source_record_id=record_merchants,
+        ),
     )
     merchants_after_cmb = _merchant_hints(
         cmb_result.transactions,
@@ -328,16 +324,15 @@ def build_household_domain_state(
         mappings,
         current_enrichment_states,
     )
-    manual_context = ReconciliationContext(
-        source_records_by_id=records_by_id,
-        merchant_by_transaction_id=merchants_after_cmb,
-        merchant_by_source_record_id=record_merchants,
-    )
     manual_result = ManualReconciler().reconcile(
         manual_records,
         existing_transactions=cmb_result.transactions,
         existing_links=cmb_result.source_links,
-        context=manual_context,
+        context=ReconciliationContext(
+            source_records_by_id=records_by_id,
+            merchant_by_transaction_id=merchants_after_cmb,
+            merchant_by_source_record_id=record_merchants,
+        ),
     )
     reconciliation = ReconciliationResult(
         transactions=manual_result.transactions,
@@ -349,7 +344,7 @@ def build_household_domain_state(
         source_records,
         reconciliation.source_links,
     )
-    base_resolver = MappingEnrichmentResolver(mappings)
+    resolver = MappingEnrichmentResolver(mappings)
     manual_values = _manual_enrichment_inputs(
         manual_entries,
         reconciliation.source_links,
@@ -360,7 +355,7 @@ def build_household_domain_state(
         source_record = source_records_by_transaction_id[transaction.id]
         persisted = current_enrichment_states.get(transaction.id)
         if persisted is None:
-            base = base_resolver.resolve(transaction, source_record)
+            base = resolver.resolve(transaction, source_record)
             enrichment = _apply_manual_enrichment(
                 base,
                 manual_values.get(transaction.id),
@@ -376,23 +371,22 @@ def build_household_domain_state(
             enrichment = materialize_enrichment_state(persisted, source_record)
         enrichment_states_list.append(enrichment_state)
         enrichments_list.append(enrichment)
+
     enrichment_states = tuple(enrichment_states_list)
     enrichments = tuple(enrichments_list)
-    enrichments_by_transaction_id = MappingProxyType(
-        {item.transaction_id: item for item in enrichments}
-    )
-    enrichment_states_by_transaction_id = MappingProxyType(
-        {item.transaction_id: item for item in enrichment_states}
-    )
     return HouseholdDomainState(
         source_records=source_records,
         reconciliation=reconciliation,
         transactions_by_id=transactions_by_id,
         source_records_by_transaction_id=source_records_by_transaction_id,
         enrichments=enrichments,
-        enrichments_by_transaction_id=enrichments_by_transaction_id,
+        enrichments_by_transaction_id=MappingProxyType(
+            {item.transaction_id: item for item in enrichments}
+        ),
         enrichment_states=enrichment_states,
-        enrichment_states_by_transaction_id=enrichment_states_by_transaction_id,
+        enrichment_states_by_transaction_id=MappingProxyType(
+            {item.transaction_id: item for item in enrichment_states}
+        ),
     )
 
 
@@ -400,7 +394,7 @@ def build_cmb_domain_state(
     raw_transactions: tuple[CmbTransaction, ...],
     mappings: MerchantMappings,
 ) -> CmbDomainState:
-    """Keep the established CMB-only entrypoint while routing it through the generalized household pipeline."""
+    """Build the CMB-only form of the same household Source/Reconciliation path."""
     state = build_household_domain_state(raw_transactions, (), mappings)
     return CmbDomainState(
         source_records=state.source_records,
@@ -418,7 +412,7 @@ def resolve_transactions(
     transactions: tuple[CmbTransaction, ...],
     mappings: MerchantMappings,
 ) -> TransactionResolutionBatch:
-    """Use net spending only for reviews whose meaning actually depends on net amount."""
+    """Build a pure CMB diagnostic batch without a second file-level orchestration path."""
     state = build_cmb_domain_state(transactions, mappings)
     refund_result = reconcile_refunds(
         state.reconciliation.transactions,
@@ -450,106 +444,27 @@ def resolve_transactions(
                 review_signals=review_signals,
             )
         )
-    resolved_transactions = tuple(items)
+    resolved = tuple(items)
     unclassified = tuple(
-        item for item in resolved_transactions if item.enrichment.is_unclassified
+        item for item in resolved if item.enrichment.is_unclassified
     )
-    category_source_counter = Counter(
-        item.enrichment.category_source for item in resolved_transactions
-    )
-    category_source_counts = MappingProxyType(
-        {source: category_source_counter[source] for source in CATEGORY_SOURCES}
+    source_counts = Counter(
+        item.enrichment.category_source for item in resolved
     )
     reviews: dict[str, list[TransactionResolutionItem]] = {
         signal: [] for signal in REVIEW_SIGNALS
     }
-    for item in resolved_transactions:
+    for item in resolved:
         for signal in item.review_signals:
             reviews.setdefault(signal, []).append(item)
-    reviews_by_signal = MappingProxyType(
-        {signal: tuple(review_items) for signal, review_items in reviews.items()}
-    )
     return TransactionResolutionBatch(
-        transactions=resolved_transactions,
+        transactions=resolved,
         unclassified=unclassified,
-        reviews_by_signal=reviews_by_signal,
-        category_source_counts=category_source_counts,
+        reviews_by_signal=MappingProxyType(
+            {signal: tuple(values) for signal, values in reviews.items()}
+        ),
+        category_source_counts=MappingProxyType(
+            {source: source_counts[source] for source in CATEGORY_SOURCES}
+        ),
         net_consumption=refund_result.net_consumption,
     )
-
-
-def resolve_transactions_from_files(
-    transactions_path: Path = TRANSACTIONS_FILE,
-    merchants_path: Path = MERCHANTS_FILE,
-    categories_path: Path = CATEGORIES_FILE,
-) -> TransactionResolutionBatch:
-    """Resolve a CMB-only diagnostic snapshot from current Mapping rules without reading persistent runtime state."""
-    transactions = read_transactions_csv(transactions_path)
-    mappings = load_merchant_mappings(
-        merchants_path,
-        categories_path,
-    )
-    return resolve_transactions(transactions, mappings)
-
-
-def _format_transaction(item: TransactionResolutionItem) -> str:
-    """Show both source and system IDs because their separation is a core identity invariant."""
-    transaction = item.transaction
-    source_record = item.source_record
-    enrichment = item.enrichment
-    return (
-        f"transaction_id={transaction.id} | "
-        f"source_record_id={source_record.id} | "
-        f"transaction_date={transaction.transaction_date.isoformat()} | "
-        f"amount={format(transaction.amount, 'f')} | "
-        f"description={source_record.description or ''} | "
-        f"display_name={enrichment.display_name} | "
-        f"category={enrichment.category}"
-    )
-
-
-def format_transaction_resolution_report(
-    batch: TransactionResolutionBatch,
-) -> str:
-    """Keep diagnostics compact so reviewers can inspect decisions without reading raw files."""
-    lines = [
-        f"Transactions: {len(batch.transactions)}",
-        f"Merchant defaults: {batch.category_source_counts['merchant_default']}",
-        f"Transaction overrides: {batch.category_source_counts['transaction_override']}",
-        f"Manual overrides: {batch.category_source_counts['manual_override']}",
-        f"Unclassified: {batch.category_source_counts['unclassified']}",
-        "",
-        "Review signals:",
-    ]
-    for signal, items in batch.reviews_by_signal.items():
-        lines.append(f"- {signal}: {len(items)}")
-    if batch.unclassified:
-        lines.extend(("", "Unclassified transactions:"))
-        lines.extend(f"- {_format_transaction(item)}" for item in batch.unclassified)
-    for signal, items in batch.reviews_by_signal.items():
-        if not items:
-            continue
-        lines.extend(("", f"Review transactions: {signal}"))
-        lines.extend(f"- {_format_transaction(item)}" for item in items)
-    return "\n".join(lines)
-
-
-def main() -> None:
-    """Fail the command on any data-contract violation so a successful report always represents a coherent snapshot."""
-    try:
-        batch = resolve_transactions_from_files()
-    except (
-        CmbTransactionCsvError,
-        MappingDataError,
-        MappingResolutionError,
-        ReconciliationError,
-        RefundReconciliationError,
-        TransactionDataError,
-        TransactionResolutionError,
-    ) as exc:
-        raise SystemExit(f"Transaction resolution failed: {exc}") from exc
-    print(format_transaction_resolution_report(batch))
-
-
-if __name__ == "__main__":
-    main()

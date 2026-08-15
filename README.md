@@ -31,7 +31,7 @@ Scheduled Rule
 ```text
 CLI / HTTP
    ↓
-RuntimeFamilySpendingApplication
+FamilySpendingApplication
    ↓
 BackendRuntime
 ├── CurrentHouseholdSnapshot
@@ -251,13 +251,11 @@ Mapping Review 当前规则：
 - Preview token 绑定当前 Mapping 选择和受影响状态；预览后状态发生变化时 Apply 会拒绝旧 token，要求重新预览；
 - Mapping、affected Enrichment 与两个派生 Projection 作为同一个 Application mutation 边界处理；失败时恢复命令前快照，避免留下半提交状态。
 
-运行完整 CMB domain snapshot 的只读诊断：
+`transaction_resolution.py` 继续提供 `HouseholdPipeline` 使用的 household domain assembly 与纯计算 review helpers，但不再暴露第二个 operator CLI。需要只读检查当前 coherent backend state 时统一使用：
 
 ```powershell
-$env:PYTHONPATH="src"; uv run python -m family_spending.transaction_resolution
+$env:PYTHONPATH="src"; uv run --frozen python -m family_spending diagnose state
 ```
-
-该入口会构建与统计主链一致的 CMB domain snapshot，并执行退款净额计算，以便高额 `综合购物` 复核使用净消费金额；它不写派生 Projection，也不修改交易或正式 Mapping。fresh CMB-only 诊断只基于当前 Mapping 产生 Expense `merchant_default` / `unclassified`；历史 `transaction_override` 属于 persistent Enrichment，不再由该诊断入口从独立 Mapping 文件恢复。
 
 ## Manual Source 与跨来源 Reconciliation
 
@@ -278,19 +276,7 @@ note
 
 `description` 是用户输入并持久化保存的 Manual Source 原始文本，不是 Canonical Merchant。Manual Input 不直接创建或修改 Merchant / Category。Expense 的已有 description 如果命中正式 Mapping，会沿用 `description → merchant → default category` 路径；新 Expense description 未命中时进入运行态 `待分类`，后续与 CMB 未匹配 Expense description 共用 Mapping Review。Income 同样保留原始 description，但不进入 Merchant Mapping 或 Mapping Review，当前直接使用系统默认 `其他收入`。
 
-本地命令行入口：
-
-~~~powershell
-$env:PYTHONPATH="src"
-uv run python -m family_spending.manual_input `
-    --type expense `
-    --date 2026-08-08 `
-    --amount 88.50 `
-    --description "小区门口早餐摊" `
-    --note "现金"
-~~~
-
-Dashboard 也通过 `POST /api/manual-inputs` 调用同一个 Application use case。录入框会从历史 Manual Source 中读取 distinct description，仅做去空白、大小写与前缀级别的轻量候选提示；用户可以复用已有 description，也可以明确新建，不会自动模糊合并。这个提示只处理 Source description 复用，不等于 Merchant Mapping。
+Manual Input 的正式写入口是统一 Application/API。Desktop Web、Mini 与本地 Dashboard 都通过 `POST /api/manual-inputs` 调用同一个 Application use case；不再保留平行的 feature-module 写入 CLI。录入框会从历史 Manual Source 中读取 distinct description，仅做去空白、大小写与前缀级别的轻量候选提示；用户可以复用已有 description，也可以明确新建，不会自动模糊合并。这个提示只处理 Source description 复用，不等于 Merchant Mapping。
 
 Manual Input 会主动执行完整下游 Pipeline：
 
@@ -359,7 +345,7 @@ last_action?
 V1 只支持固定金额的**每月一次**规则，并要求 `next_date` 落在每月 1–28 日，避免月底月份长度导致隐式漂移。每次成功处理一个 occurrence 后，`next_date` 前进一个自然月并保持相同日号。
 
 执行语义：
-- `RuntimeFamilySpendingApplication.initialize()` 先通过 `BackendRuntime.bootstrap()` 同步已有 Source / Reconciliation / Projection，再执行截至本地当天所有启用且到期的规则；
+- `FamilySpendingApplication.initialize()` 先通过 `BackendRuntime.bootstrap()` 同步已有 Source / Reconciliation / Projection，再执行截至本地当天所有启用且到期的规则；
 - 也可以通过显式 `Run Due` 或 `python -m family_spending jobs run-due` 执行同一 runner；V1 不启动常驻线程、daemon 或系统级后台 Scheduler；
 - 创建或编辑启用规则后，如果 `next_date` 已到期，会在同一 Application command 中立即处理到当前日期；暂停规则不会生成 occurrence；
 - 如果程序一段时间未运行，启用规则会从保存的 `next_date` 开始逐月补齐到当前日期；不希望补齐时，应先把 `next_date` 改到未来再启用；
@@ -412,7 +398,7 @@ Expense 的 Mapping / Merchant default 负责新 Transaction 或缺失状态的�
 $env:PYTHONPATH="src"; uv run --frozen python -m family_spending serve
 ```
 
-`serve` 默认监听 `127.0.0.1:8765`。历史 `python -m family_spending.http_api` 入口暂时保留为 compatibility entry；跨端前端开发默认使用后文的 managed runtime，并不要求占用 8765。当前端点包括：
+`serve` 默认监听 `127.0.0.1:8765`。这是本地 JSON API 的唯一 operator transport 入口；跨端前端开发默认使用后文的 managed runtime，并不要求固定占用 8765。当前端点包括：
 
 ```text
 GET   /api/health
@@ -440,11 +426,11 @@ POST  /api/mapping-reviews/apply
 PATCH /api/transactions/{transaction_id}/enrichment
 ```
 
-`GET /api/financial-summary` 与 `GET /api/spending-statistics` 都只读取当前已经生成的 Projection，不在 GET 后隐藏 Source Sync、Projection rebuild 或其他 mutation。Spending Statistics 读取通过 `RuntimeFamilySpendingApplication` 的 Query 边界和 `backend/projection_queries.py` 完成，HTTP transport 不直接承担财务文件读取；缺失或不支持的 Projection 会作为当前状态错误返回。Feedback API 只维护本地产品反馈，不触发 Financial Transaction / Enrichment / Projection Pipeline。
+`GET /api/financial-summary` 与 `GET /api/spending-statistics` 都只读取当前已经生成的 Projection，不在 GET 后隐藏 Source Sync、Projection rebuild 或其他 mutation。Spending Statistics 读取通过 `FamilySpendingApplication` 的 Query 边界和 `backend/projection_queries.py` 完成，HTTP transport 不直接承担财务文件读取；缺失或不支持的 Projection 会作为当前状态错误返回。Feedback API 只维护本地产品反馈，不触发 Financial Transaction / Enrichment / Projection Pipeline。
 
-统一 `serve` 入口创建 `RuntimeFamilySpendingApplication`。初始化时先执行 `BackendRuntime.bootstrap()`：运行一次完整 Source Sync、发布 `CurrentHouseholdSnapshot`，再执行截至当天的 Scheduled Input due occurrences。正常 Query 从 runtime snapshot 读取；如果受跟踪的 Source / Link / Enrichment / Mapping 文件被外部修改，runtime 会先检测 filesystem fingerprint 并重新装载已 reconciled current state，而不是在每个 GET 中重复跑 Reconciliation。若外部 Source 变化已经使持久化 links 失效，则 refresh 会明确报错并要求重新执行 Source Sync。
+统一 `serve` 入口创建 `FamilySpendingApplication`。初始化时先执行 `BackendRuntime.bootstrap()`：运行一次完整 Source Sync、发布 `CurrentHouseholdSnapshot`，再执行截至当天的 Scheduled Input due occurrences。正常 Query 从 runtime snapshot 读取；如果受跟踪的 Source / Link / Enrichment / Mapping 文件被外部修改，runtime 会先检测 filesystem fingerprint 并重新装载已 reconciled current state，而不是在每个 GET 中重复跑 Reconciliation。若外部 Source 变化已经使持久化 links 失效，则 refresh 会明确报错并要求重新执行 Source Sync。
 
-Runtime-backed mutation 保持 authoritative state 与可重建 Projection 的提交边界。Manual Input create/correct/delete 已通过 `ManualInputCommandService` 进入统一 Runtime / Source Sync / `FileUnitOfWork` 路径；Enrichment PATCH 与 Mapping Review Apply 使用共享 `FileUnitOfWork` 协调 Enrichment / Mapping 与两个 Projection；Scheduled due batch 把规则、Manual Source 和 downstream state 纳入同一 commit boundary。历史 `manual_input.py` 直接模块入口只作为 compatibility surface 保留。所有路径都不得静默留下已知的半提交 Application state。
+Runtime-backed mutation 保持 authoritative state 与可重建 Projection 的提交边界。Manual Input create/correct/delete 通过 `ManualInputCommandService` 进入统一 Runtime / Source Sync / `FileUnitOfWork` 路径；Enrichment PATCH 与 Mapping Review Apply 使用共享 `FileUnitOfWork` 协调 Enrichment / Mapping 与两个 Projection；Scheduled due batch 把规则、Manual Source 和 downstream state 纳入同一 commit boundary。所有产品写路径都只经过这套正式 Application / Runtime 编排，不再维护第二套 feature-level orchestration。
 
 ## 退款归并
 
@@ -500,7 +486,7 @@ BackendRuntime.sync_sources()
 → publish refreshed CurrentHouseholdSnapshot
 ```
 
-历史 `python -m family_spending.statistics_generation` 入口暂时保留并委托给同一 `HouseholdPipeline`，不再拥有第二套统计编排实现。
+完整 Source Sync 只通过上述统一 operator 入口执行；不再保留平行的统计生成 CLI。
 
 只需要从已经 reconciled 的 current state 重建派生输出时，可以跳过 Source Adapter / Reconciliation：
 
@@ -854,15 +840,13 @@ src/family_spending/
 │   ├── state.py                      # CurrentHouseholdSnapshot rehydration
 │   ├── pipeline.py                   # Source Sync + Projection rebuild lifecycle
 │   ├── runtime.py                    # in-process current snapshot + fingerprint refresh
-│   ├── application.py                # runtime-backed Application/query compatibility facade
+│   ├── application.py                # canonical Application/API boundary
 │   ├── manual_commands.py            # Manual Input create/correct/delete runtime command family
 │   ├── scheduled_jobs.py             # batched Scheduled due → one Source Sync
 │   ├── projection_queries.py         # read-only generated Projection query helpers
-│   └── http_server.py                # canonical runtime HTTP transport
+│   └── http_server.py                # canonical local JSON HTTP transport
 ├── infrastructure/
 │   └── file_uow.py                   # shared cross-file rollback / commit boundary
-├── application.py                    # legacy/base Application surface kept for compatibility callers/tests
-├── http_api.py                       # JSON transport + legacy module entry
 ├── feedback.py                       # local product Feedback V1 store/domain
 ├── source_records.py                 # SourceRecord + SourceAdapter 扩展契约
 ├── transactions.py                   # Transaction Core + Source Link / 索引
@@ -871,8 +855,7 @@ src/family_spending/
 ├── enrichment_store.py               # Enrichment JSONL storage
 ├── source_link_store.py              # Source Record → Transaction link storage
 ├── manual_source.py                  # Manual Source local state + empty-store cleanup
-├── manual_input.py                   # legacy Manual Input command orchestration / rollback
-├── scheduled_input.py                # Monthly rule model + legacy compatibility runner
+├── scheduled_input.py                # Monthly rule model / storage / occurrence identity
 ├── mapping.py                        # Expense Mapping loader + type-aware Enrichment resolver
 ├── mapping_review.py                 # Expense Mapping Review aggregation / preview / propagation
 ├── month_coverage.py
@@ -881,41 +864,32 @@ src/family_spending/
 ├── financial_projection.py           # Income + net spending → financial_summary.json schema v1
 ├── settings.py
 ├── spending_statistics.py            # AnalyticsProcessor + 消费统计
-├── statistics_generation.py          # compatibility wrapper → HouseholdPipeline full sync
 ├── statistics_serialization.py
-├── transaction_resolution.py         # shared household domain assembly + diagnostic compatibility
+├── transaction_resolution.py         # shared household domain assembly + review helpers
 └── ingestion/
     ├── imap_163.py
     ├── cmb_email_transactions.py
     └── cmb_source_adapter.py
 
 tests/
-├── test_application.py
+├── test_backend_application.py
 ├── test_backend_architecture.py
-├── test_backend_runtime_application.py
-├── test_backend_scheduled_jobs.py
-├── test_backend_manual_input_commands.py
+├── test_backend_http_server.py
+├── test_backend_pipeline_integration.py
 ├── test_cmb_domain.py
 ├── test_cmb_email_transactions.py
 ├── test_enrichment_store.py
-├── test_financial_application_projection.py
-├── test_financial_projection.py
-├── test_financial_statistics_generation.py
 ├── test_feedback.py
-├── test_http_api.py
-├── test_income_mapping.py
-├── test_manual_input_application_api.py
-├── test_scheduled_input_application_api.py
+├── test_financial_projection.py
 ├── test_imap_163.py
+├── test_income_mapping.py
 ├── test_local_dashboard.py
+├── test_manual_source.py
 ├── test_mapping.py
-├── test_mapping_review_application.py
-├── test_mapping_review_http_api.py
 ├── test_month_coverage.py
 ├── test_refund_reconciliation.py
 ├── test_spending_statistics.py
-├── test_spending_statistics_api.py
-├── test_statistics_generation.py
+├── test_spending_statistics_merchant_identity.py
 ├── test_statistics_serialization.py
 └── test_transaction_resolution.py
 ```

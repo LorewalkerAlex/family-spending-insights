@@ -5,13 +5,12 @@ from datetime import date
 from typing import Sequence
 
 from family_spending.backend import BackendPaths, BackendRuntime
-from family_spending.backend.application import RuntimeFamilySpendingApplication
-from family_spending.backend.http_server import create_runtime_http_server
+from family_spending.backend.application import FamilySpendingApplication
+from family_spending.backend.http_server import create_http_server
 from family_spending.backend.pipeline import HouseholdSyncSummary
 
 
 def _iso_date(value: str) -> date:
-    """Parse explicit job dates without making the scheduler depend on locale settings."""
     try:
         return date.fromisoformat(value)
     except ValueError as exc:
@@ -56,10 +55,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _serve(host: str, port: int) -> None:
-    """Keep HTTP transport startup separate from the command parser and testable lifecycle."""
-    application = RuntimeFamilySpendingApplication()
+    application = FamilySpendingApplication()
     application.initialize()
-    server = create_runtime_http_server(application, host, port)
+    server = create_http_server(application, host, port)
     print(f"Family Spending API: http://{host}:{port}")
     try:
         server.serve_forever()
@@ -70,7 +68,6 @@ def _serve(host: str, port: int) -> None:
 
 
 def _format_household_sync_summary(summary: HouseholdSyncSummary) -> str:
-    """Format the runtime-owned Source-sync summary without relying on compatibility-only fields."""
     return "\n".join(
         (
             f"Raw transactions: {summary.raw_transactions}",
@@ -93,14 +90,12 @@ def _format_household_sync_summary(summary: HouseholdSyncSummary) -> str:
 
 
 def _sync() -> None:
-    """Run the runtime Source-sync lifecycle and report only fields owned by its summary contract."""
     runtime = BackendRuntime(BackendPaths())
-    summary = runtime.sync_sources()
-    print(_format_household_sync_summary(summary))
+    print(_format_household_sync_summary(runtime.sync_sources()))
 
 
 def _run_due(as_of: date | None) -> None:
-    application = RuntimeFamilySpendingApplication()
+    application = FamilySpendingApplication()
     application.runtime.bootstrap()
     result = application.run_due_scheduled_inputs(as_of=as_of)
     print(f"Scheduled occurrences generated: {len(result.occurrences)}")
@@ -136,7 +131,6 @@ def _diagnose_state() -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    """Dispatch one explicit backend lifecycle action."""
     args = build_parser().parse_args(argv)
     if args.command == "serve":
         _serve(args.host, args.port)
