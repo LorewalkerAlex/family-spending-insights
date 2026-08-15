@@ -73,3 +73,73 @@ def transaction_from_source_record(
         amount=source_record.amount,
         currency=source_record.currency,
     )
+
+
+def validate_source_link_structure(links: tuple[SourceLink, ...]) -> tuple[str, ...]:
+    """Validate durable identity structure and return stable Transaction creation order."""
+    seen_sources: set[str] = set()
+    ordered_transaction_ids: list[str] = []
+    seen_transactions: set[str] = set()
+    authoritative_counts: dict[str, int] = {}
+
+    for link in links:
+        if link.source_record_id in seen_sources:
+            raise DomainInvariantError(
+                f"SourceRecord {link.source_record_id!r} is linked more than once"
+            )
+        seen_sources.add(link.source_record_id)
+
+        if link.transaction_id not in seen_transactions:
+            seen_transactions.add(link.transaction_id)
+            ordered_transaction_ids.append(link.transaction_id)
+
+        if link.role == "authoritative":
+            authoritative_counts[link.transaction_id] = (
+                authoritative_counts.get(link.transaction_id, 0) + 1
+            )
+            if authoritative_counts[link.transaction_id] > 1:
+                raise DomainInvariantError(
+                    f"Transaction {link.transaction_id!r} has multiple authoritative SourceLinks"
+                )
+
+    missing_authority = [
+        transaction_id
+        for transaction_id in ordered_transaction_ids
+        if authoritative_counts.get(transaction_id, 0) == 0
+    ]
+    if missing_authority:
+        raise DomainInvariantError(
+            f"Transactions have no authoritative SourceLink: {missing_authority!r}"
+        )
+
+    return tuple(ordered_transaction_ids)
+
+
+def rebuild_transactions_from_source_links(
+    source_records: tuple[SourceRecord, ...],
+    links: tuple[SourceLink, ...],
+) -> tuple[Transaction, ...]:
+    """Derive current Transactions from durable identity plus authoritative source facts."""
+    records_by_id: dict[str, SourceRecord] = {}
+    for record in source_records:
+        if record.id in records_by_id:
+            raise DomainInvariantError(f"Duplicate SourceRecord id {record.id!r}")
+        records_by_id[record.id] = record
+
+    ordered_transaction_ids = validate_source_link_structure(links)
+    authoritative_by_transaction: dict[str, SourceLink] = {}
+    for link in links:
+        if link.source_record_id not in records_by_id:
+            raise DomainInvariantError(
+                f"SourceLink references missing SourceRecord {link.source_record_id!r}"
+            )
+        if link.role == "authoritative":
+            authoritative_by_transaction[link.transaction_id] = link
+
+    return tuple(
+        transaction_from_source_record(
+            records_by_id[authoritative_by_transaction[transaction_id].source_record_id],
+            transaction_id=transaction_id,
+        )
+        for transaction_id in ordered_transaction_ids
+    )
