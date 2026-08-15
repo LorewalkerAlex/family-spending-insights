@@ -1,0 +1,189 @@
+.theme-tone-switcher {
+  min-height: var(--fsi-control-height);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 4px 10px;
+  border: 1px solid color-mix(in srgb, var(--fsi-color-accent) 18%, var(--fsi-color-border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fsi-color-surface) 84%, transparent);
+  box-shadow:
+    0 8px 22px color-mix(in srgb, var(--fsi-color-accent) 6%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(14px);
+}
+
+.theme-tone-switcher__label {
+  color: var(--fsi-color-text-muted);
+  font-size: 10px;
+  font-weight: 720;
+  letter-spacing: 0.04em;
+}
+
+.theme-tone-switcher__swatches {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.theme-tone-switcher__button {
+  min-width: 55px;
+  height: 29px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 8px 0 6px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fsi-color-text-muted);
+  cursor: pointer;
+  transition:
+    background 130ms ease,
+    color 130ms ease,
+    transform 130ms ease,
+    box-shadow 130ms ease;
+}
+
+.theme-tone-switcher__button:hover {
+  background: color-mix(in srgb, var(--fsi-color-ambient-1) 12%, var(--fsi-color-surface));
+  color: var(--fsi-color-text);
+}
+
+.theme-tone-switcher__button:active {
+  transform: scale(0.96);
+}
+
+.theme-tone-switcher__button:focus-visible {
+  outline: 2px solid var(--fsi-color-accent);
+  outline-offset: 1px;
+}
+
+.theme-tone-switcher__button.is-active {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--fsi-color-ambient-1) 19%, var(--fsi-color-surface)),
+    color-mix(in srgb, var(--fsi-color-ambient-2) 15%, var(--fsi-color-surface))
+  );
+  color: var(--fsi-color-text);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fsi-color-accent) 18%, transparent);
+}
+
+.theme-tone-switcher__swatch {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--fsi-color-text) 13%, transparent);
+  border-radius: 999px;
+  box-shadow: 0 0 0 2px var(--fsi-color-surface);
+}
+
+.theme-tone-switcher__button.is-active .theme-tone-switcher__swatch {
+  box-shadow:
+    0 0 0 2px var(--fsi-color-surface),
+    0 0 0 3px var(--fsi-color-accent);
+}
+
+.theme-tone-switcher__name {
+  font-size: 10px;
+  font-weight: 720;
+  white-space: nowrap;
+}
+
+/* The dopamine themes intentionally color the shell, not only individual charts. */
+.page-shell {
+  background:
+    radial-gradient(
+      760px 360px at 88% -90px,
+      color-mix(in srgb, var(--fsi-color-ambient-1) 13%, transparent),
+      transparent 68%
+    ),
+    radial-gradient(
+      640px 300px at 38% -70px,
+      color-mix(in srgb, var(--fsi-color-ambient-2) 10%, transparent),
+      transparent 70%
+    ),
+    var(--fsi-color-canvas);
+}
+
+.sidebar {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--fsi-color-ambient-1) 10%, var(--fsi-color-surface)) 0,
+      var(--fsi-color-surface) 210px
+    );
+}
+
+.brand__mark {
+  background: linear-gradient(135deg, var(--fsi-color-accent), var(--fsi-color-ambient-2));
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--fsi-color-accent) 22%, transparent);
+}
+
+.page-header {
+  background: var(--fsi-color-header);
+  backdrop-filter: blur(16px) saturate(1.15);
+}
+
+.workspace-nav__item:hover,
+.button--secondary:not(:disabled):hover,
+.button--ghost:not(:disabled):hover {
+  background: color-mix(in srgb, var(--fsi-color-ambient-1) 8%, var(--fsi-color-surface-hover));
+}
+
+.workspace-nav__item--active {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--fsi-color-accent) 14%, var(--fsi-color-surface)),
+    color-mix(in srgb, var(--fsi-color-ambient-2) 8%, var(--fsi-color-surface))
+  );
+  box-shadow: inset 3px 0 0 var(--fsi-color-accent);
+}
+
+.button--primary {
+  background: linear-gradient(135deg, var(--fsi-color-accent), var(--fsi-color-ambient-2));
+  border-color: transparent;
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--fsi-color-accent) 18%, transparent);
+}
+
+.button--primary:not(:disabled):hover {
+  background: linear-gradient(
+    135deg,
+    var(--fsi-color-accent-hover),
+    color-mix(in srgb, var(--fsi-color-ambient-2) 84%, var(--fsi-color-accent))
+  );
+  border-color: transparent;
+}
+
+.page-state--error,
+.inline-error {
+  border-color: color-mix(in srgb, var(--fsi-color-negative) 28%, var(--fsi-color-border));
+  background: var(--fsi-color-negative-subtle);
+}
+
+.status-pill,
+.migration-badge {
+  background: var(--fsi-color-surface-subtle);
+}
+
+@media (max-width: 1280px) {
+  .theme-tone-switcher__name {
+    display: none;
+  }
+
+  .theme-tone-switcher__button {
+    min-width: 29px;
+    padding: 0 6px;
+  }
+}
+
+@media (max-width: 1120px) {
+  .theme-tone-switcher__label {
+    display: none;
+  }
+
+  .theme-tone-switcher {
+    padding-left: 6px;
+  }
+}
