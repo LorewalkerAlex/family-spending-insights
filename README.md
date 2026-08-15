@@ -1,6 +1,15 @@
 ﻿# Family Spending Insights
 
 用于在本地获取、整理和分析家庭共同收支数据。
+## 架构文档权威性
+
+正式目标架构、当前代码映射和 Parallel Canonical Rebuild 策略以 `docs/architecture/` 为唯一权威入口。README 继续记录当前可运行产品、命令和开发入口，但不再反向约束目标代码结构。
+
+- `docs/architecture/system-architecture.md`：Canonical System / Runtime / Persistence Architecture。
+- `docs/architecture/code-map.md`：当前实现到 Canonical Architecture 的映射。
+- `docs/architecture/rebuild-strategy.md`：独立 `rebuild/` 并行重建、Parity、Migration 与 Atomic Cutover。
+
+此前三份架构设计已原样归档到 `docs/archive/architecture/2026-08-pre-canonical/`，只用于历史追溯，不再指导新开发。
 
 当前正式数据链路已经包含 CMB Email 与 Manual Source 两个 Source 入口；Scheduled Input V1 已作为调用 Manual Source 的月度编排能力接入同一领域骨架：
 
@@ -39,7 +48,7 @@ BackendRuntime
 └── FileUnitOfWork
 ```
 
-`BackendRuntime` 在进程内持有可重建的当前 household snapshot，Query 优先复用该 snapshot；Source Sync、downstream Projection rebuild、runtime-backed Enrichment / Mapping mutation 与 Scheduled due batch 通过显式 Pipeline / commit boundary 运行。具体技术边界见 `backend-technical-architecture-design.md`；领域事实与长期数据模型仍以 `family-consumption-data-architecture-design.md` 为准。
+`BackendRuntime` 在进程内持有可重建的当前 household snapshot，Query 优先复用该 snapshot；Source Sync、downstream Projection rebuild、runtime-backed Enrichment / Mapping mutation 与 Scheduled due batch 通过显式 Pipeline / commit boundary 运行。当前实现继续作为行为基线；目标架构、Code Map 与 Parallel Rebuild 策略统一以 `docs/architecture/` 为准。
 
 项目当前已经实现邮件获取、CMB Source Record / Transaction 身份分离、Manual Source 与跨来源 Reconciliation、Manual Input 查询 / 更正 / 删除生命周期、Scheduled Input 月度规则管理与幂等到期生成、支出侧 Merchant Mapping 与 Mapping Review / Mapping Correction、独立持久化的当前 Enrichment、退款归并、消费统计 Projection、收入 / 净消费 / 净现金流 Financial Summary Projection、本地 JSON Application/API，以及支持 source-native Manual Input 管理、Scheduled Input 管理、Mapping Review、家庭现金流概览、逐笔 Transaction 浏览和 transaction-only Enrichment exception 的本地 HTML Dashboard。跨端前端已经从基础 POC 进入 PC Web-first 稳定化阶段：Desktop Web 的 Overview、Transactions、Review、Automation、Feedback 五个正式 workspace 与全局 Add Transaction / Send Feedback 都已接入真实 Application/API；Overview 现在以选定完整月份为主上下文，展示月度结余 Hero、净消费趋势、Category 消费构成与 Top Merchant/display，并提供酸柠、莓果、橘浪、葡萄四套可切换的 Desktop 色调主题；消费分析继续通过正式 `GET /api/spending-statistics` 读取 schema v2，只消费后端已经聚合和对账的 Projection，不在 React 中重新计算消费事实。Transactions 提供桌面 master-detail、Expense transaction-only Merchant / Category / Note、Income Note-only 与 Manual Source 更正 / 删除，Review 提供 Mapping Review 聚合、Merchant 建议、Preview / Apply 与新 Merchant 二次确认，Automation 提供 Scheduled Input 创建、编辑、启停、删除与 Run Due。Mini 已真实接入 Overview、Transactions、Review、Add Transaction 与 Feedback；Automation 仍留在后续 Mini 收敛阶段。Desktop 与 Mini 继续共用 TypeScript contracts/service/view-model core，业务事实仍由既有 Python Domain / Application / API 负责，legacy `local_dashboard/` 继续作为功能 fallback。Taro WeChat production build 已通过，但真机联网、正式 AppID / HTTPS API 域名配置和公网部署仍不属于当前已验证范围。增长率/环比分析、收入分类体系、AI 报告以及面向公网部署与认证的远程 API 也仍未实现。
 
@@ -917,11 +926,11 @@ tests/
 领域边界、数据资产、重建关系和隐私原则：
 
 ```text
-family-consumption-data-architecture-design.md
+docs/architecture/README.md
 ```
 
 当前 Python 后端的 Runtime / Pipeline / Unit of Work / CLI 技术结构：
 
 ```text
-backend-technical-architecture-design.md
+docs/architecture/README.md
 ```

@@ -23,8 +23,13 @@ node_modules/
 # 本地开发运行态
 .runtime/
 
-# 本地文档
+# 本地文档默认忽略；Canonical Architecture 与其历史归档纳入 Git
 docs/*
+!docs/architecture/
+!docs/architecture/**
+!docs/archive/
+!docs/archive/architecture/
+!docs/archive/architecture/**
 
 # 本地数据默认忽略
 data/*
