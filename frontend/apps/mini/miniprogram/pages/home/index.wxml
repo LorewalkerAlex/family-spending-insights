@@ -78,6 +78,8 @@
           wx:for="{{recentTransactions}}"
           wx:key="id"
           class="transaction-row {{index > 0 ? 'transaction-row--divided' : ''}}"
+          data-id="{{item.id}}"
+          bindtap="onTapTransaction"
         >
           <view class="transaction-row__main">
             <text class="transaction-name">{{item.name}}</text>

@@ -30,6 +30,14 @@ interface HomePageContext {
   setData(data: Partial<HomePageData>): void;
 }
 
+interface TransactionTapEvent {
+  currentTarget: {
+    dataset: {
+      id?: unknown;
+    };
+  };
+}
+
 const initialTheme = readMiniTheme();
 
 const initialData: HomePageData = {
@@ -78,6 +86,15 @@ async function loadHome(context: HomePageContext): Promise<void> {
   }
 }
 
+function openTransactionDetail(id: unknown): void {
+  if (typeof id !== "string" || id.length === 0) {
+    return;
+  }
+  wx.navigateTo({
+    url: `/pages/transaction-detail/index?id=${encodeURIComponent(id)}`,
+  });
+}
+
 Page({
   data: initialData,
 
@@ -100,6 +117,10 @@ Page({
 
   onTapTransactions() {
     wx.switchTab({ url: "/pages/transactions/index" });
+  },
+
+  onTapTransaction(event: TransactionTapEvent) {
+    openTransactionDetail(event.currentTarget.dataset.id);
   },
 
   onTapReview() {

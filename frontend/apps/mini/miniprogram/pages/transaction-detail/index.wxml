@@ -1,0 +1,87 @@
+<view class="page-container detail-page theme-{{themeId}}">
+  <view wx:if="{{loadState === 'loading'}}" class="surface-card state-card">
+    <view class="state-indicator"></view>
+    <text class="state-title">正在读取交易详情</text>
+    <text class="state-body">正在整理金额、分类与来源信息。</text>
+  </view>
+
+  <view wx:elif="{{loadState === 'error'}}" class="surface-card state-card">
+    <view class="state-indicator state-indicator--error"></view>
+    <text class="state-title">暂时无法读取这笔交易</text>
+    <text class="state-body">{{errorMessage}}</text>
+    <button class="primary-action" bindtap="onTapRefresh">重新加载</button>
+  </view>
+
+  <block wx:else>
+    <view class="detail-hero">
+      <view class="detail-hero__topline">
+        <text class="detail-hero__type">{{typeLabel}}</text>
+        <text wx:if="{{isUnclassified}}" class="detail-badge">待分类</text>
+      </view>
+      <text class="detail-hero__amount detail-hero__amount--{{amountTone}}">{{amountText}}</text>
+      <text class="detail-hero__name">{{name}}</text>
+      <text class="detail-hero__date">{{dateText}}</text>
+    </view>
+
+    <view class="section-header detail-section-header">
+      <text class="section-title">分类信息</text>
+    </view>
+    <view class="surface-card detail-list">
+      <view class="detail-row">
+        <text class="detail-row__label">商户</text>
+        <text class="detail-row__value">{{merchantText}}</text>
+      </view>
+      <view class="detail-row detail-row--divided">
+        <text class="detail-row__label">分类</text>
+        <text class="detail-row__value {{isUnclassified ? 'detail-row__value--attention' : ''}}">
+          {{categoryText}}
+        </text>
+      </view>
+      <view class="detail-row detail-row--divided">
+        <text class="detail-row__label">分类来源</text>
+        <text class="detail-row__value">{{categorySourceText}}</text>
+      </view>
+    </view>
+
+    <view class="section-header detail-section-header">
+      <text class="section-title">原始记录</text>
+    </view>
+    <view class="surface-card detail-list">
+      <view class="detail-row detail-row--stacked">
+        <text class="detail-row__label">原始描述</text>
+        <text class="detail-row__value detail-row__value--long">{{rawDescription}}</text>
+      </view>
+      <view class="detail-row detail-row--divided">
+        <text class="detail-row__label">来源</text>
+        <text class="detail-row__value">{{sourceText}}</text>
+      </view>
+    </view>
+
+    <block wx:if="{{hasNote}}">
+      <view class="section-header detail-section-header">
+        <text class="section-title">备注</text>
+      </view>
+      <view class="surface-card detail-note">
+        <text class="detail-note__text">{{noteText}}</text>
+      </view>
+    </block>
+
+    <view class="section-header detail-section-header">
+      <text class="section-title">审核状态</text>
+    </view>
+    <view class="surface-card review-status {{hasReviewSignals ? 'review-status--attention' : ''}}">
+      <block wx:if="{{hasReviewSignals}}">
+        <text class="review-status__title">这笔交易需要关注</text>
+        <text
+          wx:for="{{reviewSignals}}"
+          wx:key="*this"
+          class="review-status__signal"
+        >{{item}}</text>
+      </block>
+      <block wx:else>
+        <text class="review-status__title">无需额外复核</text>
+        <text class="review-status__body">当前没有附加的交易级复核信号。</text>
+      </block>
+    </view>
+  </block>
+</view>

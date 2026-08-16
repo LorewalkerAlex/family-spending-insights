@@ -1,3 +1,10 @@
+import {
+  formatMonthLabel,
+  formatShortTransactionDate,
+  formatTransactionMoney,
+  transactionDisplayCategory,
+  transactionDisplayName,
+} from "../../presentation/transaction";
 import type {
   FinancialSummary,
   FinancialSummaryMonth,
@@ -38,40 +45,6 @@ export function formatMinorMoney(minor: number): string {
   return `${negative ? "-" : ""}¥${grouped}.${cents}`;
 }
 
-/** Format canonical decimal transaction text while preserving negative adjustments/refunds. */
-export function formatTransactionMoney(amount: string, type: Transaction["type"]): string {
-  const match = amount.trim().match(/^([-+]?)(\d+)(?:\.(\d+))?$/);
-  if (!match) {
-    return amount;
-  }
-
-  const sourceNegative = match[1] === "-";
-  const whole = match[2] ?? "0";
-  const fraction = `${match[3] ?? ""}00`.slice(0, 2);
-  const grouped = whole.replace(/^0+(?=\d)/, "").replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  const normalDirection = type === "expense" ? -1 : 1;
-  const displayDirection = sourceNegative ? -normalDirection : normalDirection;
-  return `${displayDirection < 0 ? "-" : "+"}¥${grouped}.${fraction}`;
-}
-
-/** Convert canonical YYYY-MM text into the concise month label used by Home. */
-export function formatMonth(value: string): string {
-  const match = value.match(/^(\d{4})-(\d{2})$/);
-  if (!match) {
-    return value;
-  }
-  return `${match[1]} 年 ${Number(match[2])} 月`;
-}
-
-/** Convert canonical YYYY-MM-DD text into a short transaction-list date label. */
-export function formatTransactionDate(value: string): string {
-  const match = value.match(/^\d{4}-(\d{2})-(\d{2})$/);
-  if (!match) {
-    return value;
-  }
-  return `${Number(match[1])}月${Number(match[2])}日`;
-}
-
 /** Pick the newest month that Backend marked as visible, independent of payload ordering. */
 export function latestVisibleMonth(months: readonly FinancialSummaryMonth[]): FinancialSummaryMonth | null {
   const visible = months.filter((item) => item.show);
@@ -93,22 +66,14 @@ export function recentTransactionItems(
       return dateOrder !== 0 ? dateOrder : right.index - left.index;
     })
     .slice(0, limit)
-    .map(({ transaction }) => {
-      const name =
-        transaction.enrichment.display_name ||
-        transaction.enrichment.merchant ||
-        transaction.source.description ||
-        "未命名交易";
-      const category = transaction.enrichment.category || "待分类";
-      return {
-        id: transaction.id,
-        name,
-        category,
-        dateText: formatTransactionDate(transaction.date),
-        amountText: formatTransactionMoney(transaction.amount, transaction.type),
-        amountTone: transaction.type,
-      };
-    });
+    .map(({ transaction }) => ({
+      id: transaction.id,
+      name: transactionDisplayName(transaction),
+      category: transactionDisplayCategory(transaction),
+      dateText: formatShortTransactionDate(transaction.date),
+      amountText: formatTransactionMoney(transaction.amount, transaction.type),
+      amountTone: transaction.type,
+    }));
 }
 
 /** Join Backend query results into the presentation-only state consumed by the Home page. */
@@ -124,7 +89,7 @@ export function buildHomeViewModel(
 
   return {
     hasSummary,
-    monthLabel: month ? formatMonth(month.month) : "暂无完整月份",
+    monthLabel: month ? formatMonthLabel(month.month) : "暂无完整月份",
     spendingText: month ? formatMinorMoney(month.total_spending_minor) : "—",
     incomeText: month ? formatMinorMoney(month.total_income_minor) : "—",
     netText: month ? formatMinorMoney(month.net_cash_flow_minor) : "—",

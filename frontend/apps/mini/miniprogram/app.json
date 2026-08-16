@@ -2,6 +2,7 @@
   "pages": [
     "pages/home/index",
     "pages/transactions/index",
+    "pages/transaction-detail/index",
     "pages/manual/index",
     "pages/review/index",
     "pages/more/index"

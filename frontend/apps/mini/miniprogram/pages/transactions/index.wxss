@@ -1,0 +1,183 @@
+.transactions-page {
+  padding-top: 28rpx;
+}
+
+.transactions-header {
+  margin-bottom: 28rpx;
+}
+
+.transaction-controls {
+  overflow: hidden;
+  padding: 0 28rpx 26rpx;
+}
+
+.month-picker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 108rpx;
+  border-bottom: 1rpx solid var(--color-border);
+}
+
+.control-label {
+  display: block;
+  color: var(--color-text-muted);
+  font-size: 22rpx;
+  font-weight: 600;
+}
+
+.month-picker__value {
+  display: block;
+  margin-top: 5rpx;
+  color: var(--color-text);
+  font-size: 31rpx;
+  font-weight: 700;
+}
+
+.month-picker__chevron {
+  color: var(--color-accent);
+  font-size: 38rpx;
+  font-weight: 600;
+}
+
+.filter-row {
+  display: flex;
+  gap: 14rpx;
+  margin-top: 24rpx;
+}
+
+.filter-chip {
+  min-width: 112rpx;
+  padding: 16rpx 24rpx;
+  border: 1rpx solid var(--color-border);
+  border-radius: 999rpx;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: 25rpx;
+  font-weight: 600;
+  line-height: 1;
+  text-align: center;
+}
+
+.filter-chip--active {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: #ffffff;
+}
+
+.list-summary,
+.day-group__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.list-summary {
+  margin: 34rpx 2rpx 10rpx;
+}
+
+.list-summary__month {
+  color: var(--color-text-muted);
+  font-size: 24rpx;
+  font-weight: 600;
+}
+
+.list-summary__count {
+  color: var(--color-accent);
+  font-size: 24rpx;
+  font-weight: 700;
+}
+
+.day-group {
+  margin-top: 24rpx;
+}
+
+.day-group__header {
+  margin: 0 4rpx 12rpx;
+}
+
+.day-group__date {
+  color: var(--color-text);
+  font-size: 27rpx;
+  font-weight: 700;
+}
+
+.day-group__count {
+  color: var(--color-text-subtle);
+  font-size: 22rpx;
+}
+
+.transaction-list {
+  overflow: hidden;
+}
+
+.transaction-row {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  min-height: 106rpx;
+  padding: 22rpx 26rpx;
+}
+
+.transaction-row--divided {
+  border-top: 1rpx solid var(--color-border);
+}
+
+.transaction-row__main {
+  flex: 1;
+  min-width: 0;
+}
+
+.transaction-name {
+  overflow: hidden;
+  font-size: 28rpx;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transaction-category {
+  display: block;
+  max-width: 100%;
+  margin-top: 7rpx;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 23rpx;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transaction-category--attention {
+  color: var(--color-warning);
+  font-weight: 600;
+}
+
+.transaction-row__trailing {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10rpx;
+}
+
+.transaction-amount {
+  font-size: 27rpx;
+  font-weight: 700;
+}
+
+.transaction-amount--positive {
+  color: var(--color-positive);
+}
+
+.transaction-amount--negative {
+  color: var(--color-text);
+}
+
+.transaction-row__chevron {
+  color: var(--color-text-subtle);
+  font-size: 38rpx;
+  font-weight: 400;
+}
+
+.state-card--compact {
+  padding: 30rpx;
+}

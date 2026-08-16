@@ -96,6 +96,7 @@ export interface FamilySpendingApi {
   health(): Promise<void>;
   financialSummary(): Promise<FinancialSummary>;
   transactions(): Promise<Transaction[]>;
+  transaction(transactionId: string): Promise<Transaction>;
   mappingReview(): Promise<MappingReviewWorkspace>;
 }
 
@@ -235,8 +236,7 @@ function parseFinancialSummary(value: unknown): FinancialSummary {
 }
 
 /** Parse one stable frontend Transaction DTO without adding client-side domain rules. */
-function parseTransaction(value: unknown, index: number): Transaction {
-  const label = `transactions[${index}]`;
+function parseTransaction(value: unknown, label: string): Transaction {
   if (!isRecord(value) || !isRecord(value.source) || !isRecord(value.enrichment)) {
     throw new Error(`${label} 格式错误`);
   }
@@ -379,7 +379,25 @@ export function createFamilySpendingApi(options: ApiClientOptions): FamilySpendi
       if (!isRecord(payload) || !Array.isArray(payload.transactions)) {
         throw new Error("Backend transactions 响应格式错误");
       }
-      return payload.transactions.map(parseTransaction);
+      return payload.transactions.map((item, index) =>
+        parseTransaction(item, `transactions[${index}]`),
+      );
+    },
+
+    async transaction(transactionId) {
+      if (!transactionId.trim()) {
+        throw new Error("transaction id 不能为空");
+      }
+      const payload = await requestJson(
+        requester,
+        baseUrl,
+        "GET",
+        `/api/transactions/${encodeURIComponent(transactionId)}`,
+      );
+      if (!isRecord(payload) || !("transaction" in payload)) {
+        throw new Error("Backend transaction detail 响应格式错误");
+      }
+      return parseTransaction(payload.transaction, "transaction");
     },
 
     async mappingReview() {

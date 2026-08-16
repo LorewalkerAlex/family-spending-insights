@@ -25,7 +25,9 @@ The development Mini Program uses `http://127.0.0.1:8765`. `project.config.json`
 2. Import `frontend/apps/mini`.
 3. Use the configured AppID in Developer Tools.
 4. Compile. Home should show the latest visible month, monthly spending, income/net cash flow, pending Mapping Review count, and the five most recent transactions from the Canonical Backend.
-5. Use the native tabs `首页 | 交易 | 记一笔 | 审核 | 更多`; Phase 1 only implements Home, while the other tabs explicitly identify their later delivery phase.
+5. Use the native tabs `首页 | 交易 | 记一笔 | 审核 | 更多`.
+6. `交易` provides the Phase 2 transaction browser: latest-month default, month selection, income/expense filtering, date grouping, and read-only transaction detail.
+7. `记一笔` and `审核` remain explicit later-phase placeholders. `更多` currently provides the persisted interface theme selector.
 
 Developer Tools may create `project.private.config.json`; it is intentionally ignored by Git.
 
@@ -33,6 +35,10 @@ Developer Tools may create `project.private.config.json`; it is intentionally ig
 
 The direct Developer Tools connectivity baseline was verified on 2026-08-16: the native Mini compiled in WeChat Developer Tools and successfully read real Canonical Backend data.
 
-Phase 1 replaces the old connectivity surface with the first product Home and establishes the native five-tab shell plus the small shared WXSS foundation described by `docs/architecture/mini-product-ui-plan.md`. The Home implementation reuses `/api/financial-summary`, `/api/transactions`, and `/api/mapping-reviews`; it does not duplicate reconciliation, mapping, enrichment, refund, or scheduling rules in the client.
+Phase 1 established the first product Home, native five-tab shell, shared WXSS foundation, and the persisted dopamine theme system (`酸柠 | 莓果 | 橘浪 | 葡萄`). Home reuses `/api/financial-summary`, `/api/transactions`, and `/api/mapping-reviews`; it does not duplicate reconciliation, mapping, enrichment, refund, or scheduling rules in the client.
+
+Phase 2 adds the real transaction browser and read-only transaction detail. The transaction list reuses `/api/transactions`; detail reuses `/api/transactions/{transaction_id}`. Presentation-only formatting is shared between Home and Transactions so merchant/display fallback, amount direction, and date formatting stay consistent. The Mini keeps the full transaction query in page memory only and does not introduce a second persistent transaction cache or financial truth.
+
+Phase 2 was manually verified in WeChat Developer Tools with real household data: month switching, all/expense/income filters, date grouping, income/refund amount direction, transaction detail navigation, and opening the same detail from Home all behaved as intended.
 
 Old Taro/H5 Mini screens are historical only and should not be restored as the design source.

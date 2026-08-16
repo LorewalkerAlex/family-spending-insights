@@ -17,6 +17,10 @@ interface MiniProgramSwitchTabOptions {
   url: string;
 }
 
+interface MiniProgramNavigateToOptions {
+  url: string;
+}
+
 interface MiniProgramNavigationBarColorOptions {
   frontColor: "#000000" | "#ffffff";
   backgroundColor: string;
@@ -38,6 +42,7 @@ declare const wx: {
   setTabBarStyle(options: MiniProgramTabBarStyleOptions): unknown;
   stopPullDownRefresh(): void;
   switchTab(options: MiniProgramSwitchTabOptions): void;
+  navigateTo(options: MiniProgramNavigateToOptions): void;
 };
 
 declare function App(options: Record<string, unknown>): void;

@@ -1,11 +1,112 @@
-<view class="page-container theme-{{themeId}}">
-  <view class="page-intro">
-    <text class="page-kicker">交易</text>
-    <text class="page-title">交易</text>
+<view class="page-container transactions-page theme-{{themeId}}">
+  <view class="transactions-header">
+    <view>
+      <text class="page-kicker">家庭账目</text>
+      <text class="page-title">交易</text>
+      <text class="page-subtitle">按月份浏览真实收支，点开一笔查看分类与来源。</text>
+    </view>
   </view>
-  <view class="surface-card placeholder-card">
-    <text class="placeholder-label">Phase 2</text>
-    <text class="placeholder-title">完整交易浏览还没有开放</text>
-    <text class="placeholder-body">当前首页已经展示最近 5 笔真实交易。下一阶段会在这里加入按日期浏览、月份范围和收入 / 支出基础筛选。</text>
+
+  <view wx:if="{{loadState === 'loading'}}" class="surface-card state-card">
+    <view class="state-indicator"></view>
+    <text class="state-title">正在读取交易</text>
+    <text class="state-body">正在整理月份与交易列表。</text>
   </view>
+
+  <view wx:elif="{{loadState === 'error'}}" class="surface-card state-card">
+    <view class="state-indicator state-indicator--error"></view>
+    <text class="state-title">暂时无法读取交易</text>
+    <text class="state-body">{{errorMessage}}</text>
+    <button class="primary-action" bindtap="onTapRefresh">重新加载</button>
+  </view>
+
+  <block wx:else>
+    <view wx:if="{{isCompletelyEmpty}}" class="surface-card state-card">
+      <view class="state-indicator"></view>
+      <text class="state-title">还没有交易</text>
+      <text class="state-body">同步账单或手工录入后，交易会按日期出现在这里。</text>
+    </view>
+
+    <block wx:else>
+      <view class="surface-card transaction-controls">
+        <picker
+          mode="selector"
+          range="{{monthOptions}}"
+          range-key="label"
+          value="{{selectedMonthIndex}}"
+          bindchange="onMonthChange"
+        >
+          <view class="month-picker">
+            <view>
+              <text class="control-label">月份</text>
+              <text class="month-picker__value">{{selectedMonthLabel}}</text>
+            </view>
+            <text class="month-picker__chevron">⌄</text>
+          </view>
+        </picker>
+
+        <view class="filter-row">
+          <view
+            class="filter-chip {{filter === 'all' ? 'filter-chip--active' : ''}}"
+            data-filter="all"
+            bindtap="onFilterTap"
+          >全部</view>
+          <view
+            class="filter-chip {{filter === 'expense' ? 'filter-chip--active' : ''}}"
+            data-filter="expense"
+            bindtap="onFilterTap"
+          >支出</view>
+          <view
+            class="filter-chip {{filter === 'income' ? 'filter-chip--active' : ''}}"
+            data-filter="income"
+            bindtap="onFilterTap"
+          >收入</view>
+        </view>
+      </view>
+
+      <view class="list-summary">
+        <text class="list-summary__month">{{selectedMonthLabel}}</text>
+        <text class="list-summary__count">{{transactionCount}} 笔</text>
+      </view>
+
+      <view wx:if="{{isFilteredEmpty}}" class="surface-card state-card state-card--compact">
+        <text class="state-title">这个条件下没有交易</text>
+        <text class="state-body">可以切换月份，或改为查看全部交易类型。</text>
+      </view>
+
+      <block wx:else>
+        <view wx:for="{{groups}}" wx:key="date" class="day-group">
+          <view class="day-group__header">
+            <text class="day-group__date">{{item.dateLabel}}</text>
+            <text class="day-group__count">{{item.count}} 笔</text>
+          </view>
+
+          <view class="surface-card transaction-list">
+            <view
+              wx:for="{{item.items}}"
+              wx:for-item="transaction"
+              wx:for-index="transactionIndex"
+              wx:key="id"
+              class="transaction-row {{transactionIndex > 0 ? 'transaction-row--divided' : ''}}"
+              data-id="{{transaction.id}}"
+              bindtap="onTapTransaction"
+            >
+              <view class="transaction-row__main">
+                <text class="transaction-name">{{transaction.name}}</text>
+                <text class="transaction-category {{transaction.isUnclassified ? 'transaction-category--attention' : ''}}">
+                  {{transaction.category}}
+                </text>
+              </view>
+              <view class="transaction-row__trailing">
+                <text class="transaction-amount transaction-amount--{{transaction.amountTone}}">
+                  {{transaction.amountText}}
+                </text>
+                <text class="transaction-row__chevron">›</text>
+              </view>
+            </view>
+          </view>
+        </view>
+      </block>
+    </block>
+  </block>
 </view>

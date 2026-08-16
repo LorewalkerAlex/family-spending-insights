@@ -23,6 +23,31 @@ function requesterFor(
   return { calls, requester: vi.fn(requester) };
 }
 
+function transactionPayload(id = "txn_1") {
+  return {
+    id,
+    type: "expense",
+    date: "2026-07-21",
+    amount: "42.50",
+    currency: "CNY",
+    source: {
+      id: "source_1",
+      type: "cmb_email",
+      description: "支付宝-测试商户",
+    },
+    enrichment: {
+      merchant: "测试商户",
+      display_name: "测试商户",
+      default_category: "餐饮美食",
+      category: "餐饮美食",
+      category_source: "merchant_default",
+      note: null,
+      is_unclassified: false,
+      review_signals: [],
+    },
+  };
+}
+
 describe("native Mini API client", () => {
   it("reads the Home V1 queries through the Canonical HTTP API", async () => {
     const baseUrl = "http://127.0.0.1:8765";
@@ -72,30 +97,7 @@ describe("native Mini API client", () => {
       [`${baseUrl}/api/transactions`]: {
         statusCode: 200,
         data: {
-          transactions: [
-            {
-              id: "txn_1",
-              type: "expense",
-              date: "2026-07-21",
-              amount: "42.50",
-              currency: "CNY",
-              source: {
-                id: "source_1",
-                type: "cmb-email",
-                description: "支付宝-测试商户",
-              },
-              enrichment: {
-                merchant: "测试商户",
-                display_name: "测试商户",
-                default_category: "餐饮美食",
-                category: "餐饮美食",
-                category_source: "merchant_default",
-                note: null,
-                is_unclassified: false,
-                review_signals: [],
-              },
-            },
-          ],
+          transactions: [transactionPayload()],
         },
       },
       [`${baseUrl}/api/mapping-reviews`]: {
@@ -109,7 +111,7 @@ describe("native Mini API client", () => {
                 total_amount: "88.00",
                 currency: "CNY",
                 latest_date: "2026-07-20",
-                source_types: ["cmb-email"],
+                source_types: ["cmb_email"],
                 transaction_only_exception_count: 0,
               },
             ],
@@ -140,6 +142,27 @@ describe("native Mini API client", () => {
       `${baseUrl}/api/mapping-reviews`,
     ]);
     expect(calls.every((call) => call.method === "GET")).toBe(true);
+  });
+
+  it("reads one Transaction Detail through the existing canonical route", async () => {
+    const baseUrl = "http://127.0.0.1:8765";
+    const transactionId = "txn_detail";
+    const { calls, requester } = requesterFor({
+      [`${baseUrl}/api/transactions/${transactionId}`]: {
+        statusCode: 200,
+        data: { transaction: transactionPayload(transactionId) },
+      },
+    });
+    const api = createFamilySpendingApi({ baseUrl, requester });
+
+    await expect(api.transaction(transactionId)).resolves.toMatchObject({
+      id: transactionId,
+      source: { type: "cmb_email" },
+      enrichment: { category: "餐饮美食" },
+    });
+    expect(calls.map((call) => call.url)).toEqual([
+      `${baseUrl}/api/transactions/${transactionId}`,
+    ]);
   });
 
   it("surfaces Backend HTTP failures", async () => {
