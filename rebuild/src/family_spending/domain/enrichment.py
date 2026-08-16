@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Literal
 
 from family_spending.domain.errors import DomainInvariantError
@@ -12,8 +14,11 @@ from family_spending.domain.mapping import (
 from family_spending.domain.source import SourceRecord
 from family_spending.domain.transaction import Transaction
 
-INCOME_DEFAULT_CATEGORY = "\u5176\u4ed6\u6536\u5165"
+INCOME_DEFAULT_CATEGORY = "其他收入"
+GENERAL_SHOPPING_CATEGORY = "综合购物"
+HIGH_VALUE_GENERAL_SHOPPING_THRESHOLD = Decimal("1000")
 OTHER_EXPENSE_REVIEW = "other_expense_review"
+HIGH_VALUE_GENERAL_SHOPPING_REVIEW = "high_value_general_shopping_review"
 CategorySource = Literal[
     "merchant_default",
     "transaction_override",
@@ -146,3 +151,68 @@ def resolve_enrichment(
         review_signals=review_signals,
         note=note,
     )
+
+
+def consumption_review_signals(
+    enrichment: ResolvedEnrichment,
+    spending: Decimal,
+) -> tuple[str, ...]:
+    """Evaluate amount-dependent review rules after refund netting, never on raw charge amount."""
+    if not isinstance(spending, Decimal) or not spending.is_finite() or spending <= Decimal("0"):
+        raise DomainInvariantError(
+            f"Net consumption spending must be finite and positive, got {spending!r}"
+        )
+    if enrichment.category_source == "transaction_override":
+        return ()
+    signals = list(enrichment.review_signals)
+    if (
+        enrichment.default_category == GENERAL_SHOPPING_CATEGORY
+        and spending >= HIGH_VALUE_GENERAL_SHOPPING_THRESHOLD
+    ):
+        signals.append(HIGH_VALUE_GENERAL_SHOPPING_REVIEW)
+    return tuple(signals)
+
+
+def resolve_enrichments(
+    transactions: tuple[Transaction, ...],
+    authoritative_sources_by_transaction_id: Mapping[str, SourceRecord],
+    mappings: MappingCatalog,
+    decisions: tuple[EnrichmentDecision, ...] = (),
+) -> tuple[ResolvedEnrichment, ...]:
+    """Resolve an ordered current Enrichment view while rejecting stale sparse decisions."""
+    transaction_ids: set[str] = set()
+    for transaction in transactions:
+        if transaction.id in transaction_ids:
+            raise DomainInvariantError(f"Duplicate Transaction id {transaction.id!r}")
+        transaction_ids.add(transaction.id)
+
+    decisions_by_id: dict[str, EnrichmentDecision] = {}
+    for decision in decisions:
+        if decision.transaction_id in decisions_by_id:
+            raise DomainInvariantError(
+                f"Duplicate EnrichmentDecision for Transaction {decision.transaction_id!r}"
+            )
+        decisions_by_id[decision.transaction_id] = decision
+    orphaned = sorted(set(decisions_by_id) - transaction_ids)
+    if orphaned:
+        raise DomainInvariantError(
+            f"EnrichmentDecision references missing Transactions: {orphaned!r}"
+        )
+
+    resolved: list[ResolvedEnrichment] = []
+    for transaction in transactions:
+        try:
+            source_record = authoritative_sources_by_transaction_id[transaction.id]
+        except KeyError as exc:
+            raise DomainInvariantError(
+                f"Transaction {transaction.id!r} has no authoritative SourceRecord for Enrichment"
+            ) from exc
+        resolved.append(
+            resolve_enrichment(
+                transaction,
+                source_record,
+                mappings,
+                decisions_by_id.get(transaction.id),
+            )
+        )
+    return tuple(resolved)

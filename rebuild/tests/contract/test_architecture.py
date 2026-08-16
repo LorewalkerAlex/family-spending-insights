@@ -96,6 +96,21 @@ class ArchitectureContractTests(unittest.TestCase):
                     violations.append(f"{path.relative_to(PACKAGE_ROOT)}: {module}")
         self.assertEqual(violations, [])
 
+    def test_projections_do_not_depend_on_sources_persistence_runtime_or_interfaces(self) -> None:
+        """Keep projections as rebuildable consumers of Domain/Application state, never mutation owners."""
+        forbidden_prefixes = (
+            "family_spending.sources",
+            "family_spending.persistence",
+            "family_spending.runtime",
+            "family_spending.interfaces",
+        )
+        violations: list[str] = []
+        for path in sorted((PACKAGE_ROOT / "projections").rglob("*.py")):
+            for module in imported_modules(path):
+                if module.startswith(forbidden_prefixes):
+                    violations.append(f"{path.relative_to(PACKAGE_ROOT)}: {module}")
+        self.assertEqual(violations, [])
+
 
 if __name__ == "__main__":
     unittest.main()
