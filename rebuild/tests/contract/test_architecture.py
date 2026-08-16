@@ -88,11 +88,11 @@ class ArchitectureContractTests(unittest.TestCase):
                     violations.append(f"{path.relative_to(PACKAGE_ROOT)}: {module}")
         self.assertEqual(violations, [])
 
-    def test_sources_do_not_depend_on_concrete_persistence(self) -> None:
+    def test_sources_do_not_depend_on_concrete_persistence_or_runtime(self) -> None:
         violations: list[str] = []
         for path in sorted((PACKAGE_ROOT / "sources").rglob("*.py")):
             for module in imported_modules(path):
-                if module.startswith("family_spending.persistence"):
+                if module.startswith(("family_spending.persistence", "family_spending.runtime")):
                     violations.append(f"{path.relative_to(PACKAGE_ROOT)}: {module}")
         self.assertEqual(violations, [])
 
@@ -106,6 +106,22 @@ class ArchitectureContractTests(unittest.TestCase):
         )
         violations: list[str] = []
         for path in sorted((PACKAGE_ROOT / "projections").rglob("*.py")):
+            for module in imported_modules(path):
+                if module.startswith(forbidden_prefixes):
+                    violations.append(f"{path.relative_to(PACKAGE_ROOT)}: {module}")
+        self.assertEqual(violations, [])
+
+    def test_runtime_core_depends_on_ports_domain_and_projections_not_concrete_adapters(self) -> None:
+        """Only composition.py may wire concrete sources and filesystem adapters into Runtime."""
+        forbidden_prefixes = (
+            "family_spending.sources",
+            "family_spending.persistence",
+            "family_spending.interfaces",
+        )
+        violations: list[str] = []
+        for path in sorted((PACKAGE_ROOT / "runtime").glob("*.py")):
+            if path.name in {"__init__.py", "composition.py"}:
+                continue
             for module in imported_modules(path):
                 if module.startswith(forbidden_prefixes):
                     violations.append(f"{path.relative_to(PACKAGE_ROOT)}: {module}")

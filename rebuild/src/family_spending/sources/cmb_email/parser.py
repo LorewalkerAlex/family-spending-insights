@@ -28,8 +28,9 @@ class CmbEmailParseError(RuntimeError):
 
 @dataclass(frozen=True)
 class ParsedCmbEmail:
-    """Normalized records plus diagnostics that do not participate in identity."""
+    """Normalized records plus statement metadata and diagnostics outside Source identity."""
 
+    statement_date: date
     records: tuple[SourceRecord, ...]
     skipped_repayments: int
 
@@ -184,7 +185,11 @@ def _parse_html(
             )
         )
 
-    return ParsedCmbEmail(records=tuple(records), skipped_repayments=skipped_repayments)
+    return ParsedCmbEmail(
+        statement_date=email_date,
+        records=tuple(records),
+        skipped_repayments=skipped_repayments,
+    )
 
 
 def parse_cmb_email(evidence: CmbEmailEvidence) -> ParsedCmbEmail:

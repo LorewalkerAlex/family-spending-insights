@@ -70,6 +70,7 @@ class CmbEmailSourceTests(unittest.TestCase):
         )
         parsed = parse_cmb_email(CmbEmailEvidence(raw))
 
+        self.assertEqual(parsed.statement_date, date(2025, 9, 10))
         self.assertEqual(parsed.skipped_repayments, 1)
         self.assertEqual(len(parsed.records), 1)
         record = parsed.records[0]
@@ -128,12 +129,26 @@ class CmbEmailSourceTests(unittest.TestCase):
         with self.assertRaisesRegex(CmbEmailParseError, "Multiple CMB transaction HTML parts"):
             parse_cmb_email(CmbEmailEvidence(make_email([first, second])))
 
-    def test_source_reads_evidence_without_transactions_csv(self) -> None:
-        raw = make_email([transaction_row("0811", "0812", "merchant", "\u00a5 1.00")])
-        source = CmbEmailSource(_Reader((CmbEmailEvidence(raw),)))
+    def test_source_reads_evidence_and_statement_dates_without_transactions_csv(self) -> None:
+        august = CmbEmailEvidence(
+            make_email(
+                [transaction_row("0711", "0712", "first", "\u00a5 1.00")],
+                "Sun, 10 Aug 2025 08:00:00 +0800",
+            )
+        )
+        september = CmbEmailEvidence(
+            make_email([transaction_row("0811", "0812", "second", "\u00a5 2.00")])
+        )
+        source = CmbEmailSource(_Reader((august, september)))
         records = source.load_records()
-        self.assertEqual(len(records), 1)
+        self.assertEqual(len(records), 2)
         self.assertEqual(records[0].source_type, "cmb_email")
+        statement_dates = source.load_statement_dates_by_evidence()
+        self.assertEqual(set(statement_dates), {august.identity, september.identity})
+        self.assertEqual(
+            frozenset(statement_dates.values()),
+            frozenset((date(2025, 8, 10), date(2025, 9, 10))),
+        )
 
 
 if __name__ == "__main__":
