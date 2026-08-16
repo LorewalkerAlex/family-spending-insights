@@ -60,6 +60,20 @@ def build_transaction_id(source_record: SourceRecord) -> str:
     return f"txn_{digest}"
 
 
+def build_reconsidered_transaction_id(
+    source_record: SourceRecord,
+    previous_transaction_id: str,
+) -> str:
+    """Create a stable split identity when explicit source correction leaves its old Transaction."""
+    if not isinstance(previous_transaction_id, str) or not previous_transaction_id.strip():
+        raise DomainInvariantError("previous_transaction_id must be a non-empty string")
+    payload = (
+        f"transaction-reconsideration\0{source_record.id}\0{previous_transaction_id}"
+    ).encode("utf-8")
+    digest = hashlib.sha256(payload).hexdigest()[:TRANSACTION_ID_DIGEST_LENGTH]
+    return f"txn_{digest}"
+
+
 def transaction_from_source_record(
     source_record: SourceRecord,
     *,

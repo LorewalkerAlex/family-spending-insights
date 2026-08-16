@@ -80,11 +80,13 @@ class ArchitectureContractTests(unittest.TestCase):
                     violations.append(f"{path.relative_to(PACKAGE_ROOT)}: {module}")
         self.assertEqual(violations, [])
 
-    def test_application_ports_do_not_depend_on_concrete_persistence(self) -> None:
+    def test_application_depends_on_ports_not_concrete_persistence_or_runtime(self) -> None:
+        """Application may orchestrate Source contracts, but concrete I/O and Runtime stay outside."""
         violations: list[str] = []
+        forbidden = ("family_spending.persistence", "family_spending.runtime")
         for path in sorted((PACKAGE_ROOT / "application").rglob("*.py")):
             for module in imported_modules(path):
-                if module.startswith("family_spending.persistence"):
+                if module.startswith(forbidden):
                     violations.append(f"{path.relative_to(PACKAGE_ROOT)}: {module}")
         self.assertEqual(violations, [])
 

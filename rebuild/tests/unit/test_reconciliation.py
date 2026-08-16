@@ -12,7 +12,12 @@ from family_spending.domain.reconciliation import (
     ReconciliationState,
 )
 from family_spending.domain.source import SourceIdentity, SourceRecord
-from family_spending.domain.transaction import SourceLink, SourceLinkRole, build_transaction_id
+from family_spending.domain.transaction import (
+    SourceLink,
+    SourceLinkRole,
+    build_reconsidered_transaction_id,
+    build_transaction_id,
+)
 from family_spending.sources.cmb_email.reconciliation import CmbEmailReconciliationPolicy
 from family_spending.sources.manual.reconciliation import ManualReconciliationPolicy
 
@@ -215,6 +220,146 @@ class ReconciliationEngineTests(unittest.TestCase):
         missing = SourceLink("txn_missing", "src_missing", "authoritative")
         with self.assertRaisesRegex(ReconciliationError, "missing SourceRecord"):
             self.engine.reconcile((), existing_links=(missing,))
+
+    def test_source_removal_promotes_surviving_support_without_changing_transaction_id(self) -> None:
+        manual_authority = record("manual", "manual-authority")
+        manual_support = record("manual", "manual-support")
+        surviving = (manual_support,)
+        transient_links = (
+            SourceLink("txn_preserved", manual_support.id, "supporting"),
+        )
+
+        repaired = self.engine.recover_authority_after_source_removal(
+            surviving,
+            transient_links,
+        )
+        self.assertEqual(
+            repaired,
+            (SourceLink("txn_preserved", manual_support.id, "authoritative"),),
+        )
+        result = self.engine.reconcile(surviving, existing_links=repaired)
+        self.assertEqual(result.transactions[0].id, "txn_preserved")
+
+    def test_source_removal_uses_policy_order_when_multiple_supports_survive(self) -> None:
+        cmb = record("cmb_email", "cmb-support")
+        manual = record("manual", "manual-support")
+        repaired = self.engine.recover_authority_after_source_removal(
+            (manual, cmb),
+            (
+                SourceLink("txn_preserved", manual.id, "supporting"),
+                SourceLink("txn_preserved", cmb.id, "supporting"),
+            ),
+        )
+        self.assertIn(
+            SourceLink("txn_preserved", cmb.id, "authoritative"),
+            repaired,
+        )
+        self.assertIn(
+            SourceLink("txn_preserved", manual.id, "supporting"),
+            repaired,
+        )
+
+
+    def test_reconsidered_standalone_source_reuses_its_previous_transaction_identity(self) -> None:
+        original = record("manual", "manual-corrected", amount="20")
+        corrected = record("manual", "manual-corrected", amount="30")
+        result = self.engine.reconcile_reconsidered_source(
+            (corrected,),
+            existing_links=(
+                SourceLink("txn_historical", original.id, "authoritative"),
+            ),
+            source_record_id=corrected.id,
+        )
+
+        self.assertEqual(result.transactions[0].id, "txn_historical")
+        self.assertEqual(result.transactions[0].amount, Decimal("30"))
+        self.assertEqual(result.decisions[0].action, "reused")
+
+    def test_reconsidered_source_splits_without_colliding_with_surviving_old_transaction(self) -> None:
+        cmb = record("cmb_email", "cmb-old", amount="20")
+        original_manual = record("manual", "manual-split", amount="20")
+        corrected_manual = record("manual", "manual-split", amount="30")
+        existing = (
+            SourceLink("txn_preserved", cmb.id, "authoritative"),
+            SourceLink("txn_preserved", original_manual.id, "supporting"),
+        )
+
+        result = self.engine.reconcile_reconsidered_source(
+            (cmb, corrected_manual),
+            existing_links=existing,
+            source_record_id=corrected_manual.id,
+        )
+        split_id = build_reconsidered_transaction_id(
+            corrected_manual,
+            "txn_preserved",
+        )
+
+        self.assertIn(
+            SourceLink("txn_preserved", cmb.id, "authoritative"),
+            result.source_links,
+        )
+        self.assertIn(
+            SourceLink(split_id, corrected_manual.id, "authoritative"),
+            result.source_links,
+        )
+        self.assertNotEqual(split_id, "txn_preserved")
+        self.assertEqual({item.id for item in result.transactions}, {"txn_preserved", split_id})
+
+    def test_reconsidered_authority_promotes_surviving_support_before_split(self) -> None:
+        original_authority = record("manual", "manual-authority", amount="20")
+        corrected_authority = record("manual", "manual-authority", amount="30")
+        support = record("manual", "manual-support", amount="20")
+        existing = (
+            SourceLink("txn_old", original_authority.id, "authoritative"),
+            SourceLink("txn_old", support.id, "supporting"),
+        )
+
+        result = self.engine.reconcile_reconsidered_source(
+            (corrected_authority, support),
+            existing_links=existing,
+            source_record_id=corrected_authority.id,
+        )
+
+        self.assertIn(
+            SourceLink("txn_old", support.id, "authoritative"),
+            result.source_links,
+        )
+        corrected_link = next(
+            item
+            for item in result.source_links
+            if item.source_record_id == corrected_authority.id
+        )
+        self.assertEqual(
+            corrected_link.transaction_id,
+            build_reconsidered_transaction_id(corrected_authority, "txn_old"),
+        )
+        self.assertEqual(corrected_link.role, "authoritative")
+
+    def test_reconsidered_manual_can_converge_to_another_existing_transaction(self) -> None:
+        original = record("manual", "manual-converge", amount="20")
+        corrected = record("manual", "manual-converge", amount="30")
+        cmb = record("cmb_email", "cmb-target", amount="30")
+        existing = (
+            SourceLink("txn_old", original.id, "authoritative"),
+            SourceLink("txn_target", cmb.id, "authoritative"),
+        )
+
+        result = self.engine.reconcile_reconsidered_source(
+            (corrected, cmb),
+            existing_links=existing,
+            source_record_id=corrected.id,
+        )
+
+        corrected_link = next(
+            item for item in result.source_links if item.source_record_id == corrected.id
+        )
+        self.assertEqual(corrected_link.transaction_id, "txn_target")
+        self.assertEqual(corrected_link.role, "supporting")
+        self.assertEqual(tuple(item.id for item in result.transactions), ("txn_target",))
+        corrected_decision = next(
+            item for item in result.decisions if item.source_record_id == corrected.id
+        )
+        self.assertEqual(corrected_decision.action, "matched")
 
 
 if __name__ == "__main__":

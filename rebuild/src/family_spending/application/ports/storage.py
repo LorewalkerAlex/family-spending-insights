@@ -1,12 +1,23 @@
 from __future__ import annotations
 
 from types import TracebackType
-from typing import Protocol
+from typing import Literal, Protocol
 
 from family_spending.domain.enrichment import EnrichmentDecision
+from family_spending.domain.feedback import FeedbackItem
 from family_spending.domain.mapping import MappingCatalog
 from family_spending.domain.scheduling import ScheduleExecutionState, ScheduledRule
 from family_spending.domain.transaction import SourceLink
+
+MutationScope = Literal[
+    "source_sync",
+    "manual_input",
+    "enrichment",
+    "mapping_review",
+    "schedule_rules",
+    "scheduled_run",
+    "feedback",
+]
 
 
 class IdentityStore(Protocol):
@@ -45,6 +56,14 @@ class ScheduleStore(Protocol):
     def replace_execution(self, states: tuple[ScheduleExecutionState, ...]) -> None: ...
 
 
+class FeedbackStore(Protocol):
+    """Persist durable local product feedback independently of financial projections."""
+
+    def load(self) -> tuple[FeedbackItem, ...]: ...
+
+    def replace(self, items: tuple[FeedbackItem, ...]) -> None: ...
+
+
 class UnitOfWork(Protocol):
     """Expose one commit boundary without leaking concrete filesystem mechanics inward."""
 
@@ -58,3 +77,9 @@ class UnitOfWork(Protocol):
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> bool | None: ...
+
+
+class UnitOfWorkProvider(Protocol):
+    """Map logical Application mutation scopes to concrete commit boundaries."""
+
+    def open(self, scope: MutationScope, *, label: str) -> UnitOfWork: ...

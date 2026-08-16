@@ -11,6 +11,7 @@ from family_spending.domain.transaction import (
     SourceLink,
     SourceLinkRole,
     Transaction,
+    build_reconsidered_transaction_id,
     build_transaction_id,
     rebuild_transactions_from_source_links,
     validate_source_link_structure,
@@ -234,7 +235,7 @@ def _set_authoritative_source(
 
 
 class ReconciliationEngine:
-    """Reuse durable identity first, then delegate only new SourceRecords to source policy."""
+    """Reuse durable identity first, delegating only explicit lifecycle changes to policy."""
 
     def __init__(self, policies: tuple[ReconciliationPolicy, ...]) -> None:
         policies_by_type: dict[str, ReconciliationPolicy] = {}
@@ -248,15 +249,11 @@ class ReconciliationEngine:
             policies_by_type[policy.source_type] = policy
         self._policies_by_type = MappingProxyType(policies_by_type)
 
-    def reconcile(
+    def _records_by_id(
         self,
         records: tuple[SourceRecord, ...],
-        *,
-        existing_links: tuple[SourceLink, ...] = (),
-        hints: ReconciliationHints | None = None,
-    ) -> ReconciliationResult:
-        hints = hints or ReconciliationHints()
-
+    ) -> dict[str, SourceRecord]:
+        """Validate current SourceRecord identities before any relationship decision runs."""
         records_by_id: dict[str, SourceRecord] = {}
         for record in records:
             if record.id in records_by_id:
@@ -266,7 +263,85 @@ class ReconciliationEngine:
                     f"No Reconciliation policy registered for source type {record.source_type!r}"
                 )
             records_by_id[record.id] = record
+        return records_by_id
 
+    def recover_authority_after_source_removal(
+        self,
+        records: tuple[SourceRecord, ...],
+        links: tuple[SourceLink, ...],
+    ) -> tuple[SourceLink, ...]:
+        """Preserve Transaction identity when explicit source lifecycle removes its authority.
+
+        Persisted SourceLink state remains strict. This helper is only for the transient
+        in-memory link set after Application intentionally removed one or more source links.
+        When a Transaction still has supporting evidence but no authority, the surviving
+        source with the strongest registered policy order is promoted before normal
+        reconciliation resumes.
+        """
+        if not links:
+            return ()
+        records_by_id = self._records_by_id(records)
+        seen_sources: set[str] = set()
+        grouped_indices: dict[str, list[int]] = {}
+        for index, link in enumerate(links):
+            if link.source_record_id in seen_sources:
+                raise ReconciliationError(
+                    f"SourceRecord {link.source_record_id!r} is linked more than once"
+                )
+            seen_sources.add(link.source_record_id)
+            record = records_by_id.get(link.source_record_id)
+            if record is None:
+                raise ReconciliationError(
+                    f"SourceLink references missing SourceRecord {link.source_record_id!r}"
+                )
+            grouped_indices.setdefault(link.transaction_id, []).append(index)
+
+        repaired = list(links)
+        for transaction_id, indices in grouped_indices.items():
+            authority_indices = [
+                index for index in indices if repaired[index].role == "authoritative"
+            ]
+            if len(authority_indices) > 1:
+                raise ReconciliationError(
+                    f"Transaction {transaction_id!r} has multiple authoritative SourceLinks"
+                )
+            if authority_indices:
+                continue
+            promoted_index = min(
+                indices,
+                key=lambda index: (
+                    self._policies_by_type[
+                        records_by_id[repaired[index].source_record_id].source_type
+                    ].processing_order,
+                    index,
+                ),
+            )
+            promoted = repaired[promoted_index]
+            repaired[promoted_index] = SourceLink(
+                promoted.transaction_id,
+                promoted.source_record_id,
+                "authoritative",
+            )
+
+        repaired_links = tuple(repaired)
+        try:
+            validate_source_link_structure(repaired_links)
+        except DomainInvariantError as exc:
+            raise ReconciliationError(str(exc)) from exc
+        return repaired_links
+
+    def _reconcile_records(
+        self,
+        records: tuple[SourceRecord, ...],
+        *,
+        existing_links: tuple[SourceLink, ...],
+        hints: ReconciliationHints,
+        creation_overrides: Mapping[
+            str, tuple[str, ReconciliationAction]
+        ] | None = None,
+    ) -> ReconciliationResult:
+        """Run the generic policy loop from one already-valid durable relationship baseline."""
+        records_by_id = self._records_by_id(records)
         try:
             validate_source_link_structure(existing_links)
         except DomainInvariantError as exc:
@@ -279,6 +354,20 @@ class ReconciliationEngine:
                     f"Durable SourceLink references missing SourceRecord {link.source_record_id!r}"
                 )
             link_by_source[link.source_record_id] = link
+
+        overrides = creation_overrides or {}
+        unknown_override_ids = sorted(set(overrides) - set(records_by_id))
+        if unknown_override_ids:
+            raise ReconciliationError(
+                f"Creation identity overrides reference missing SourceRecords: {unknown_override_ids!r}"
+            )
+        for transaction_id, action in overrides.values():
+            if not transaction_id.strip():
+                raise ReconciliationError("Creation identity override must not be empty")
+            if action not in ("created", "reused"):
+                raise ReconciliationError(
+                    f"Creation identity override action must be created or reused, got {action!r}"
+                )
 
         links = list(existing_links)
         decisions: list[ReconciliationDecision] = []
@@ -329,7 +418,18 @@ class ReconciliationEngine:
                     raise ReconciliationError(
                         "A newly created Transaction must start with an authoritative SourceLink"
                     )
-                transaction_id = build_transaction_id(record)
+                override = overrides.get(record.id)
+                if override is None:
+                    transaction_id = build_transaction_id(record)
+                    action: ReconciliationAction = "created"
+                    evidence = proposal.evidence
+                else:
+                    transaction_id, action = override
+                    evidence = (
+                        ReconciliationEvidence(source_identity_match=True)
+                        if action == "reused"
+                        else proposal.evidence
+                    )
                 if any(link.transaction_id == transaction_id for link in links):
                     raise ReconciliationError(
                         f"Generated Transaction id {transaction_id!r} already exists"
@@ -341,8 +441,8 @@ class ReconciliationEngine:
                     ReconciliationDecision(
                         source_record_id=record.id,
                         transaction_id=transaction_id,
-                        action="created",
-                        evidence=proposal.evidence,
+                        action=action,
+                        evidence=evidence,
                     )
                 )
                 continue
@@ -376,4 +476,90 @@ class ReconciliationEngine:
             transactions=transactions,
             source_links=final_links,
             decisions=tuple(decisions),
+        )
+
+    def reconcile(
+        self,
+        records: tuple[SourceRecord, ...],
+        *,
+        existing_links: tuple[SourceLink, ...] = (),
+        hints: ReconciliationHints | None = None,
+    ) -> ReconciliationResult:
+        """Reuse durable SourceLinks and reconcile only SourceRecords without identity history."""
+        return self._reconcile_records(
+            records,
+            existing_links=existing_links,
+            hints=hints or ReconciliationHints(),
+        )
+
+    def reconcile_reconsidered_source(
+        self,
+        records: tuple[SourceRecord, ...],
+        *,
+        existing_links: tuple[SourceLink, ...],
+        source_record_id: str,
+        hints: ReconciliationHints | None = None,
+    ) -> ReconciliationResult:
+        """Re-evaluate one explicitly corrected Source while preserving unrelated identity history.
+
+        A corrected Source temporarily relinquishes its old link. Surviving evidence keeps
+        the old Transaction identity, with authority repaired by source policy order if
+        necessary. The corrected Source then goes through normal candidate policy again.
+        If its old Transaction no longer exists, its previous Transaction id is reused.
+        If that Transaction survives and the corrected Source must split out, a stable
+        reconsideration-derived id avoids colliding with the permanent Source identity's
+        original deterministic Transaction id.
+        """
+        records_by_id = self._records_by_id(records)
+        try:
+            validate_source_link_structure(existing_links)
+        except DomainInvariantError as exc:
+            raise ReconciliationError(str(exc)) from exc
+        for link in existing_links:
+            if link.source_record_id not in records_by_id:
+                raise ReconciliationError(
+                    f"Durable SourceLink references missing SourceRecord {link.source_record_id!r}"
+                )
+
+        source_record = records_by_id.get(source_record_id)
+        if source_record is None:
+            raise ReconciliationError(
+                f"Reconsidered SourceRecord {source_record_id!r} does not exist"
+            )
+        old_link = next(
+            (link for link in existing_links if link.source_record_id == source_record_id),
+            None,
+        )
+        if old_link is None:
+            raise ReconciliationError(
+                f"Reconsidered SourceRecord {source_record_id!r} has no durable SourceLink"
+            )
+
+        retained_links = tuple(
+            link for link in existing_links if link.source_record_id != source_record_id
+        )
+        old_transaction_survives = any(
+            link.transaction_id == old_link.transaction_id for link in retained_links
+        )
+        retained_links = self.recover_authority_after_source_removal(
+            records,
+            retained_links,
+        )
+        if old_transaction_survives:
+            fallback_transaction_id = build_reconsidered_transaction_id(
+                source_record,
+                old_link.transaction_id,
+            )
+            fallback_action: ReconciliationAction = "created"
+        else:
+            fallback_transaction_id = old_link.transaction_id
+            fallback_action = "reused"
+
+        return self._reconcile_records(
+            records,
+            existing_links=retained_links,
+            hints=hints or ReconciliationHints(),
+            creation_overrides={
+                source_record_id: (fallback_transaction_id, fallback_action)
+            },
         )
