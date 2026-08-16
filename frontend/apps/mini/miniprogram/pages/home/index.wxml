@@ -1,64 +1,96 @@
-<view class="page-shell">
-  <view class="page-header">
+<view class="page-container home-page theme-{{themeId}}">
+  <view class="home-header">
     <view>
-      <text class="eyebrow">FAMILY SPENDING</text>
-      <text class="title">家庭财务，一眼看清</text>
-      <text class="subtitle">先从真实数据开始，后续功能都在原生小程序里继续开发。</text>
+      <text class="home-header__eyebrow">家庭财务</text>
+      <text class="home-header__title">{{monthLabel}}</text>
     </view>
-
-    <view class="status status--{{connectionState}}">
-      <view class="status__dot"></view>
-      <text>{{connectionLabel}}</text>
+    <view class="home-header__theme" bindtap="onTapTheme" aria-label="切换界面配色">
+      <view class="theme-dot theme-dot--ambient"></view>
+      <view class="theme-dot theme-dot--accent"></view>
+      <view class="theme-dot theme-dot--cool"></view>
     </view>
   </view>
 
-  <view wx:if="{{hasSummary}}" class="summary-card">
-    <view class="summary-card__header">
-      <view>
-        <text class="summary-card__label">最近完整月份</text>
-        <text class="summary-card__month">{{monthLabel}}</text>
+  <view wx:if="{{loadState === 'loading'}}" class="surface-card state-card">
+    <view class="state-indicator"></view>
+    <text class="state-title">正在整理本月账目</text>
+    <text class="state-body">正在读取收支、最近交易和待审核项目。</text>
+  </view>
+
+  <view wx:elif="{{loadState === 'error'}}" class="surface-card state-card">
+    <view class="state-indicator state-indicator--error"></view>
+    <text class="state-title">暂时无法读取家庭账本</text>
+    <text class="state-body">{{errorMessage}}</text>
+    <button class="primary-action" bindtap="onTapRefresh">重新加载</button>
+  </view>
+
+  <block wx:else>
+    <view wx:if="{{isCompletelyEmpty}}" class="surface-card state-card">
+      <view class="state-indicator"></view>
+      <text class="state-title">还没有可展示的数据</text>
+      <text class="state-body">完成第一笔录入或同步账单后，这里会显示月度收支和最近交易。</text>
+    </view>
+
+    <block wx:else>
+      <view wx:if="{{hasSummary}}" class="summary-card">
+        <view class="summary-card__topline">
+          <text class="money-label">本月支出</text>
+          <text class="summary-card__month">{{monthLabel}}</text>
+        </view>
+        <text class="money-value money-value--hero">{{spendingText}}</text>
+
+        <view class="summary-card__metrics">
+          <view class="summary-card__metric">
+            <text class="metric-label">收入</text>
+            <text class="metric-value">{{incomeText}}</text>
+          </view>
+          <view class="summary-card__divider"></view>
+          <view class="summary-card__metric">
+            <text class="metric-label">结余</text>
+            <text class="metric-value metric-value--{{netTone}}">{{netText}}</text>
+          </view>
+        </view>
       </view>
-      <text class="summary-card__environment">{{environmentLabel}}</text>
-    </view>
 
-    <view class="cashflow-block">
-      <text class="cashflow-block__label">净现金流</text>
-      <text class="cashflow-block__value {{netPositive ? 'cashflow-block__value--positive' : 'cashflow-block__value--negative'}}">
-        {{netText}}
-      </text>
-      <text class="cashflow-block__meta">{{transactionText}}</text>
-    </view>
-
-    <view class="metric-grid">
-      <view class="metric-card">
-        <text class="metric-card__label">收入</text>
-        <text class="metric-card__value">{{incomeText}}</text>
+      <view wx:else class="surface-card state-card state-card--compact summary-empty">
+        <text class="state-title">暂无完整月份</text>
+        <text class="state-body">月度数据完整后，这里会显示本月支出、收入和结余。</text>
       </view>
-      <view class="metric-card">
-        <text class="metric-card__label">支出</text>
-        <text class="metric-card__value">{{spendingText}}</text>
+
+      <view class="review-card {{reviewCount > 0 ? 'review-card--attention' : ''}}" bindtap="onTapReview">
+        <view class="review-card__copy">
+          <view class="review-card__title-row">
+            <text class="review-card__title">{{reviewTitle}}</text>
+            <text wx:if="{{reviewCount > 0}}" class="review-card__badge">{{reviewCount}}</text>
+          </view>
+          <text class="review-card__body">{{reviewBody}}</text>
+        </view>
+        <text class="review-card__chevron">›</text>
       </view>
-    </view>
-  </view>
 
-  <view wx:elif="{{connectionState === 'connecting'}}" class="state-card">
-    <view class="state-card__spinner"></view>
-    <text class="state-card__title">正在读取家庭数据</text>
-    <text class="state-card__body">连接本机 Canonical Backend…</text>
-  </view>
+      <view class="section-header">
+        <text class="section-title">最近交易</text>
+        <text class="section-action" bindtap="onTapTransactions">查看全部</text>
+      </view>
 
-  <view wx:else class="state-card state-card--error">
-    <text class="state-card__kicker">LOCAL BACKEND</text>
-    <text class="state-card__title">还没有连接到本机服务</text>
-    <text class="state-card__body">{{errorMessage}}</text>
-    <button class="primary-button" bindtap="onTapRefresh">重新连接</button>
-  </view>
+      <view wx:if="{{recentTransactions.length > 0}}" class="surface-card transaction-list">
+        <view
+          wx:for="{{recentTransactions}}"
+          wx:key="id"
+          class="transaction-row {{index > 0 ? 'transaction-row--divided' : ''}}"
+        >
+          <view class="transaction-row__main">
+            <text class="transaction-name">{{item.name}}</text>
+            <text class="transaction-meta">{{item.dateText}} · {{item.category}}</text>
+          </view>
+          <text class="transaction-amount transaction-amount--{{item.amountTone}}">{{item.amountText}}</text>
+        </view>
+      </view>
 
-  <view class="next-card">
-    <text class="next-card__label">原生小程序基线</text>
-    <text class="next-card__title">微信开发者工具就是主开发环境</text>
-    <text class="next-card__body">
-      这一版不再经过 H5 或 Taro。后续交易、审核、录入与自动化都会从这个原生工程逐步加入。
-    </text>
-  </view>
+      <view wx:else class="surface-card state-card state-card--compact">
+        <text class="state-title">暂无最近交易</text>
+        <text class="state-body">新的交易同步或录入后会出现在这里。</text>
+      </view>
+    </block>
+  </block>
 </view>

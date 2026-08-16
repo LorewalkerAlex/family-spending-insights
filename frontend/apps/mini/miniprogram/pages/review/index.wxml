@@ -1,0 +1,11 @@
+<view class="page-container theme-{{themeId}}">
+  <view class="page-intro">
+    <text class="page-kicker">审核</text>
+    <text class="page-title">审核</text>
+  </view>
+  <view class="surface-card placeholder-card">
+    <text class="placeholder-label">Phase 4</text>
+    <text class="placeholder-title">移动端 Mapping Review 尚未开放</text>
+    <text class="placeholder-body">首页显示的待审核数量来自真实 Backend 数据；当前完整审核仍请在 Desktop 完成，后续会在这里加入 Preview 与 Confirm Apply。</text>
+  </view>
+</view>

@@ -1,0 +1,85 @@
+.theme-section__header {
+  margin-top: 0;
+}
+
+.theme-section__hint,
+.theme-option__name,
+.theme-option__selected,
+.theme-option__description {
+  display: block;
+}
+
+.theme-section__hint {
+  color: var(--color-text-muted);
+  font-size: 23rpx;
+}
+
+.theme-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18rpx;
+}
+
+.theme-option {
+  box-sizing: border-box;
+  width: calc(50% - 9rpx);
+  min-width: 0;
+  padding: 22rpx;
+  border: 2rpx solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+}
+
+.theme-option--active {
+  border-color: var(--color-accent);
+  background: var(--color-accent-subtle);
+}
+
+.theme-option__swatches {
+  display: flex;
+  overflow: hidden;
+  height: 42rpx;
+  border-radius: 14rpx;
+}
+
+.theme-option__swatch {
+  flex: 1;
+}
+
+.theme-option__copy {
+  margin-top: 18rpx;
+}
+
+.theme-option__title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8rpx;
+}
+
+.theme-option__name {
+  font-size: 28rpx;
+  font-weight: 700;
+}
+
+.theme-option__selected {
+  flex: none;
+  color: var(--color-accent);
+  font-size: 20rpx;
+  font-weight: 700;
+}
+
+.theme-option__description {
+  margin-top: 7rpx;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 21rpx;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.more-placeholder {
+  margin-top: 34rpx;
+}

@@ -1,0 +1,43 @@
+<view class="page-container theme-{{themeId}}">
+  <view class="page-intro">
+    <text class="page-kicker">更多</text>
+    <text class="page-title">更多</text>
+    <text class="page-subtitle">界面偏好保存在当前微信客户端，不影响家庭财务数据。</text>
+  </view>
+
+  <view class="theme-section">
+    <view class="section-header theme-section__header">
+      <text class="section-title">界面配色</text>
+      <text class="theme-section__hint">多巴胺色调</text>
+    </view>
+
+    <view class="theme-grid">
+      <view
+        wx:for="{{themeOptions}}"
+        wx:key="id"
+        class="theme-option {{themeId === item.id ? 'theme-option--active' : ''}}"
+        data-theme="{{item.id}}"
+        bindtap="onSelectTheme"
+      >
+        <view class="theme-option__swatches">
+          <view class="theme-option__swatch" style="background: {{item.swatchA}};"></view>
+          <view class="theme-option__swatch" style="background: {{item.swatchB}};"></view>
+          <view class="theme-option__swatch" style="background: {{item.swatchC}};"></view>
+        </view>
+        <view class="theme-option__copy">
+          <view class="theme-option__title-row">
+            <text class="theme-option__name">{{item.label}}</text>
+            <text wx:if="{{themeId === item.id}}" class="theme-option__selected">使用中</text>
+          </view>
+          <text class="theme-option__description">{{item.description}}</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="surface-card placeholder-card more-placeholder">
+    <text class="placeholder-label">Phase 5</text>
+    <text class="placeholder-title">轻量工具会逐步放到这里</text>
+    <text class="placeholder-body">Feedback、Scheduled Input、版本信息和必要设置会按手机使用价值加入；Backend diagnostics 和 operator tools 不进入 Mini。</text>
+  </view>
+</view>

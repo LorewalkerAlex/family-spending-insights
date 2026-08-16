@@ -23,14 +23,16 @@ The development Mini Program uses `http://127.0.0.1:8765`. `project.config.json`
 
 1. Open WeChat Developer Tools.
 2. Import `frontend/apps/mini`.
-3. Use the shared `touristappid` baseline or select your own AppID in Developer Tools.
-4. Compile. The home page should show Backend connection state and the latest visible financial summary.
+3. Use the configured AppID in Developer Tools.
+4. Compile. Home should show the latest visible month, monthly spending, income/net cash flow, pending Mapping Review count, and the five most recent transactions from the Canonical Backend.
+5. Use the native tabs `首页 | 交易 | 记一笔 | 审核 | 更多`; Phase 1 only implements Home, while the other tabs explicitly identify their later delivery phase.
 
 Developer Tools may create `project.private.config.json`; it is intentionally ignored by Git.
 
-
 ## Current status
 
-The direct Developer Tools baseline was verified on 2026-08-16: the native Mini compiled in WeChat Developer Tools and successfully read `/api/health` plus real Financial Summary data from the Canonical Backend.
+The direct Developer Tools connectivity baseline was verified on 2026-08-16: the native Mini compiled in WeChat Developer Tools and successfully read real Canonical Backend data.
 
-The current home page is intentionally a connectivity verification surface, not the product UI baseline. Formal page/navigation/UI work starts from the native project and follows `docs/architecture/mini-product-ui-plan.md`. Old Taro/H5 Mini screens are historical only and should not be restored as the design source.
+Phase 1 replaces the old connectivity surface with the first product Home and establishes the native five-tab shell plus the small shared WXSS foundation described by `docs/architecture/mini-product-ui-plan.md`. The Home implementation reuses `/api/financial-summary`, `/api/transactions`, and `/api/mapping-reviews`; it does not duplicate reconciliation, mapping, enrichment, refund, or scheduling rules in the client.
+
+Old Taro/H5 Mini screens are historical only and should not be restored as the design source.

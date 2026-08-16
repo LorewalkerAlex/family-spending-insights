@@ -1,0 +1,11 @@
+<view class="page-container theme-{{themeId}}">
+  <view class="page-intro">
+    <text class="page-kicker">交易</text>
+    <text class="page-title">交易</text>
+  </view>
+  <view class="surface-card placeholder-card">
+    <text class="placeholder-label">Phase 2</text>
+    <text class="placeholder-title">完整交易浏览还没有开放</text>
+    <text class="placeholder-body">当前首页已经展示最近 5 笔真实交易。下一阶段会在这里加入按日期浏览、月份范围和收入 / 支出基础筛选。</text>
+  </view>
+</view>

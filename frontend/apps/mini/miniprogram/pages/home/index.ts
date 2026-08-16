@@ -1,19 +1,28 @@
 import { currentEnvironmentVersion, resolveApiBaseUrl } from "../../config/runtime";
-import { createFamilySpendingApi, type FinancialSummaryMonth } from "../../services/api";
+import { createFamilySpendingApi } from "../../services/api";
+import {
+  applyMiniThemeChrome,
+  readMiniTheme,
+  type MiniThemeId,
+} from "../../theme/index";
+import { buildHomeViewModel, type HomeTransactionItem } from "./model";
 
-type ConnectionState = "connecting" | "connected" | "error";
+type HomeLoadState = "loading" | "ready" | "error";
 
 interface HomePageData extends Record<string, unknown> {
-  connectionState: ConnectionState;
-  connectionLabel: string;
-  environmentLabel: string;
+  themeId: MiniThemeId;
+  loadState: HomeLoadState;
   hasSummary: boolean;
   monthLabel: string;
-  incomeText: string;
   spendingText: string;
+  incomeText: string;
   netText: string;
-  netPositive: boolean;
-  transactionText: string;
+  netTone: "positive" | "negative" | "neutral";
+  reviewCount: number;
+  reviewTitle: string;
+  reviewBody: string;
+  recentTransactions: HomeTransactionItem[];
+  isCompletelyEmpty: boolean;
   errorMessage: string;
 }
 
@@ -21,77 +30,49 @@ interface HomePageContext {
   setData(data: Partial<HomePageData>): void;
 }
 
+const initialTheme = readMiniTheme();
+
 const initialData: HomePageData = {
-  connectionState: "connecting",
-  connectionLabel: "正在连接",
-  environmentLabel: "开发环境",
+  themeId: initialTheme,
+  loadState: "loading",
   hasSummary: false,
-  monthLabel: "—",
-  incomeText: "—",
+  monthLabel: "本月账目",
   spendingText: "—",
+  incomeText: "—",
   netText: "—",
-  netPositive: true,
-  transactionText: "—",
+  netTone: "neutral",
+  reviewCount: 0,
+  reviewTitle: "正在读取",
+  reviewBody: "",
+  recentTransactions: [],
+  isCompletelyEmpty: false,
   errorMessage: "",
 };
 
-function formatMoney(minor: number): string {
-  const negative = minor < 0;
-  const absolute = Math.abs(Math.trunc(minor));
-  const yuan = Math.floor(absolute / 100);
-  const cents = String(absolute % 100).padStart(2, "0");
-  const grouped = String(yuan).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  return `${negative ? "-" : ""}¥${grouped}.${cents}`;
+function syncTheme(context: HomePageContext): void {
+  const themeId = readMiniTheme();
+  context.setData({ themeId });
+  applyMiniThemeChrome(themeId);
 }
 
-function formatMonth(value: string): string {
-  const [year, month] = value.split("-");
-  if (!year || !month) {
-    return value;
-  }
-  return `${year} 年 ${Number(month)} 月`;
-}
-
-function latestVisibleMonth(months: readonly FinancialSummaryMonth[]): FinancialSummaryMonth | null {
-  return months.find((item) => item.show) ?? null;
-}
-
+/** Load the three authoritative Home queries together so the page reflects one coherent refresh. */
 async function loadHome(context: HomePageContext): Promise<void> {
-  context.setData({
-    connectionState: "connecting",
-    connectionLabel: "正在连接",
-    errorMessage: "",
-  });
+  context.setData({ loadState: "loading", errorMessage: "" });
 
   try {
-    const envVersion = currentEnvironmentVersion();
     const api = createFamilySpendingApi({
-      baseUrl: resolveApiBaseUrl(envVersion),
+      baseUrl: resolveApiBaseUrl(currentEnvironmentVersion()),
     });
-    await api.health();
-    const summary = await api.financialSummary();
-    const month = latestVisibleMonth(summary.months);
-
-    context.setData({
-      connectionState: "connected",
-      connectionLabel: "已连接 Canonical Backend",
-      environmentLabel:
-        envVersion === "develop" ? "开发环境" : envVersion === "trial" ? "体验版" : "正式版",
-      hasSummary: month !== null,
-      monthLabel: month ? formatMonth(month.month) : "暂无完整月份",
-      incomeText: month ? formatMoney(month.total_income_minor) : "—",
-      spendingText: month ? formatMoney(month.total_spending_minor) : "—",
-      netText: month ? formatMoney(month.net_cash_flow_minor) : "—",
-      netPositive: month ? month.net_cash_flow_minor >= 0 : true,
-      transactionText: month
-        ? `${month.income_transaction_count} 笔收入 · ${month.spending_transaction_count} 笔支出`
-        : "等待完整自然月数据",
-    });
+    const [summary, transactions, review] = await Promise.all([
+      api.financialSummary(),
+      api.transactions(),
+      api.mappingReview(),
+    ]);
+    const viewModel = buildHomeViewModel(summary, transactions, review);
+    context.setData({ ...viewModel, loadState: "ready" });
   } catch (error) {
     context.setData({
-      connectionState: "error",
-      connectionLabel: "Backend 未连接",
-      hasSummary: false,
+      loadState: "error",
       errorMessage: error instanceof Error ? error.message : String(error),
     });
   }
@@ -101,7 +82,12 @@ Page({
   data: initialData,
 
   onLoad(this: HomePageContext) {
+    applyMiniThemeChrome(initialTheme);
     void loadHome(this);
+  },
+
+  onShow(this: HomePageContext) {
+    syncTheme(this);
   },
 
   onPullDownRefresh(this: HomePageContext) {
@@ -110,5 +96,17 @@ Page({
 
   onTapRefresh(this: HomePageContext) {
     void loadHome(this);
+  },
+
+  onTapTransactions() {
+    wx.switchTab({ url: "/pages/transactions/index" });
+  },
+
+  onTapReview() {
+    wx.switchTab({ url: "/pages/review/index" });
+  },
+
+  onTapTheme() {
+    wx.switchTab({ url: "/pages/more/index" });
   },
 });

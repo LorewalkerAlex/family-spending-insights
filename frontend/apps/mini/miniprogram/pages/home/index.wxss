@@ -1,251 +1,256 @@
-.page-shell {
-  box-sizing: border-box;
-  min-height: 100vh;
-  padding: 40rpx 32rpx 72rpx;
+.home-page {
+  padding-top: 26rpx;
 }
 
-.page-header {
-  margin-bottom: 32rpx;
+.home-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24rpx;
+  margin-bottom: 28rpx;
 }
 
-.eyebrow,
-.title,
-.subtitle,
-.summary-card__label,
+.home-header__eyebrow,
+.home-header__title,
 .summary-card__month,
-.summary-card__environment,
-.cashflow-block__label,
-.cashflow-block__value,
-.cashflow-block__meta,
-.metric-card__label,
-.metric-card__value,
-.state-card__kicker,
-.state-card__title,
-.state-card__body,
-.next-card__label,
-.next-card__title,
-.next-card__body {
+.review-card__title,
+.review-card__body,
+.review-card__badge,
+.review-card__chevron {
   display: block;
 }
 
-.eyebrow {
-  margin-bottom: 14rpx;
-  color: #6e7b72;
-  font-size: 20rpx;
+.home-header__eyebrow {
+  color: var(--color-text-muted);
+  font-size: 23rpx;
+  font-weight: 600;
+  letter-spacing: 1rpx;
+}
+
+.home-header__title {
+  margin-top: 6rpx;
+  font-size: 38rpx;
   font-weight: 700;
-  letter-spacing: 4rpx;
 }
 
-.title {
-  color: #152019;
-  font-size: 56rpx;
-  font-weight: 700;
-  line-height: 1.16;
-  letter-spacing: -1rpx;
-}
-
-.subtitle {
-  max-width: 620rpx;
-  margin-top: 18rpx;
-  color: #69736c;
-  font-size: 28rpx;
-  line-height: 1.65;
-}
-
-.status {
-  display: inline-flex;
+.home-header__theme {
+  display: flex;
   align-items: center;
-  gap: 12rpx;
-  margin-top: 26rpx;
-  padding: 12rpx 18rpx;
-  border: 1rpx solid #d9ded9;
+  justify-content: center;
+  gap: 4rpx;
+  width: 72rpx;
+  height: 72rpx;
+  border: 1rpx solid var(--color-border);
+  border-radius: 24rpx;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+}
+
+.theme-dot {
+  width: 13rpx;
+  height: 30rpx;
   border-radius: 999rpx;
-  background: rgba(255, 255, 255, 0.72);
-  color: #59635c;
-  font-size: 24rpx;
+  transform: rotate(20deg);
 }
 
-.status__dot {
-  width: 14rpx;
-  height: 14rpx;
-  border-radius: 50%;
-  background: #9ca59f;
+.theme-dot--ambient {
+  background: var(--color-ambient-1);
 }
 
-.status--connected {
-  border-color: #c8ddcf;
-  color: #2e6b47;
+.theme-dot--accent {
+  background: var(--color-accent);
 }
 
-.status--connected .status__dot {
-  background: #37a265;
-}
-
-.status--error {
-  border-color: #ebd0cb;
-  color: #9b4338;
-}
-
-.status--error .status__dot {
-  background: #cf5b4d;
-}
-
-.summary-card,
-.state-card,
-.next-card {
-  border: 1rpx solid rgba(32, 54, 41, 0.08);
-  border-radius: 34rpx;
-  background: #ffffff;
-  box-shadow: 0 18rpx 60rpx rgba(45, 64, 52, 0.06);
+.theme-dot--cool {
+  background: var(--color-ambient-2);
 }
 
 .summary-card {
-  padding: 34rpx;
+  overflow: hidden;
+  padding: 34rpx 34rpx 0;
+  border-radius: var(--radius-large);
+  background: var(--hero-background);
+  color: var(--hero-foreground);
+  box-shadow: var(--shadow-hero);
 }
 
-.summary-card__header {
+.summary-card__topline {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 24rpx;
+  gap: 20rpx;
 }
 
-.summary-card__label,
-.cashflow-block__label,
-.metric-card__label,
-.next-card__label {
-  color: #7a847d;
-  font-size: 23rpx;
+.money-label,
+.metric-label {
+  color: var(--hero-muted);
+  font-size: 24rpx;
   font-weight: 600;
 }
 
 .summary-card__month {
-  margin-top: 8rpx;
-  color: #1c2921;
-  font-size: 34rpx;
-  font-weight: 650;
+  color: var(--hero-muted);
+  font-size: 22rpx;
 }
 
-.summary-card__environment {
-  padding: 9rpx 14rpx;
-  border-radius: 999rpx;
-  background: #eef4ef;
-  color: #4d6d58;
-  font-size: 21rpx;
-}
-
-.cashflow-block {
-  margin-top: 46rpx;
-  padding-bottom: 36rpx;
-  border-bottom: 1rpx solid #edf0ed;
-}
-
-.cashflow-block__value {
-  margin-top: 10rpx;
-  color: #25342b;
-  font-size: 64rpx;
-  font-weight: 720;
+.money-value--hero {
+  margin-top: 12rpx;
+  color: var(--hero-foreground);
+  font-size: 68rpx;
+  font-weight: 700;
+  line-height: 1.2;
   letter-spacing: -2rpx;
 }
 
-.cashflow-block__value--positive {
-  color: #246743;
-}
-
-.cashflow-block__value--negative {
-  color: #a3453b;
-}
-
-.cashflow-block__meta {
-  margin-top: 10rpx;
-  color: #8a938d;
-  font-size: 23rpx;
-}
-
-.metric-grid {
+.summary-card__metrics {
   display: flex;
-  gap: 18rpx;
-  margin-top: 26rpx;
+  align-items: stretch;
+  margin: 34rpx -34rpx 0;
+  border-top: 1rpx solid var(--hero-line);
 }
 
-.metric-card {
+.summary-card__metric {
   flex: 1;
-  padding: 26rpx;
-  border-radius: 24rpx;
-  background: #f7f9f6;
+  min-width: 0;
+  padding: 26rpx 34rpx 28rpx;
 }
 
-.metric-card__value {
-  margin-top: 10rpx;
-  color: #253229;
-  font-size: 32rpx;
-  font-weight: 650;
+.summary-card__divider {
+  width: 1rpx;
+  background: var(--hero-line);
 }
 
-.state-card {
+.metric-value {
+  margin-top: 8rpx;
+  color: var(--hero-foreground);
+  font-size: 30rpx;
+  font-weight: 700;
+}
+
+.metric-value--positive,
+.metric-value--neutral {
+  color: var(--hero-foreground);
+}
+
+.metric-value--negative {
+  color: var(--hero-negative);
+}
+
+.review-card {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  padding: 42rpx 36rpx;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24rpx;
+  margin-top: 26rpx;
+  padding: 28rpx 30rpx;
+  border: 1rpx solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
 }
 
-.state-card__spinner {
-  width: 38rpx;
-  height: 38rpx;
-  margin-bottom: 24rpx;
-  border: 5rpx solid #e1e7e2;
-  border-top-color: #3f7658;
-  border-radius: 50%;
+.review-card--attention {
+  border-color: var(--color-border-strong);
+  background: linear-gradient(135deg, var(--color-accent-subtle), var(--color-surface));
 }
 
-.state-card__kicker {
-  color: #a05a4e;
+.review-card__copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.review-card__title-row {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.review-card__title {
+  font-size: 29rpx;
+  font-weight: 700;
+}
+
+.review-card__badge {
+  min-width: 36rpx;
+  padding: 2rpx 10rpx;
+  border-radius: 999rpx;
+  background: var(--color-accent);
+  color: #ffffff;
   font-size: 21rpx;
   font-weight: 700;
-  letter-spacing: 3rpx;
+  line-height: 32rpx;
+  text-align: center;
 }
 
-.state-card__title {
+.review-card__body {
   margin-top: 8rpx;
-  color: #243128;
-  font-size: 34rpx;
-  font-weight: 650;
+  color: var(--color-text-muted);
+  font-size: 24rpx;
+  line-height: 1.5;
 }
 
-.state-card__body {
-  margin-top: 14rpx;
-  color: #717a74;
-  font-size: 25rpx;
-  line-height: 1.6;
-  word-break: break-all;
+.review-card__chevron {
+  color: var(--color-text-muted);
+  font-size: 46rpx;
+  font-weight: 400;
 }
 
-.primary-button {
-  margin: 30rpx 0 0;
-  padding: 0 30rpx;
-  border-radius: 999rpx;
-  background: #2d694b;
-  color: #ffffff;
-  font-size: 26rpx;
-  line-height: 76rpx;
+.transaction-list {
+  overflow: hidden;
 }
 
-.next-card {
-  margin-top: 24rpx;
-  padding: 32rpx;
-  background: #edf2eb;
+.transaction-row {
+  display: flex;
+  align-items: center;
+  gap: 24rpx;
+  min-height: 104rpx;
+  padding: 22rpx 28rpx;
 }
 
-.next-card__title {
-  margin-top: 8rpx;
-  color: #243128;
-  font-size: 30rpx;
-  font-weight: 650;
+.transaction-row--divided {
+  border-top: 1rpx solid var(--color-border);
 }
 
-.next-card__body {
-  margin-top: 12rpx;
-  color: #657068;
-  font-size: 25rpx;
-  line-height: 1.65;
+.transaction-row__main {
+  flex: 1;
+  min-width: 0;
+}
+
+.transaction-name {
+  overflow: hidden;
+  font-size: 28rpx;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transaction-meta {
+  margin-top: 7rpx;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 23rpx;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transaction-amount {
+  flex: none;
+  font-size: 27rpx;
+  font-weight: 700;
+}
+
+.transaction-amount--income {
+  color: var(--color-positive);
+}
+
+.transaction-amount--expense {
+  color: var(--color-text);
+}
+
+.state-card--compact {
+  padding: 30rpx;
+}
+
+.state-card--compact .state-title {
+  font-size: 29rpx;
 }

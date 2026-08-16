@@ -1,14 +1,46 @@
 {
   "pages": [
-    "pages/home/index"
+    "pages/home/index",
+    "pages/transactions/index",
+    "pages/manual/index",
+    "pages/review/index",
+    "pages/more/index"
   ],
   "window": {
-    "navigationBarBackgroundColor": "#f6f7f3",
+    "navigationBarBackgroundColor": "#f9ffef",
     "navigationBarTextStyle": "black",
     "navigationBarTitleText": "家庭账本",
-    "backgroundColor": "#f6f7f3",
+    "backgroundColor": "#f9ffef",
     "backgroundTextStyle": "dark",
     "enablePullDownRefresh": false
+  },
+  "tabBar": {
+    "color": "#697063",
+    "selectedColor": "#5b4fff",
+    "backgroundColor": "#ffffff",
+    "borderStyle": "white",
+    "list": [
+      {
+        "pagePath": "pages/home/index",
+        "text": "首页"
+      },
+      {
+        "pagePath": "pages/transactions/index",
+        "text": "交易"
+      },
+      {
+        "pagePath": "pages/manual/index",
+        "text": "记一笔"
+      },
+      {
+        "pagePath": "pages/review/index",
+        "text": "审核"
+      },
+      {
+        "pagePath": "pages/more/index",
+        "text": "更多"
+      }
+    ]
   },
   "style": "v2",
   "sitemapLocation": "sitemap.json"

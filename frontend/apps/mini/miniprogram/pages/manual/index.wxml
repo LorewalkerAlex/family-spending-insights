@@ -1,0 +1,11 @@
+<view class="page-container theme-{{themeId}}">
+  <view class="page-intro">
+    <text class="page-kicker">记一笔</text>
+    <text class="page-title">记一笔</text>
+  </view>
+  <view class="surface-card placeholder-card">
+    <text class="placeholder-label">Phase 3</text>
+    <text class="placeholder-title">手机录入将在下一阶段接入</text>
+    <text class="placeholder-body">这里会使用 Canonical Manual Input API 记录支出和收入，不会在客户端另建商户或分类规则。</text>
+  </view>
+</view>
