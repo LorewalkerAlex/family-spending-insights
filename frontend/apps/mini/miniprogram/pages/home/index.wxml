@@ -1,0 +1,64 @@
+<view class="page-shell">
+  <view class="page-header">
+    <view>
+      <text class="eyebrow">FAMILY SPENDING</text>
+      <text class="title">家庭财务，一眼看清</text>
+      <text class="subtitle">先从真实数据开始，后续功能都在原生小程序里继续开发。</text>
+    </view>
+
+    <view class="status status--{{connectionState}}">
+      <view class="status__dot"></view>
+      <text>{{connectionLabel}}</text>
+    </view>
+  </view>
+
+  <view wx:if="{{hasSummary}}" class="summary-card">
+    <view class="summary-card__header">
+      <view>
+        <text class="summary-card__label">最近完整月份</text>
+        <text class="summary-card__month">{{monthLabel}}</text>
+      </view>
+      <text class="summary-card__environment">{{environmentLabel}}</text>
+    </view>
+
+    <view class="cashflow-block">
+      <text class="cashflow-block__label">净现金流</text>
+      <text class="cashflow-block__value {{netPositive ? 'cashflow-block__value--positive' : 'cashflow-block__value--negative'}}">
+        {{netText}}
+      </text>
+      <text class="cashflow-block__meta">{{transactionText}}</text>
+    </view>
+
+    <view class="metric-grid">
+      <view class="metric-card">
+        <text class="metric-card__label">收入</text>
+        <text class="metric-card__value">{{incomeText}}</text>
+      </view>
+      <view class="metric-card">
+        <text class="metric-card__label">支出</text>
+        <text class="metric-card__value">{{spendingText}}</text>
+      </view>
+    </view>
+  </view>
+
+  <view wx:elif="{{connectionState === 'connecting'}}" class="state-card">
+    <view class="state-card__spinner"></view>
+    <text class="state-card__title">正在读取家庭数据</text>
+    <text class="state-card__body">连接本机 Canonical Backend…</text>
+  </view>
+
+  <view wx:else class="state-card state-card--error">
+    <text class="state-card__kicker">LOCAL BACKEND</text>
+    <text class="state-card__title">还没有连接到本机服务</text>
+    <text class="state-card__body">{{errorMessage}}</text>
+    <button class="primary-button" bindtap="onTapRefresh">重新连接</button>
+  </view>
+
+  <view class="next-card">
+    <text class="next-card__label">原生小程序基线</text>
+    <text class="next-card__title">微信开发者工具就是主开发环境</text>
+    <text class="next-card__body">
+      这一版不再经过 H5 或 Taro。后续交易、审核、录入与自动化都会从这个原生工程逐步加入。
+    </text>
+  </view>
+</view>

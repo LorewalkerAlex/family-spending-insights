@@ -1,0 +1,9 @@
+{
+  "desc": "Family Spending Insights Mini Program sitemap",
+  "rules": [
+    {
+      "action": "allow",
+      "page": "*"
+    }
+  ]
+}

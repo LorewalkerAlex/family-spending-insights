@@ -1,0 +1,15 @@
+{
+  "pages": [
+    "pages/home/index"
+  ],
+  "window": {
+    "navigationBarBackgroundColor": "#f6f7f3",
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "家庭账本",
+    "backgroundColor": "#f6f7f3",
+    "backgroundTextStyle": "dark",
+    "enablePullDownRefresh": false
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

@@ -111,14 +111,31 @@ Atomic Cutover 后不再存在于正式 Runtime：
 ```text
 frontend/
 ├── apps/
-│   ├── web/
-│   └── mini/
+│   ├── web/                  # Desktop React application
+│   └── mini/                 # Native WeChat Mini Program project
 └── packages/
-    ├── core/
+    ├── core/                 # transport-agnostic Desktop/shared logic where useful
     └── design-tokens/
 ```
 
-Desktop 与 WeChat Mini 共用正式 API contract。Mini H5 是开发/测试 runtime。`local_dashboard/` 仍只是历史 fallback，不定义 Backend truth，后续可独立清理。
+Desktop 与 WeChat Mini 共用正式 Backend/Application HTTP contract，但不要求共用 UI runtime。正式 Mini 从 2026-08-16 起是可直接导入微信开发者工具的原生 TypeScript 小程序：使用 `Page` / WXML / WXSS / `wx.request`，不再维护 Taro、React Mini、Mini H5 或 `dist/` 作为小程序开发入口。
+
+Mini 当前直接导入微信开发者工具的核心结构：
+
+```text
+frontend/apps/mini/
+├── project.config.json
+├── miniprogram/
+│   ├── app.ts / app.json / app.wxss
+│   ├── config/
+│   ├── services/
+│   └── pages/
+├── test/
+├── types/
+└── tsconfig.json
+```
+
+Mini 可以复用真正 transport-agnostic 的契约或纯逻辑，但不能为了“共享代码”重新引入 H5/Taro runtime coupling。当前 connectivity 首页只是原生链路验证，不是正式产品 UI；后续页面和视觉按 [`mini-product-ui-plan.md`](./mini-product-ui-plan.md) 分阶段实现。`local_dashboard/` 仍只是历史 fallback，不定义 Backend truth，后续可独立清理。
 
 ## 7. Extension rule
 

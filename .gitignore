@@ -20,6 +20,9 @@ node_modules/
 .swc/
 /frontend/apps/*/dist/
 
+# 微信开发者工具本机私有设置
+/frontend/apps/mini/project.private.config.json
+
 # 本地开发运行态
 .runtime/
 

@@ -9,6 +9,7 @@ Family Spending Insights 是一个本地运行的家庭收支系统。正式 Bac
 - `system-architecture.md`：长期稳定的 Domain、Application、Source、Persistence、Runtime 与 Interface 边界。
 - `code-map.md`：当前正式 Canonical 代码结构与责任映射。
 - `rebuild-strategy.md`：已完成的 Parallel Canonical Rebuild / Migration / Atomic Cutover 历史记录与不可回退原则。
+- `mini-product-ui-plan.md`：正式微信小程序的产品范围、页面计划、UI 分阶段开发与验收标准。
 
 Canonical Backend 当前位于：
 
@@ -67,7 +68,7 @@ EMAIL_AUTH_CODE=
 
 ## 环境准备
 
-要求 Python 3.14+ 与 uv：
+要求 Python 3.14+、uv、Node.js 与 npm：
 
 ```powershell
 uv sync --frozen
@@ -98,9 +99,9 @@ uv run --frozen python -m family_spending serve
 
 `sync` 只对尚未建立 durable identity 的新 SourceRecord 做 reconciliation；已有 SourceLink 不因 rebuild 或算法升级被重新猜测。CMB raw EML 是来源事实，legacy `transactions.csv` 不再是 Canonical truth。
 
-## 本地开发 Runtime
+## Desktop 本地开发 Runtime
 
-统一启动 Backend、Desktop Web 与 Mini H5 开发 runtime：
+统一启动 Backend 与 Desktop Web 开发 runtime：
 
 ```powershell
 npm run dev
@@ -113,7 +114,21 @@ npm run dev:status
 npm run dev:stop
 ```
 
-Mini H5 仅用于开发/测试；正式轻量客户端是 WeChat Mini Program。
+微信小程序不再由这个 managed runtime 启动；它直接使用微信开发者工具。
+
+## 微信原生小程序
+
+正式 Mini 位于：
+
+```text
+frontend/apps/mini
+```
+
+这是可直接导入微信开发者工具的原生 TypeScript 小程序工程，`miniprogramRoot` 为 `miniprogram/`。不需要 Taro、不需要 H5 preview，也不需要先生成 `dist/`。
+
+本地调试时先在独立终端启动默认 `127.0.0.1:8765` Backend，然后在微信开发者工具中导入 `frontend/apps/mini`。开发环境 Mini 直接通过 `wx.request` 读取 Canonical HTTP API；体验版/正式版在域名与部署完成前不会退回本地地址。2026-08-16 已在微信开发者工具模拟器中验证原生 Mini 能读取真实 `/api/health` 与 Financial Summary。
+
+当前 Mini 首页仍是 connectivity 验证页，不作为正式 UI 设计基线。正式 UI 从原生工程重新设计，执行计划见 `docs/architecture/mini-product-ui-plan.md`；开发工具说明见 `frontend/apps/mini/README.md`。
 
 ## 测试与构建
 
@@ -130,17 +145,17 @@ Frontend：
 npm run test:frontend
 npm run typecheck:frontend
 npm run build:web
-npm run build:mini:h5
-npm run build:mini:weapp
 ```
+
+Mini 的实际编译、预览与真机调试由微信开发者工具完成；仓库侧的 `test:mini` / `typecheck:mini` 负责纯 TypeScript/API contract 的快速回归。
 
 架构 contract tests 会持续约束：Domain 不依赖 persistence/interface，Application 通过 ports 工作，HTTP 不形成第二条业务 pipeline，正式 source tree 不再导入已删除的 legacy Backend modules。
 
 ## 产品边界
 
 - Desktop Web：完整工作台。
-- WeChat Mini Program：轻量 companion。
-- Mini H5：开发/测试 runtime，不是第三个正式产品。
+- WeChat Mini Program：微信原生轻量客户端，微信开发者工具是主要开发/验证环境。
+- 不再维护 Mini H5/Taro 运行时。
 - `local_dashboard/` 仍是历史 fallback；它不定义 Backend 架构或财务 truth，后续可在正式前端稳定后单独清理。
 
 新增 Source、Projection 或 Store 时，应沿 `docs/architecture/system-architecture.md` 的 extension points 扩展，不恢复 legacy compatibility layer，也不让前端直接读取 household files。

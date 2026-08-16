@@ -13,10 +13,13 @@
 2. [`code-map.md`](./code-map.md) — 当前正式 Canonical package 与责任映射。
 3. [`rebuild-strategy.md`](./rebuild-strategy.md) — 已完成的 Parallel Rebuild、Migration 与 Atomic Cutover 历史记录，以及今后不得重新引入的过渡模式。
 
+Mini 产品与 UI 的正式执行计划单独记录在 [`mini-product-ui-plan.md`](./mini-product-ui-plan.md)。它必须遵守 `system-architecture.md` 的 Desktop / Mini capability boundary，但不改变 Backend Domain / Application invariant。
+
 当 README、历史设计文档或旧 Handoff 与这里发生冲突时：
 
 - **长期架构与 invariant** 以 `system-architecture.md` 为准；
 - **当前代码布局** 以 `code-map.md` 与当前 source tree 为准；
+- **Mini 产品/UI 执行范围** 以 `mini-product-ui-plan.md` 为准；
 - **迁移历史** 以 `rebuild-strategy.md` 与 Git 历史为准。
 
 ## 当前正式形态
@@ -46,7 +49,9 @@ src/family_spending/
 └── config.py
 ```
 
-`rebuild/`、legacy `backend/`、双写、proxy、v1→v2 compatibility layer 都不属于正式 Runtime。
+正式微信小程序是 `frontend/apps/mini/` 下可直接导入微信开发者工具的原生 TypeScript / WXML / WXSS 工程，通过 `wx.request` 使用同一 Canonical HTTP API。
+
+`rebuild/`、legacy `backend/`、双写、proxy、v1→v2 compatibility layer 都不属于正式 Runtime；Taro / Mini H5 也不再属于正式 Mini 开发链路。
 
 ## 核心约束摘要
 
@@ -59,7 +64,7 @@ src/family_spending/
 - Mapping 属于 household reviewed knowledge，位于私有 data root，不随 Git checkout 发布。
 - Runtime 内存只保存可重建 Snapshot / Index / Operational State，不成为唯一业务事实源。
 - Suggestion / fuzzy match / NLP 只产生建议，不直接改变财务 truth。
-- Desktop 与 Mini 共用一个 Application/API；Mini H5 仅是开发/测试 runtime。
+- Desktop 与 Mini 共用一个 Application/API，但不要求共用 UI runtime；Mini 的主要开发与验收环境是微信开发者工具。
 
 ## 历史文档
 

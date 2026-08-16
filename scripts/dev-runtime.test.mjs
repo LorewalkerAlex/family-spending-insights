@@ -16,11 +16,10 @@ test("parsePreferredPort uses defaults and validates explicit values", () => {
   assert.throws(() => parsePreferredPort("abc", 15173), /Invalid local development port/);
 });
 
-test("runtimeUrls keeps the three local surfaces explicit", () => {
-  assert.deepEqual(runtimeUrls({ api: 18765, web: 15173, mini: 11087 }), {
+test("runtimeUrls keeps Desktop and API local surfaces explicit", () => {
+  assert.deepEqual(runtimeUrls({ api: 18765, web: 15173 }), {
     api: "http://127.0.0.1:18765",
     web: "http://127.0.0.1:15173/overview",
-    mini: "http://127.0.0.1:11087/",
   });
 });
 
@@ -31,26 +30,25 @@ test("workerSignature ties ownership to role and runtime id", () => {
     "web",
     "runtime-123",
   ]);
-  assert.throws(() => workerSignature("other", "runtime-123"), /Unknown runtime role/);
+  assert.throws(() => workerSignature("mini", "runtime-123"), /Unknown runtime role/);
 });
 
-test("runtime state validation rejects malformed process ownership data", () => {
+test("runtime state validation rejects stale Mini H5 state", () => {
   const valid = {
-    schema_version: 1,
+    schema_version: 2,
     runtime_id: "runtime-123",
-    ports: { api: 18765, web: 15173, mini: 11087 },
-    urls: runtimeUrls({ api: 18765, web: 15173, mini: 11087 }),
+    ports: { api: 18765, web: 15173 },
+    urls: runtimeUrls({ api: 18765, web: 15173 }),
     processes: {
       api: { role: "api", pid: 101 },
       web: { role: "web", pid: 102 },
-      mini: { role: "mini", pid: 103 },
     },
   };
   assert.equal(isRuntimeState(valid), true);
   assert.equal(
     isRuntimeState({
       ...valid,
-      processes: { ...valid.processes, web: { role: "mini", pid: 102 } },
+      processes: { ...valid.processes, mini: { role: "mini", pid: 103 } },
     }),
     false,
   );
@@ -78,7 +76,7 @@ test("workerCommand launches the API through the unified backend CLI", () => {
   assert.match(spec.env.PYTHONPATH, /existing-pythonpath/);
 });
 
-test("workerCommand launches npm scripts through cmd.exe on Windows", () => {
+test("workerCommand launches Desktop through cmd.exe on Windows", () => {
   const env = {
     ComSpec: "C:\\Windows\\System32\\cmd.exe",
     FAMILY_SPENDING_API_PORT: "18765",
@@ -87,11 +85,6 @@ test("workerCommand launches npm scripts through cmd.exe on Windows", () => {
   assert.deepEqual(workerCommand("web", env, "win32"), {
     command: env.ComSpec,
     args: ["/d", "/s", "/c", "npm run dev:web"],
-    env,
-  });
-  assert.deepEqual(workerCommand("mini", env, "win32"), {
-    command: env.ComSpec,
-    args: ["/d", "/s", "/c", "npm run dev:mini:h5"],
     env,
   });
 });

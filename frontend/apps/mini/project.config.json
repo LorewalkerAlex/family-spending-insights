@@ -1,13 +1,47 @@
 {
-  "miniprogramRoot": "dist/",
+  "description": "Family Spending Insights native WeChat Mini Program",
+  "miniprogramRoot": "miniprogram/",
+  "srcMiniprogramRoot": "miniprogram/",
   "projectname": "family-spending-insights-mini",
-  "description": "Family Spending Insights Taro Mini POC",
-  "appid": "touristappid",
+  "compileType": "miniprogram",
+  "simulatorType": "wechat",
   "setting": {
+    "urlCheck": false,
     "es6": true,
     "enhance": true,
+    "postcss": true,
     "minified": true,
-    "postcss": true
+    "minifyWXSS": true,
+    "minifyWXML": true,
+    "compileHotReLoad": true,
+    "useCompilerPlugins": [
+      "typescript"
+    ],
+    "compileWorklet": false,
+    "uglifyFileName": false,
+    "uploadWithSourceMap": true,
+    "packNpmManually": false,
+    "packNpmRelationList": [],
+    "localPlugins": false,
+    "disableUseStrict": false,
+    "condition": false,
+    "swc": false,
+    "disableSWC": true,
+    "babelSetting": {
+      "ignore": [],
+      "disablePlugins": [],
+      "outputPath": ""
+    }
   },
-  "compileType": "miniprogram"
+  "editorSetting": {
+    "tabIndent": "insertSpaces",
+    "tabSize": 2
+  },
+  "packOptions": {
+    "ignore": [],
+    "include": []
+  },
+  "appid": "wxc47766193c18264b",
+  "libVersion": "3.13.0",
+  "simulatorPluginLibVersion": {}
 }

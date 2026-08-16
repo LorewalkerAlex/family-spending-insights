@@ -12,8 +12,8 @@ const REPO_ROOT = path.resolve(path.dirname(SCRIPT_PATH), "..");
 const RUNTIME_ROOT = path.join(REPO_ROOT, ".runtime");
 const STATE_PATH = path.join(RUNTIME_ROOT, "dev.json");
 const LOG_ROOT = path.join(RUNTIME_ROOT, "logs");
-const STATE_SCHEMA_VERSION = 1;
-const ROLES = ["api", "web", "mini"];
+const STATE_SCHEMA_VERSION = 2;
+const ROLES = ["api", "web"];
 
 export function parsePreferredPort(value, fallback) {
   if (value === undefined || value === null || String(value).trim() === "") {
@@ -31,7 +31,6 @@ export function runtimeUrls(ports) {
   return {
     api: `http://127.0.0.1:${ports.api}`,
     web: `http://127.0.0.1:${ports.web}/overview`,
-    mini: `http://127.0.0.1:${ports.mini}/`,
   };
 }
 
@@ -50,7 +49,7 @@ export function isRuntimeState(value) {
   if (!value.urls || typeof value.urls !== "object") return false;
   if (!value.processes || typeof value.processes !== "object") return false;
 
-  for (const key of ["api", "web", "mini"]) {
+  for (const key of ROLES) {
     const port = value.ports[key];
     if (!Number.isInteger(port) || port < 1 || port > 65535) return false;
   }
@@ -222,8 +221,8 @@ function tailLog(filePath, maxLines = 80) {
 function printRuntime(state, prefix = "RUNNING") {
   console.log(`${prefix}: managed Family Spending development runtime`);
   console.log(`Desktop : ${state.urls.web}`);
-  console.log(`Mini H5 : ${state.urls.mini}`);
   console.log(`API     : ${state.urls.api}`);
+  console.log("Mini    : import frontend/apps/mini in WeChat Developer Tools");
   console.log(`State   : ${path.relative(REPO_ROOT, STATE_PATH).replaceAll(path.sep, "/")}`);
   console.log(`PIDs    : ${ROLES.map((role) => state.processes[role]?.pid ?? "-").join(", ")}`);
 }
@@ -233,15 +232,12 @@ async function inspectState(state) {
     ROLES.map((role) => [role, Boolean(state.processes[role] && processMatches(state.processes[role], state.runtime_id))]),
   );
 
-  const endpointChecks = { api: false, web: false, mini: false };
+  const endpointChecks = { api: false, web: false };
   if (processChecks.api) {
     endpointChecks.api = await httpText(`${state.urls.api}/api/health`).then(() => true, () => false);
   }
   if (processChecks.web) {
     endpointChecks.web = await httpText(state.urls.web).then(() => true, () => false);
-  }
-  if (processChecks.mini) {
-    endpointChecks.mini = await httpText(state.urls.mini).then(() => true, () => false);
   }
 
   return {
@@ -277,7 +273,6 @@ function spawnWorker(role, runtimeId, ports) {
     ...process.env,
     FAMILY_SPENDING_API_PORT: String(ports.api),
     FAMILY_SPENDING_WEB_PORT: String(ports.web),
-    FAMILY_SPENDING_MINI_H5_PORT: String(ports.mini),
   };
 
   let child;
@@ -332,18 +327,17 @@ export function workerCommand(role, env, platform = process.platform) {
     };
   }
 
-  const script = role === "web" ? "dev:web" : "dev:mini:h5";
   if (platform === "win32") {
     return {
       command: env.ComSpec || env.COMSPEC || "cmd.exe",
-      args: ["/d", "/s", "/c", `npm run ${script}`],
+      args: ["/d", "/s", "/c", "npm run dev:web"],
       env,
     };
   }
 
   return {
     command: "npm",
-    args: ["run", script],
+    args: ["run", "dev:web"],
     env,
   };
 }
@@ -390,9 +384,8 @@ async function runWorker(role, runtimeId) {
 async function verifyProxyConvergence(state) {
   const direct = await httpText(`${state.urls.api}/api/financial-summary`, 5000);
   const web = await httpText(`http://127.0.0.1:${state.ports.web}/api/financial-summary`, 5000);
-  const mini = await httpText(`http://127.0.0.1:${state.ports.mini}/api/financial-summary`, 5000);
-  if (direct !== web || direct !== mini) {
-    throw new Error("Financial Summary differs across API, Desktop, and Mini H5 proxies");
+  if (direct !== web) {
+    throw new Error("Financial Summary differs across API and Desktop proxy");
   }
 }
 
@@ -416,9 +409,7 @@ async function startRuntime() {
   const api = await findFreePort(parsePreferredPort(process.env.FAMILY_SPENDING_API_PORT, 18765), reserved);
   reserved.add(api);
   const web = await findFreePort(parsePreferredPort(process.env.FAMILY_SPENDING_WEB_PORT, 15173), reserved);
-  reserved.add(web);
-  const mini = await findFreePort(parsePreferredPort(process.env.FAMILY_SPENDING_MINI_H5_PORT, 11087), reserved);
-  const ports = { api, web, mini };
+  const ports = { api, web };
   const urls = runtimeUrls(ports);
   const runtimeId = randomUUID();
   const state = {
@@ -437,13 +428,8 @@ async function startRuntime() {
     await waitForUrl(`${urls.api}/api/health`, 120_000);
 
     state.processes.web = spawnWorker("web", runtimeId, ports);
-    state.processes.mini = spawnWorker("mini", runtimeId, ports);
     writeState(state);
-
-    await Promise.all([
-      waitForUrl(urls.web, 120_000),
-      waitForUrl(urls.mini, 300_000),
-    ]);
+    await waitForUrl(urls.web, 120_000);
     await verifyProxyConvergence(state);
 
     state.status = "ready";
