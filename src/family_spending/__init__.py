@@ -1,1 +1,1 @@
-"""Family spending data pipeline."""
+"""Canonical Family Spending backend package under parallel rebuild."""

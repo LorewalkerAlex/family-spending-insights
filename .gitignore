@@ -31,14 +31,9 @@ docs/*
 !docs/archive/architecture/
 !docs/archive/architecture/**
 
-# 本地数据默认忽略
-data/*
-
-# 正式 Mapping 配置纳入 Git
-!data/mappings/
-data/mappings/*
-!data/mappings/merchants.yaml
-!data/mappings/categories.yaml
+# Canonical household data 全部属于本地持久化状态，不进入 Git。
+# Mapping 也位于 data/state/mappings/，与 application checkout 解耦。
+data/
 
 # 临时文件
 tmp/

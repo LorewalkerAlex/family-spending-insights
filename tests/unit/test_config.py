@@ -37,12 +37,12 @@ class ConfigTests(unittest.TestCase):
         self.assertFalse(config.sources.cmb_email.enabled)
         self.assertEqual(config.sources.cmb_email.mailbox, "Bills")
 
-    def test_rebuild_config_points_to_rebuild_local_runtime_sandbox(self) -> None:
-        rebuild_root = Path(__file__).resolve().parents[2]
-        config = load_app_config(rebuild_root / "rebuild.toml")
+    def test_formal_config_points_to_repository_household_data(self) -> None:
+        repo_root = Path(__file__).resolve().parents[2]
+        config = load_app_config(repo_root / "family-spending.toml")
         self.assertEqual(
             config.storage.data_root,
-            (rebuild_root / ".runtime" / "household").resolve(),
+            (repo_root / "data").resolve(),
         )
 
     def test_storage_data_root_is_required(self) -> None:

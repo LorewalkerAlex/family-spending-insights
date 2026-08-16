@@ -1,131 +1,112 @@
 # Family Spending Insights — Canonical Code Map
 
-> Status: **authoritative migration map**
-> Current-code baseline: `main @ 21a3c88514d7241c6d3c787e70975a461afa0f5a`
-> Target architecture: [`system-architecture.md`](./system-architecture.md)
+> Status: **authoritative current code map**
+> Current architecture: [`system-architecture.md`](./system-architecture.md)
+> Canonical production cutover: 2026-08-16
 
-## 1. Purpose
+## 1. Current package
 
-本文件回答四个问题：
-
-1. 当前模块真正承担什么责任；
-2. 该责任在 Canonical Architecture 中属于哪里；
-3. 当前实现是可以保留的正式模型，还是历史演进形成的 transitional structure；
-4. Parallel Rebuild 时应 Keep / Rebuild / Split / Remove 哪些部分。
-
-它不是“文件移动清单”。迁移优先改变依赖方向与数据契约，最后才做最终目录落位。
-
-## 2. Status Vocabulary
-
-只使用以下状态描述当前实现：
-
-- **Canonical Concept** — 概念和核心语义可以直接进入新架构，代码仍可重新组织。
-- **Behavior Reference** — 业务行为已验证，应通过 parity 保留，但实现不直接复用。
-- **Transitional** — 当前可运行，但责任或依赖边界不符合目标架构。
-- **Migration Required** — 数据模型或 identity contract 必须显式迁移。
-- **Legacy** — 只保留历史/兼容价值，不进入最终 Backend。
-- **Planned** — Canonical Architecture 已预留，但当前产品尚未实现。
-
-## 3. Target Package Map
+正式 Backend 当前只有一个 `family_spending` package：
 
 ```text
 src/family_spending/
-├── domain/
-├── sources/
 ├── application/
 │   └── ports/
-├── projections/
-├── intelligence/
+├── domain/
+├── interfaces/
+│   ├── cli/
+│   └── http/
 ├── persistence/
 │   └── filesystem/
+├── projections/
 ├── runtime/
-├── interfaces/
-│   ├── http/
-│   └── cli/
+├── sources/
+│   ├── cmb_email/
+│   └── manual/
+├── __init__.py
+├── __main__.py
 └── config.py
 ```
 
-最终不保留 `backend/` 作为“所有非纯领域代码”的汇总目录，也不把 storage implementation 混在 package root。
+Parallel Rebuild 已完成；本文件不再把旧 Backend 当作“current implementation”建立迁移对照。
 
-## 4. Backend Module Map
+## 2. Responsibility map
 
-| Current module | Current responsibility | Canonical responsibility / target | Action | Status |
-| --- | --- | --- | --- | --- |
-| `source_records.py` | `SourceRecord` + `SourceAdapter` | `domain/source.py` + source port | Split interface from model | Canonical Concept |
-| `transactions.py` | Transaction core、SourceLink、identity helpers | `domain/transaction.py` | Reimplement/preserve semantics | Canonical Concept |
-| `reconciliation.py` | Generic matching + CMB/Manual-specific policy | `domain/reconciliation.py` + `sources/*/reconciliation.py` | Split | Behavior Reference |
-| `transaction_resolution.py` | Concrete Source orchestration、domain assembly、Enrichment initialization、diagnostics | No direct target file | Dissolve responsibilities into Application/Domain/Runtime | Legacy / Migration Required |
-| `enrichment.py` | Enrichment semantics、review signals、current materialization | `domain/enrichment.py` | Rebuild around sparse decision + resolved view | Migration Required |
-| `mapping.py` | Domain Mapping + YAML I/O + paths + resolver | `domain/mapping.py` + `persistence/filesystem/mapping_store.py` | Split | Transitional |
-| `mapping_review.py` | Review aggregation/plan + YAML mutation | `application/mapping_review.py` + MappingStore | Rebuild deterministic plan/apply | Behavior Reference |
-| `refund_reconciliation.py` | Refund matching / NetConsumption | `domain/refund.py` | Preserve rules through parity | Canonical Concept |
-| `month_coverage.py` | Natural-month completeness | `projections/month_coverage.py` | Preserve rules | Canonical Concept |
-| `spending_projection.py` | Spending projection + persistence | `projections/spending.py` + ProjectionStore | Split pure projection and I/O | Behavior Reference |
-| `financial_projection.py` | Income/net spending/cashflow projection + persistence | `projections/financial.py` + ProjectionStore | Split | Behavior Reference |
-| `manual_source.py` | Manual source model + adapter + JSONL store + legacy merchant/category | `sources/manual/*` + EvidenceStore | Remove legacy fields, split I/O | Migration Required |
-| `scheduled_input.py` | Rule model + execution metadata + JSON persistence | `domain/scheduling.py` + `application/scheduled_input.py` + ScheduleStore | Split rule/cursor/store | Migration Required |
-| `feedback.py` | Feedback model + JSONL persistence | `application/feedback.py` + FeedbackStore | Split | Behavior Reference |
-| `source_link_store.py` | SourceRecord↔Transaction identity persistence | `persistence/filesystem/identity_store.py` | Preserve durable semantics | Canonical Concept |
-| `enrichment_store.py` | Persist complete materialized Enrichment | `persistence/filesystem/enrichment_store.py` | Replace with sparse `EnrichmentDecision` store | Migration Required |
-| `settings.py` | hard-coded data paths + CMB config + credentials loader | `config.py` + StorageLayout + source config | Replace | Transitional |
+| Package | Responsibility |
+| --- | --- |
+| `domain/` | SourceRecord、Transaction、SourceLink identity、Reconciliation、Mapping、Enrichment、Refund、Scheduling 等稳定业务模型与纯规则 |
+| `application/` | Source Sync、Manual Input、Mapping Review、Enrichment command、Scheduled Input、Feedback、Query 等 use cases |
+| `application/ports/` | Runtime、Source、Storage 等行为型依赖契约 |
+| `sources/cmb_email/` | CMB acquisition、raw EML evidence、parser、normalization 与 source-specific reconciliation policy |
+| `sources/manual/` | Manual Evidence model、Source adapter 与 source-specific reconciliation policy |
+| `persistence/filesystem/` | Canonical StorageLayout、manifest、Evidence/Identity/Mapping/Enrichment/Schedule/Feedback stores 与 Unit of Work |
+| `projections/` | Month coverage、Spending、Financial 等可重建 projection |
+| `runtime/` | Composition Root、RuntimeState、single-writer coordinator 与 supervisor |
+| `interfaces/http/` | 正式 JSON transport，只调用 Application |
+| `interfaces/cli/` | `serve/sync/jobs/rebuild/diagnose` operator surface，复用同一个 Composition Root |
+| `config.py` | TOML 非敏感配置与环境变量 credentials contract |
 
-## 5. CMB Source Map
-
-| Current module | Current responsibility | Canonical target | Action | Status |
-| --- | --- | --- | --- | --- |
-| `ingestion/imap_163.py` | IMAP acquisition + immutable EML save | `sources/cmb_email/connector.py` | Rebuild around source config/port | Behavior Reference |
-| `ingestion/cmb_email_transactions.py` | EML parser + current `CmbTransaction` + CSV rebuild/store | `sources/cmb_email/parser.py` + optional derived export/cache store | Parser becomes SourceRecord-facing; CSV downgraded | Migration Required |
-| `ingestion/cmb_source_adapter.py` | `CmbTransaction → SourceRecord` | `sources/cmb_email/adapter.py` | Rebuild with stable evidence identity | Migration Required |
-
-### 5.1 Critical identity gap
-
-当前 CMB legacy id 基于：
+## 3. Dependency direction
 
 ```text
-source_email + source_index
+interfaces ───────► application ◄──── runtime
+                         │
+                         ▼
+                       domain
+
+sources ──implements──► application ports
+persistence ──────────► application ports
+
+projections consume canonical domain/application state
 ```
 
-其中 `source_index` 由当前 parser 输出顺序决定。Canonical Source identity 必须换成 evidence-anchored stable locator。现有 SourceLink 中的 CMB source ids 需要一次性 migration；不能在普通 rebuild 时静默变化。
+禁止恢复：
 
-## 6. Current `backend/` Package Map
+- `domain -> persistence`
+- `domain -> source connector`
+- `domain -> interfaces`
+- `application -> concrete filesystem serialization`
+- `HTTP/CLI -> household file I/O`
+- frontend 直接读取 `data/`
+- new canonical code 导入已删除的 legacy Backend modules
 
-| Current module | Current responsibility | Canonical target | Action | Status |
-| --- | --- | --- | --- | --- |
-| `backend/paths.py` | 所有 file path 聚合 | `persistence/filesystem/layout.py` | Replace with `data_root`-based StorageLayout | Transitional |
-| `backend/state.py` | 从 current files rehydrate joined snapshot | `runtime/state.py` + Store ports | Rebuild against Canonical storage | Transitional |
-| `backend/pipeline.py` | Source Sync + direct reads/writes + Projection rebuild | `application/source_sync.py` | Major rebuild; no concrete file I/O | Transitional |
-| `backend/runtime.py` | cached snapshot lifecycle + fingerprint refresh | `runtime/state.py` / coordinator | Keep snapshot concept, replace external-file polling semantics | Canonical Concept |
-| `backend/application.py` | large facade implementing many use cases | thin facade + `application/*` use cases | Split heavily | Transitional |
-| `backend/manual_commands.py` | Manual create/correct/delete UoW orchestration | `application/manual_input.py` | Rebuild on SourceSync port | Behavior Reference |
-| `backend/scheduled_jobs.py` | due occurrence batch + Source sync | `application/scheduled_input.py` + runtime scheduler trigger | Rebuild | Behavior Reference |
-| `backend/projection_queries.py` | projection read queries | `application/queries.py` | Rebuild | Behavior Reference |
-| `backend/http_server.py` | HTTP routing/transport around Application | `interfaces/http/` | Preserve external API contract, rebuild internals | Behavior Reference |
+这些边界由 `tests/contract/test_architecture.py` 持续验证。
 
-`backend/` 当前把 Application、Runtime、Pipeline、State、HTTP 放在一个 package，是历史演进结果。最终目录应按 architecture layer，而不是按“backend everything”组织。
+## 4. Canonical persistent data map
 
-## 7. Infrastructure Map
+根配置 `family-spending.toml` 默认把 data root 指向 `./data`。
 
-当前 `infrastructure/` 主要只有 `file_uow.py`，而 filesystem adapters 分散在 root modules。
+| Canonical path | State class | Meaning |
+| --- | --- | --- |
+| `evidence/cmb-email/` | Source Evidence | Raw EML exact bytes |
+| `evidence/manual/records.jsonl` | Source Evidence | Manual source facts |
+| `state/identity/source-links.jsonl` | Durable Decision | SourceRecord ↔ Transaction identity history |
+| `state/enrichment/decisions.jsonl` | Durable Decision | Sparse merchant/category overrides 与 note |
+| `state/mappings/*.yaml` | Reviewed Knowledge | description→merchant、merchant→default category |
+| `state/schedules/rules.json` | Configuration | Scheduled rules |
+| `state/schedules/execution.json` | Operational State | Schedule execution cursor |
+| `state/feedback/feedback.jsonl` | Durable Product State | Feedback |
+| `derived/sources/` | Derived | Source inspection/cache artifacts |
+| `derived/projections/` | Derived | Spending / Financial projections |
+| `derived/indexes/` | Derived | Rebuildable indexes |
 
-| Current module | Canonical target | Action | Status |
-| --- | --- | --- | --- |
-| `infrastructure/file_uow.py` | `persistence/filesystem/unit_of_work.py` | Preserve concept / reimplement | Canonical Concept |
-| root-level `read_*` / `write_*` functions | dedicated filesystem Stores | Move responsibility behind ports | Transitional |
+整个 `data/` 都是本地 household state，不进入 Git。Mapping 不再作为 repository-tracked legacy YAML 发布。
 
-FileUnitOfWork 的“先 plan、后 coordinated commit、失败 rollback”语义继续保留；具体文件清单由 Store/Layout 组合提供，而不是由 Domain 知道路径。
+## 5. Removed legacy structure
 
-## 8. Interface Map
+Atomic Cutover 后不再存在于正式 Runtime：
 
-| Current | Canonical target | Action | Status |
-| --- | --- | --- | --- |
-| `cli.py`, `__main__.py` | `interfaces/cli/` | Rebuild without second pipeline | Behavior Reference |
-| `backend/http_server.py` | `interfaces/http/` | Keep external contract | Behavior Reference |
+- `src/family_spending/backend/`
+- `src/family_spending/ingestion/`
+- root-level `transaction_resolution.py` / `source_records.py`
+- materialized legacy enrichment persistence
+- legacy SourceLink / Pipeline / Settings modules
+- `rebuild/`
+- migration-only runtime compatibility
 
-HTTP / CLI 都只能调用 Application use cases，不直接读取 household financial files。
+一次性 Legacy → Canonical migration tooling 保存在 Git 历史 commit `a3ee0436078385d48d71039b3f32825f12742513`，不需要留在生产 source tree。
 
-## 9. Frontend Map
-
-当前前端总体结构已经符合长期边界：
+## 6. Frontend boundary
 
 ```text
 frontend/
@@ -137,107 +118,8 @@ frontend/
     └── design-tokens/
 ```
 
-| Current | Canonical direction | Action | Status |
-| --- | --- | --- | --- |
-| `frontend/packages/core` | API contracts/service/shared semantics | Keep | Canonical Concept |
-| `frontend/apps/web` | full Desktop workspace | Keep | Canonical Concept |
-| `frontend/apps/mini` | lightweight Mini presentation | Keep | Canonical Concept |
-| `local_dashboard/` | historical fallback | remove after canonical backend + current frontends prove stable | Legacy |
+Desktop 与 WeChat Mini 共用正式 API contract。Mini H5 是开发/测试 runtime。`local_dashboard/` 仍只是历史 fallback，不定义 Backend truth，后续可独立清理。
 
-Backend rebuild 不借机重构现有正式前端。新 Backend 原生实现当前正式 API contract；不通过 compatibility shim 转发旧 Backend。
+## 7. Extension rule
 
-## 10. Persistent Data Map
-
-| Current data | Canonical class | Canonical target | Action |
-| --- | --- | --- | --- |
-| `data/emails/*.eml` | Source Evidence | `evidence/cmb-email/` | Preserve exact bytes |
-| `data/manual_source_records.jsonl` | Source Evidence + legacy optional enrichment | `evidence/manual/records.jsonl` | migrate source facts; discard migrated legacy duplication |
-| `data/transaction_source_links.jsonl` | Durable Identity Decision | `state/identity/source-links.jsonl` | migrate CMB source ids; preserve Transaction ids/relationships |
-| `data/mappings/*.yaml` | Reviewed Configuration | `state/mappings/` | preserve semantics |
-| `data/enrichment_state.jsonl` | mixed Durable Decision + Derived Enrichment | `state/enrichment/decisions.jsonl` | extract sparse user decisions only |
-| `data/scheduled_input_rules.json` | Config + execution cursor mixed | `state/schedules/rules.json` + `execution.json` | split |
-| `data/feedback.jsonl` | Durable Product State | `state/feedback/feedback.jsonl` | preserve |
-| `data/transactions.csv` | Parsed CMB derived artifact | `derived/sources/` or export-only | rebuild, no longer truth |
-| `data/reports/*.json` | Derived Projection | `derived/projections/` | rebuild |
-| future suggestion indexes | Runtime / Derived | runtime or `derived/indexes/` | never backup truth |
-
-## 11. Planned Extension Points
-
-这些是 Canonical 预留，不代表 Parallel Rebuild 初期必须实现新产品 feature：
-
-- `SourceRegistry`
-- `MappingSuggestionEngine`
-- Mapping import/export
-- Transaction export
-- additional Projections
-- additional Sources
-
-Rebuild 第一目标是实现当前业务语义 parity；Planned extension point 只需要在结构上可自然加入，避免提前实现未验证 feature。
-
-## 12. Dependency Map
-
-期望依赖方向：
-
-```text
-interfaces ───────► application ◄──── runtime
-                         │
-                         ▼
-                       domain
-
-sources ──implements──► application ports
-persistence ──────────► application ports
-
-projections consume domain/application state
-intelligence consumes read models and returns suggestions only
-```
-
-### Forbidden dependencies
-
-- `domain -> persistence`
-- `domain -> sources connector`
-- `domain -> interfaces`
-- `application -> concrete YAML/JSONL/CSV parsing`
-- `projection -> mutation store`
-- `intelligence -> Mapping write`
-- `frontend -> household files`
-- `new backend -> old backend`
-- `old backend -> new rebuild backend`
-
-## 13. Migration Priority
-
-不是按文件名移动，而按下面的依赖顺序重建：
-
-```text
-Canonical Domain + Storage Contract
-        ↓
-Stable Source Identity + Evidence Stores
-        ↓
-Durable Identity + Enrichment Decision model
-        ↓
-Generic Source Sync
-        ↓
-Projection
-        ↓
-Runtime / Coordinator / Supervisor
-        ↓
-Application Use Cases
-        ↓
-HTTP / CLI
-        ↓
-Migration + Parity + Atomic Cutover
-```
-
-详细阶段和 gate 见 [`rebuild-strategy.md`](./rebuild-strategy.md)。
-
-## 14. How to Use This Map
-
-开发新代码前：
-
-1. 在本表找到当前 responsibility；
-2. 确认 target boundary；
-3. 如果状态为 `Migration Required`，不要直接复制旧数据模型；
-4. 如果状态为 `Behavior Reference`，通过测试/parity 保存行为，不要求代码复用；
-5. 如果状态为 `Legacy`，不要把旧 abstraction 带入新代码；
-6. 如果状态为 `Planned`，只保留 extension seam，不提前实现产品功能。
-
-最终 Cutover 后，本表应更新为“Current = Canonical”，并删除不再需要的迁移说明。
+新增 Source、Projection、Store 或 Intelligence capability 时，先找到已有 extension point；不要重新建立并行 pipeline、第二套 storage model 或 compatibility namespace。稳定 data model 优先 composition，明确行为扩展点可以使用轻量 contract/abstraction。

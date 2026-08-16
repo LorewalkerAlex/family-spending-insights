@@ -7,8 +7,8 @@ from pathlib import Path
 import family_spending
 
 
-REBUILD_ROOT = Path(__file__).resolve().parents[2]
-PACKAGE_ROOT = REBUILD_ROOT / "src" / "family_spending"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+PACKAGE_ROOT = REPO_ROOT / "src" / "family_spending"
 DOMAIN_FORBIDDEN_STDLIB = {
     "csv",
     "email",
@@ -44,6 +44,7 @@ LEGACY_INTERNAL_PREFIXES = (
 
 
 def imported_modules(path: Path) -> tuple[str, ...]:
+    """Return imported module names so architecture rules can be checked without importing files."""
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     modules: list[str] = []
     for node in ast.walk(tree):
@@ -55,9 +56,9 @@ def imported_modules(path: Path) -> tuple[str, ...]:
 
 
 class ArchitectureContractTests(unittest.TestCase):
-    def test_test_process_imports_rebuild_package_not_current_backend(self) -> None:
+    def test_test_process_imports_formal_package_from_src(self) -> None:
         module_path = Path(family_spending.__file__).resolve()
-        self.assertTrue(module_path.is_relative_to(REBUILD_ROOT / "src"), module_path)
+        self.assertTrue(module_path.is_relative_to(REPO_ROOT / "src"), module_path)
 
     def test_domain_has_no_infrastructure_or_serialization_dependencies(self) -> None:
         violations: list[str] = []
@@ -72,7 +73,7 @@ class ArchitectureContractTests(unittest.TestCase):
                     violations.append(f"{path.name}: {module}")
         self.assertEqual(violations, [])
 
-    def test_new_backend_never_imports_current_backend_modules(self) -> None:
+    def test_canonical_backend_never_imports_removed_legacy_modules(self) -> None:
         violations: list[str] = []
         for path in sorted(PACKAGE_ROOT.rglob("*.py")):
             for module in imported_modules(path):

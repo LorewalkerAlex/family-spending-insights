@@ -1,1 +1,0 @@
-"""Canonical rebuild test suite."""

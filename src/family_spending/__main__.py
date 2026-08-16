@@ -1,4 +1,4 @@
-from family_spending.cli import main
+from family_spending.interfaces.cli.main import main
 
 
 if __name__ == "__main__":

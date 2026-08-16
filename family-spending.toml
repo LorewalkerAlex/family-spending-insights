@@ -1,5 +1,5 @@
 [storage]
-data_root = "./.runtime/household"
+data_root = "./data"
 
 [server]
 host = "127.0.0.1"
@@ -12,5 +12,5 @@ email_poll_interval_seconds = 900
 enabled = true
 host = "imap.163.com"
 port = 993
-mailbox = "\u62db\u884c\u4fe1\u7528\u5361"
-subject_keyword = "\u62db\u5546\u94f6\u884c\u4fe1\u7528\u5361\u7535\u5b50\u8d26\u5355"
+mailbox = "招商信用卡"
+subject_keyword = "招商银行信用卡电子账单"

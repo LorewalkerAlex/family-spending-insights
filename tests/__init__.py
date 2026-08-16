@@ -1,1 +1,1 @@
-"""Tests for the new family_spending package."""
+"""Canonical rebuild test suite."""

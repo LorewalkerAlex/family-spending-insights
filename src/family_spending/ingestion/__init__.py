@@ -1,1 +1,0 @@
-"""External data ingestion for immutable source records."""
