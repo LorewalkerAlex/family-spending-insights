@@ -134,6 +134,24 @@ class MappingReviewWorkspaceView:
 
 
 @dataclass(frozen=True)
+class ScheduledInputRuleView:
+    """Transport-neutral scheduled rule plus its current execution view."""
+
+    id: str
+    enabled: bool
+    transaction_type: str
+    amount: Decimal
+    currency: str
+    description: str
+    note: str | None
+    next_date: date
+    last_occurrence_date: date | None
+    last_source_record_id: str | None
+    last_transaction_id: str | None
+    last_action: str | None
+
+
+@dataclass(frozen=True)
 class ScheduledInputOccurrence:
     rule_id: str
     occurrence_date: date

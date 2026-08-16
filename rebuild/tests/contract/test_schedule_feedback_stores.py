@@ -40,6 +40,9 @@ class ScheduleFeedbackStoreContractTests(unittest.TestCase):
         execution = ScheduleExecutionState(
             rule_id=rule.id,
             last_processed_occurrence_date=date(2026, 10, 6),
+            last_source_record_id="src_schedule_salary",
+            last_transaction_id="txn_schedule_salary",
+            last_action="recovered",
         )
         store.replace_rules((rule,))
         store.replace_execution((execution,))

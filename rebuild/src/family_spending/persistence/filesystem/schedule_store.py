@@ -97,7 +97,14 @@ def _rule(raw: object, *, path: Path, index: int) -> ScheduledRule:
 
 
 def _execution(raw: object, *, path: Path, index: int) -> ScheduleExecutionState:
-    if not isinstance(raw, dict) or set(raw) != {"rule_id", "last_processed_occurrence_date"}:
+    expected = {
+        "rule_id",
+        "last_processed_occurrence_date",
+        "last_source_record_id",
+        "last_transaction_id",
+        "last_action",
+    }
+    if not isinstance(raw, dict) or set(raw) != expected:
         fields = sorted(raw) if isinstance(raw, dict) else type(raw).__name__
         raise ScheduleStoreError(
             f"Invalid Schedule execution fields in {path} at index {index}: {fields!r}"
@@ -118,6 +125,9 @@ def _execution(raw: object, *, path: Path, index: int) -> ScheduleExecutionState
         return ScheduleExecutionState(
             rule_id=raw["rule_id"],
             last_processed_occurrence_date=processed,
+            last_source_record_id=raw["last_source_record_id"],
+            last_transaction_id=raw["last_transaction_id"],
+            last_action=raw["last_action"],
         )
     except (DomainInvariantError, TypeError) as exc:
         raise ScheduleStoreError(
@@ -192,6 +202,9 @@ class FilesystemScheduleStore:
                         if state.last_processed_occurrence_date is not None
                         else None
                     ),
+                    "last_source_record_id": state.last_source_record_id,
+                    "last_transaction_id": state.last_transaction_id,
+                    "last_action": state.last_action,
                 }
                 for state in states
             ],

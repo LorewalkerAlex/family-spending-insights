@@ -11,7 +11,11 @@ from family_spending.application.errors import (
     ApplicationStateError,
     ApplicationValidationError,
 )
-from family_spending.application.models import ScheduledInputOccurrence, ScheduledInputRunResult
+from family_spending.application.models import (
+    ScheduledInputOccurrence,
+    ScheduledInputRuleView,
+    ScheduledInputRunResult,
+)
 from family_spending.application.ports.runtime import MutationExecutor, RuntimeReader
 from family_spending.application.ports.storage import (
     EnrichmentDecisionStore,
@@ -24,6 +28,7 @@ from family_spending.domain.scheduling import (
     ScheduleExecutionState,
     ScheduledRule,
     next_monthly_date,
+    next_occurrence_date,
     scheduled_occurrence_identity,
 )
 from family_spending.sources.manual.model import (
@@ -66,6 +71,59 @@ class ScheduledInputService:
 
     def list_rules(self) -> tuple[ScheduledRule, ...]:
         return self._schedule.load_rules()
+
+    def list_rule_views(self) -> tuple[ScheduledInputRuleView, ...]:
+        """Join rules and durable execution metadata without leaking persistence shape."""
+        rules = self._schedule.load_rules()
+        execution_by_rule = {state.rule_id: state for state in self._schedule.load_execution()}
+        unknown = sorted(set(execution_by_rule) - {rule.id for rule in rules})
+        if unknown:
+            raise ApplicationStateError(
+                f"Schedule execution references missing rules: {unknown!r}"
+            )
+        return tuple(
+            self._rule_view(rule, execution_by_rule.get(rule.id))
+            for rule in rules
+        )
+
+    def get_rule_view(self, rule_id: str) -> ScheduledInputRuleView:
+        view = next((item for item in self.list_rule_views() if item.id == rule_id), None)
+        if view is None:
+            raise ApplicationNotFoundError(f"Scheduled Rule {rule_id!r} does not exist")
+        return view
+
+    @staticmethod
+    def _rule_view(
+        rule: ScheduledRule,
+        execution: ScheduleExecutionState | None,
+    ) -> ScheduledInputRuleView:
+        last_date = execution.last_processed_occurrence_date if execution is not None else None
+        if execution is not None and last_date is not None and (
+            execution.last_source_record_id is None
+            or execution.last_transaction_id is None
+            or execution.last_action is None
+        ):
+            raise ApplicationStateError(
+                f"Schedule execution for {rule.id!r} is missing last-run metadata"
+            )
+        return ScheduledInputRuleView(
+            id=rule.id,
+            enabled=rule.enabled,
+            transaction_type=rule.transaction_type,
+            amount=rule.amount,
+            currency=rule.currency,
+            description=rule.description,
+            note=rule.note,
+            next_date=next_occurrence_date(rule, execution),
+            last_occurrence_date=last_date,
+            last_source_record_id=(
+                execution.last_source_record_id if execution is not None else None
+            ),
+            last_transaction_id=(
+                execution.last_transaction_id if execution is not None else None
+            ),
+            last_action=execution.last_action if execution is not None else None,
+        )
 
     def create_rule(
         self,
@@ -308,10 +366,19 @@ class ScheduledInputService:
         self._enrichment.replace(decisions)
 
         next_execution = dict(execution_by_rule)
+        latest_occurrence_by_rule: dict[str, ScheduledInputOccurrence] = {}
+        for occurrence in occurrences:
+            previous = latest_occurrence_by_rule.get(occurrence.rule_id)
+            if previous is None or occurrence.occurrence_date > previous.occurrence_date:
+                latest_occurrence_by_rule[occurrence.rule_id] = occurrence
         for rule_id, occurrence_date in latest_processed.items():
+            latest = latest_occurrence_by_rule[rule_id]
             next_execution[rule_id] = ScheduleExecutionState(
                 rule_id=rule_id,
                 last_processed_occurrence_date=occurrence_date,
+                last_source_record_id=latest.source_record_id,
+                last_transaction_id=latest.transaction_id,
+                last_action=latest.action,
             )
         self._schedule.replace_execution(
             tuple(next_execution[rule.id] for rule in rules if rule.id in next_execution)

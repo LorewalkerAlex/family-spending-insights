@@ -4,11 +4,13 @@ import hashlib
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from typing import Literal
 
 from family_spending.domain.errors import DomainInvariantError
 from family_spending.domain.source import TransactionType
 
 SCHEDULE_OCCURRENCE_DIGEST_LENGTH = 24
+ScheduleAction = Literal["created", "matched", "reused", "recovered"]
 
 
 @dataclass(frozen=True)
@@ -47,14 +49,37 @@ class ScheduledRule:
 
 @dataclass(frozen=True)
 class ScheduleExecutionState:
-    """Operational cursor split from user-owned ScheduledRule configuration."""
+    """Operational cursor and last-run metadata split from user-owned rule configuration."""
 
     rule_id: str
     last_processed_occurrence_date: date | None = None
+    last_source_record_id: str | None = None
+    last_transaction_id: str | None = None
+    last_action: ScheduleAction | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.rule_id, str) or not self.rule_id.strip():
             raise DomainInvariantError("ScheduleExecutionState rule_id must not be empty")
+        metadata = (self.last_source_record_id, self.last_transaction_id, self.last_action)
+        if any(value is None for value in metadata) and any(value is not None for value in metadata):
+            raise DomainInvariantError(
+                "Schedule execution last source, transaction, and action must be all present or all absent"
+            )
+        if any(value is not None for value in metadata) and self.last_processed_occurrence_date is None:
+            raise DomainInvariantError("Schedule execution metadata requires a processed occurrence date")
+        for value, label in (
+            (self.last_source_record_id, "last_source_record_id"),
+            (self.last_transaction_id, "last_transaction_id"),
+        ):
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise DomainInvariantError(f"Schedule execution {label} must be non-empty")
+        if self.last_action is not None and self.last_action not in (
+            "created",
+            "matched",
+            "reused",
+            "recovered",
+        ):
+            raise DomainInvariantError(f"Invalid Schedule execution action {self.last_action!r}")
 
 
 def next_monthly_date(value: date) -> date:

@@ -164,6 +164,13 @@ class FamilySpendingApplication:
     def list_scheduled_inputs(self) -> tuple[ScheduledRule, ...]:
         return self.scheduling.list_rules()
 
+    def list_scheduled_input_views(self):
+        """Expose rule plus execution state for transport adapters without leaking stores."""
+        return self.scheduling.list_rule_views()
+
+    def get_scheduled_input_view(self, rule_id: str):
+        return self.scheduling.get_rule_view(self._required_text(rule_id, "rule_id"))
+
     def create_scheduled_input(
         self,
         *,

@@ -113,6 +113,30 @@ class ArchitectureContractTests(unittest.TestCase):
                     violations.append(f"{path.relative_to(PACKAGE_ROOT)}: {module}")
         self.assertEqual(violations, [])
 
+    def test_http_interface_depends_on_application_not_runtime_persistence_or_sources(self) -> None:
+        """HTTP is a pure transport over Application and must never become another backend pipeline."""
+        violations: list[str] = []
+        forbidden = (
+            "family_spending.persistence",
+            "family_spending.runtime",
+            "family_spending.sources",
+        )
+        for path in sorted((PACKAGE_ROOT / "interfaces" / "http").rglob("*.py")):
+            for module in imported_modules(path):
+                if module.startswith(forbidden):
+                    violations.append(f"{path.relative_to(PACKAGE_ROOT)}: {module}")
+        self.assertEqual(violations, [])
+
+    def test_cli_interface_uses_composition_root_without_direct_storage_or_source_dependencies(self) -> None:
+        """CLI may bootstrap Runtime composition but cannot own persistence or Source algorithms."""
+        violations: list[str] = []
+        forbidden = ("family_spending.persistence", "family_spending.sources")
+        for path in sorted((PACKAGE_ROOT / "interfaces" / "cli").rglob("*.py")):
+            for module in imported_modules(path):
+                if module.startswith(forbidden):
+                    violations.append(f"{path.relative_to(PACKAGE_ROOT)}: {module}")
+        self.assertEqual(violations, [])
+
     def test_runtime_core_depends_on_ports_domain_and_projections_not_concrete_adapters(self) -> None:
         """Only composition.py may wire concrete sources and filesystem adapters into Runtime."""
         forbidden_prefixes = (
