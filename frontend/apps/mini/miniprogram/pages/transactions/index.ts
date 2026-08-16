@@ -1,6 +1,10 @@
 import { currentEnvironmentVersion, resolveApiBaseUrl } from "../../config/runtime";
 import { createFamilySpendingApi, type Transaction } from "../../services/api";
 import {
+  currentFinancialDataVersion,
+  hasFinancialDataChanged,
+} from "../../state/financial-refresh";
+import {
   applyMiniThemeChrome,
   readMiniTheme,
   type MiniThemeId,
@@ -32,6 +36,8 @@ interface TransactionsPageData extends Record<string, unknown> {
 interface TransactionsPageContext {
   data: TransactionsPageData;
   transactions: Transaction[];
+  hasLoaded: boolean;
+  financialDataVersion: number;
   setData(data: Partial<TransactionsPageData>): void;
 }
 
@@ -101,12 +107,15 @@ async function loadTransactions(context: TransactionsPageContext): Promise<void>
       data.selectedMonth || null,
       data.filter,
     );
+    context.financialDataVersion = currentFinancialDataVersion();
     context.setData({ ...view, loadState: "ready" });
   } catch (error) {
     context.setData({
       loadState: "error",
       errorMessage: error instanceof Error ? error.message : String(error),
     });
+  } finally {
+    context.hasLoaded = true;
   }
 }
 
@@ -116,6 +125,8 @@ function isTransactionFilter(value: unknown): value is TransactionFilter {
 
 Page({
   transactions: [] as Transaction[],
+  hasLoaded: false,
+  financialDataVersion: currentFinancialDataVersion(),
   data: initialData,
 
   onLoad(this: TransactionsPageContext) {
@@ -125,6 +136,12 @@ Page({
 
   onShow(this: TransactionsPageContext) {
     syncTheme(this);
+    if (
+      this.hasLoaded &&
+      hasFinancialDataChanged(this.financialDataVersion)
+    ) {
+      void loadTransactions(this);
+    }
   },
 
   onPullDownRefresh(this: TransactionsPageContext) {

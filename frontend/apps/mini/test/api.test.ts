@@ -165,7 +165,63 @@ describe("native Mini API client", () => {
     ]);
   });
 
-  it("surfaces Backend HTTP failures", async () => {
+  it("reads description history and creates Manual Input through canonical routes", async () => {
+    const baseUrl = "http://127.0.0.1:8765";
+    const command = {
+      type: "expense" as const,
+      date: "2026-08-16",
+      amount: "18.50",
+      description: "小区门口早餐摊",
+      note: "周末早餐",
+    };
+    const manualTransaction = {
+      ...transactionPayload("txn_manual"),
+      date: command.date,
+      amount: command.amount,
+      source: {
+        id: "manual_source",
+        type: "manual",
+        description: command.description,
+      },
+    };
+    const { calls, requester } = requesterFor({
+      [`${baseUrl}/api/manual-descriptions`]: {
+        statusCode: 200,
+        data: { descriptions: ["小区门口早餐摊", "咖啡"] },
+      },
+      [`${baseUrl}/api/manual-inputs`]: {
+        statusCode: 201,
+        data: {
+          manual_input: {
+            source_record_id: "manual_evidence_1",
+            action: "created",
+            transaction: manualTransaction,
+          },
+        },
+      },
+    });
+    const api = createFamilySpendingApi({ baseUrl, requester });
+
+    await expect(api.manualDescriptions()).resolves.toEqual(["小区门口早餐摊", "咖啡"]);
+    await expect(api.createManualInput(command)).resolves.toMatchObject({
+      source_record_id: "manual_evidence_1",
+      action: "created",
+      transaction: { id: "txn_manual", source: { type: "manual" } },
+    });
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toMatchObject({
+      url: `${baseUrl}/api/manual-descriptions`,
+      method: "GET",
+    });
+    expect(calls[1]).toMatchObject({
+      url: `${baseUrl}/api/manual-inputs`,
+      method: "POST",
+      data: command,
+    });
+  });
+
+  it("surfaces Backend HTTP failures with canonical error detail when available", async () => {
     const baseUrl = "http://127.0.0.1:8765";
     const { requester } = requesterFor({
       [`${baseUrl}/api/health`]: {
@@ -175,6 +231,6 @@ describe("native Mini API client", () => {
     });
     const api = createFamilySpendingApi({ baseUrl, requester });
 
-    await expect(api.health()).rejects.toThrow("HTTP 503");
+    await expect(api.health()).rejects.toThrow("HTTP 503 · down");
   });
 });

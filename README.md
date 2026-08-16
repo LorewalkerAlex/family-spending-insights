@@ -126,9 +126,11 @@ frontend/apps/mini
 
 这是可直接导入微信开发者工具的原生 TypeScript 小程序工程，`miniprogramRoot` 为 `miniprogram/`。不需要 Taro、不需要 H5 preview，也不需要先生成 `dist/`。
 
-本地调试时先在独立终端启动默认 `127.0.0.1:8765` Backend，然后在微信开发者工具中导入 `frontend/apps/mini`。开发环境 Mini 直接通过 `wx.request` 读取 Canonical HTTP API；体验版/正式版在域名与部署完成前不会退回本地地址。2026-08-16 已在微信开发者工具模拟器中验证原生 Mini 能读取真实 `/api/health` 与 Financial Summary。
+本地调试时先在独立终端启动默认 `127.0.0.1:8765` Backend，然后在微信开发者工具中导入 `frontend/apps/mini`。开发环境 Mini 直接通过 `wx.request` 读取 Canonical HTTP API；体验版/正式版在域名与部署完成前不会退回本地地址。
 
-当前 Mini 首页仍是 connectivity 验证页，不作为正式 UI 设计基线。正式 UI 从原生工程重新设计，执行计划见 `docs/architecture/mini-product-ui-plan.md`；开发工具说明见 `frontend/apps/mini/README.md`。
+当前 Native Mini 已完成正式 Home、交易浏览与交易详情、Manual Input，以及持久化多巴胺主题。首页、交易和记一笔都直接使用 Canonical HTTP API；客户端不重建 Reconciliation、Mapping、Enrichment、Refund 或 Scheduling 业务规则。后续页面仍按 `docs/architecture/mini-product-ui-plan.md` 分阶段推进；开发工具说明和当前 Mini 验收状态见 `frontend/apps/mini/README.md`。
+
+对会写入 household state 的 Backend mutation，仓库自动测试优先使用 `TemporaryDirectory` 隔离 household storage 和临时 HTTP Server，不应为了 UI 验收要求人工制造测试财务数据。真实 Mini 验收主要关注输入、导航、视觉和状态反馈；确需正式 runtime smoke 时必须包含可验证的自动清理路径。
 
 ## 测试与构建
 

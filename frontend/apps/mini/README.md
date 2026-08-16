@@ -26,8 +26,9 @@ The development Mini Program uses `http://127.0.0.1:8765`. `project.config.json`
 3. Use the configured AppID in Developer Tools.
 4. Compile. Home should show the latest visible month, monthly spending, income/net cash flow, pending Mapping Review count, and the five most recent transactions from the Canonical Backend.
 5. Use the native tabs `首页 | 交易 | 记一笔 | 审核 | 更多`.
-6. `交易` provides the Phase 2 transaction browser: latest-month default, month selection, income/expense filtering, date grouping, and read-only transaction detail.
-7. `记一笔` and `审核` remain explicit later-phase placeholders. `更多` currently provides the persisted interface theme selector.
+6. `交易` provides month selection, income/expense filtering, date grouping, and read-only transaction detail.
+7. `记一笔` records Manual Source facts through the Canonical Manual Input API; it supports expense/income, amount, date, description reuse hints, optional note, and Backend-owned reconciliation results.
+8. `审核` remains the next explicit product phase. `更多` currently provides the persisted interface theme selector.
 
 Developer Tools may create `project.private.config.json`; it is intentionally ignored by Git.
 
@@ -40,5 +41,9 @@ Phase 1 established the first product Home, native five-tab shell, shared WXSS f
 Phase 2 adds the real transaction browser and read-only transaction detail. The transaction list reuses `/api/transactions`; detail reuses `/api/transactions/{transaction_id}`. Presentation-only formatting is shared between Home and Transactions so merchant/display fallback, amount direction, and date formatting stay consistent. The Mini keeps the full transaction query in page memory only and does not introduce a second persistent transaction cache or financial truth.
 
 Phase 2 was manually verified in WeChat Developer Tools with real household data: month switching, all/expense/income filters, date grouping, income/refund amount direction, transaction detail navigation, and opening the same detail from Home all behaved as intended.
+
+Phase 3 adds Manual Input through `/api/manual-descriptions` and `/api/manual-inputs`. The Mini validates the form for immediate feedback, offers lightweight reuse of known descriptions, and leaves final transaction identity/reconciliation to the Backend result (`created | matched | reused`). A successful mutation increments an in-memory refresh generation so Home and Transactions re-read authoritative Backend state the next time they become visible; no financial data is persisted in this client refresh helper.
+
+Phase 3 UI and end-to-end creation were manually verified in WeChat Developer Tools. The temporary Manual Input used for that smoke was then deleted through the canonical Manual Input lifecycle and both its Manual Source and created Transaction were verified absent. Future mutation regression should use the repository's isolated temporary-household HTTP integration tests instead of asking UI verification to leave test facts in the real household.
 
 Old Taro/H5 Mini screens are historical only and should not be restored as the design source.

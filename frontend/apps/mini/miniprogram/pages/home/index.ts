@@ -1,6 +1,10 @@
 import { currentEnvironmentVersion, resolveApiBaseUrl } from "../../config/runtime";
 import { createFamilySpendingApi } from "../../services/api";
 import {
+  currentFinancialDataVersion,
+  hasFinancialDataChanged,
+} from "../../state/financial-refresh";
+import {
   applyMiniThemeChrome,
   readMiniTheme,
   type MiniThemeId,
@@ -27,6 +31,8 @@ interface HomePageData extends Record<string, unknown> {
 }
 
 interface HomePageContext {
+  hasLoaded: boolean;
+  financialDataVersion: number;
   setData(data: Partial<HomePageData>): void;
 }
 
@@ -77,12 +83,15 @@ async function loadHome(context: HomePageContext): Promise<void> {
       api.mappingReview(),
     ]);
     const viewModel = buildHomeViewModel(summary, transactions, review);
+    context.financialDataVersion = currentFinancialDataVersion();
     context.setData({ ...viewModel, loadState: "ready" });
   } catch (error) {
     context.setData({
       loadState: "error",
       errorMessage: error instanceof Error ? error.message : String(error),
     });
+  } finally {
+    context.hasLoaded = true;
   }
 }
 
@@ -96,6 +105,8 @@ function openTransactionDetail(id: unknown): void {
 }
 
 Page({
+  hasLoaded: false,
+  financialDataVersion: currentFinancialDataVersion(),
   data: initialData,
 
   onLoad(this: HomePageContext) {
@@ -105,6 +116,12 @@ Page({
 
   onShow(this: HomePageContext) {
     syncTheme(this);
+    if (
+      this.hasLoaded &&
+      hasFinancialDataChanged(this.financialDataVersion)
+    ) {
+      void loadHome(this);
+    }
   },
 
   onPullDownRefresh(this: HomePageContext) {

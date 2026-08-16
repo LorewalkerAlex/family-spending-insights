@@ -1,5 +1,6 @@
 export type RequestMethod = "GET" | "POST" | "PATCH" | "DELETE";
 export type TransactionType = "income" | "expense";
+export type ManualInputAction = "created" | "matched" | "reused";
 
 export interface RequestSuccess {
   statusCode: number;
@@ -92,12 +93,28 @@ export interface MappingReviewWorkspace {
   categories: string[];
 }
 
+export interface CreateManualInputCommand {
+  type: TransactionType;
+  date: string;
+  amount: string;
+  description: string;
+  note: string | null;
+}
+
+export interface ManualInputResult {
+  source_record_id: string;
+  action: ManualInputAction;
+  transaction: Transaction;
+}
+
 export interface FamilySpendingApi {
   health(): Promise<void>;
   financialSummary(): Promise<FinancialSummary>;
   transactions(): Promise<Transaction[]>;
   transaction(transactionId: string): Promise<Transaction>;
   mappingReview(): Promise<MappingReviewWorkspace>;
+  manualDescriptions(): Promise<string[]>;
+  createManualInput(command: CreateManualInputCommand): Promise<ManualInputResult>;
 }
 
 export interface ApiClientOptions {
@@ -207,10 +224,7 @@ function parseMonth(value: unknown, index: number): FinancialSummaryMonth {
       value.spending_transaction_count,
       `${label}.spending_transaction_count`,
     ),
-    net_cash_flow_minor: requireNumber(
-      value.net_cash_flow_minor,
-      `${label}.net_cash_flow_minor`,
-    ),
+    net_cash_flow_minor: requireNumber(value.net_cash_flow_minor, `${label}.net_cash_flow_minor`),
   };
 }
 
@@ -322,15 +336,40 @@ function parseMappingReview(value: unknown): MappingReviewWorkspace {
   };
 }
 
+/** Parse the authoritative reconciliation result returned after one Manual Input mutation. */
+function parseManualInputResult(value: unknown): ManualInputResult {
+  if (!isRecord(value)) {
+    throw new Error("manual_input 格式错误");
+  }
+  const action = requireString(value.action, "manual_input.action");
+  if (action !== "created" && action !== "matched" && action !== "reused") {
+    throw new Error("manual_input.action 格式错误");
+  }
+  return {
+    source_record_id: requireString(value.source_record_id, "manual_input.source_record_id"),
+    action,
+    transaction: parseTransaction(value.transaction, "manual_input.transaction"),
+  };
+}
+
+function backendErrorDetail(value: unknown): string | null {
+  if (!isRecord(value) || typeof value.error !== "string") {
+    return null;
+  }
+  const message = value.error.trim();
+  return message || null;
+}
+
 /** Execute one JSON request and keep HTTP/network failures explicit for page error states. */
 function requestJson(
   requester: Requester,
   baseUrl: string,
   method: RequestMethod,
   path: string,
+  data?: unknown,
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    requester({
+    const options: RequestOptions = {
       url: `${baseUrl}${path}`,
       method,
       header: {
@@ -338,7 +377,12 @@ function requestJson(
       },
       success(response) {
         if (response.statusCode < 200 || response.statusCode >= 300) {
-          reject(new Error(`Backend 请求失败：HTTP ${response.statusCode}`));
+          const detail = backendErrorDetail(response.data);
+          reject(
+            new Error(
+              `Backend 请求失败：HTTP ${response.statusCode}${detail ? ` · ${detail}` : ""}`,
+            ),
+          );
           return;
         }
         resolve(response.data);
@@ -346,7 +390,11 @@ function requestJson(
       fail(error) {
         reject(new Error(`无法连接 Backend：${error.errMsg}`));
       },
-    });
+    };
+    if (data !== undefined) {
+      options.data = data;
+    }
+    requester(options);
   });
 }
 
@@ -406,6 +454,28 @@ export function createFamilySpendingApi(options: ApiClientOptions): FamilySpendi
         throw new Error("Backend mapping review 响应格式错误");
       }
       return parseMappingReview(payload.mapping_review);
+    },
+
+    async manualDescriptions() {
+      const payload = await requestJson(requester, baseUrl, "GET", "/api/manual-descriptions");
+      if (!isRecord(payload) || !Array.isArray(payload.descriptions)) {
+        throw new Error("Backend manual descriptions 响应格式错误");
+      }
+      return requireStringArray(payload.descriptions, "manual_descriptions");
+    },
+
+    async createManualInput(command) {
+      const payload = await requestJson(
+        requester,
+        baseUrl,
+        "POST",
+        "/api/manual-inputs",
+        command,
+      );
+      if (!isRecord(payload) || !("manual_input" in payload)) {
+        throw new Error("Backend manual input 响应格式错误");
+      }
+      return parseManualInputResult(payload.manual_input);
     },
   };
 }

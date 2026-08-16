@@ -1,11 +1,162 @@
-<view class="page-container theme-{{themeId}}">
-  <view class="page-intro">
-    <text class="page-kicker">记一笔</text>
-    <text class="page-title">记一笔</text>
+<view class="page-container manual-page theme-{{themeId}}">
+  <view class="manual-header">
+    <view>
+      <text class="manual-header__eyebrow">快速录入</text>
+      <text class="manual-header__title">记一笔</text>
+      <text class="manual-header__subtitle">只记录你知道的事实，商户、分类和对账交给后端。</text>
+    </view>
   </view>
-  <view class="surface-card placeholder-card">
-    <text class="placeholder-label">Phase 3</text>
-    <text class="placeholder-title">手机录入将在下一阶段接入</text>
-    <text class="placeholder-body">这里会使用 Canonical Manual Input API 记录支出和收入，不会在客户端另建商户或分类规则。</text>
+
+  <view class="type-switch" role="group" aria-label="交易类型">
+    <button
+      class="type-switch__item {{type === 'expense' ? 'type-switch__item--active' : ''}}"
+      data-type="expense"
+      bindtap="onTypeTap"
+    >支出</button>
+    <button
+      class="type-switch__item {{type === 'income' ? 'type-switch__item--active' : ''}}"
+      data-type="income"
+      bindtap="onTypeTap"
+    >收入</button>
   </view>
+
+  <view class="amount-card">
+    <text class="amount-card__label">金额</text>
+    <view class="amount-card__input-row">
+      <text class="amount-card__currency">¥</text>
+      <input
+        class="amount-card__input"
+        type="digit"
+        value="{{amount}}"
+        bindinput="onAmountInput"
+        placeholder="0.00"
+        placeholder-class="amount-card__placeholder"
+      />
+    </view>
+    <text wx:if="{{type === 'expense'}}" class="amount-card__hint">退款或冲正可输入负数。</text>
+    <text wx:else class="amount-card__hint">收入金额需要大于 0。</text>
+  </view>
+
+  <view class="surface-card manual-form">
+    <view class="manual-field">
+      <text class="manual-field__label">日期</text>
+      <picker mode="date" value="{{date}}" bindchange="onDateChange">
+        <view class="manual-picker">
+          <text class="manual-picker__value">{{date}}</text>
+          <text class="manual-picker__chevron">›</text>
+        </view>
+      </picker>
+    </view>
+
+    <view class="manual-field manual-field--divided">
+      <text class="manual-field__label">交易描述</text>
+      <input
+        class="manual-input"
+        value="{{description}}"
+        bindinput="onDescriptionInput"
+        placeholder="例如：小区门口早餐摊"
+        placeholder-class="manual-input__placeholder"
+      />
+      <text wx:if="{{type === 'expense'}}" class="manual-field__hint">新描述保存后会进入正常 Mapping Review；这里不要求填写商户或分类。</text>
+      <text wx:else class="manual-field__hint">收入不要求建立商户 Mapping，描述会保留为收入来源说明。</text>
+
+      <text
+        wx:if="{{descriptionAssistState === 'loading'}}"
+        class="description-assist description-assist--muted"
+      >{{descriptionAssistMessage}}</text>
+      <text
+        wx:elif="{{descriptionAssistState === 'error'}}"
+        class="description-assist description-assist--warning"
+      >{{descriptionAssistMessage}}</text>
+
+      <view wx:if="{{hasExactExisting}}" class="description-status">
+        <text class="description-status__title">将复用已有描述</text>
+        <text class="description-status__body">沿用历史描述，让后端继续走现有 Mapping 路径。</text>
+      </view>
+
+      <view wx:if="{{hasNormalizedDuplicate}}" class="description-warning">
+        <text class="description-warning__title">发现非常接近的历史描述</text>
+        <text class="description-warning__value">{{normalizedDuplicate}}</text>
+        <text class="description-warning__body">空格或大小写差异可能只是误输入。你可以复用历史文本，也可以明确保留当前写法。</text>
+        <view class="description-warning__actions">
+          <button
+            class="secondary-action description-warning__button"
+            data-description="{{normalizedDuplicate}}"
+            bindtap="onUseSuggestion"
+          >使用已有</button>
+          <button
+            wx:if="{{!currentDescriptionConfirmed}}"
+            class="secondary-action description-warning__button"
+            bindtap="onConfirmCurrentDescription"
+          >仍按当前文本新建</button>
+          <view wx:else class="description-warning__confirmed">已确认按当前文本新建</view>
+        </view>
+      </view>
+
+      <view
+        wx:if="{{!hasNormalizedDuplicate && suggestions.length > 0}}"
+        class="description-suggestions"
+      >
+        <text class="description-suggestions__label">可能相关的历史描述</text>
+        <view class="description-suggestions__items">
+          <button
+            wx:for="{{suggestions}}"
+            wx:key="*this"
+            class="description-suggestion"
+            data-description="{{item}}"
+            bindtap="onUseSuggestion"
+          >{{item}}</button>
+        </view>
+      </view>
+    </view>
+
+    <view class="manual-field manual-field--divided">
+      <text class="manual-field__label">备注</text>
+      <textarea
+        class="manual-note"
+        value="{{note}}"
+        bindinput="onNoteInput"
+        auto-height
+        maxlength="-1"
+        placeholder="可选，例如：朋友代付、月底补录"
+        placeholder-class="manual-input__placeholder"
+      ></textarea>
+    </view>
+  </view>
+
+  <view
+    wx:if="{{submitState === 'success'}}"
+    class="manual-result manual-result--success"
+  >
+    <view class="manual-result__copy">
+      <text class="manual-result__title">{{submitMessage}}</text>
+      <text class="manual-result__body">{{successTransactionName}}</text>
+    </view>
+    <view class="manual-result__actions">
+      <button class="secondary-action manual-result__button" bindtap="onTapContinue">继续记一笔</button>
+      <button class="primary-action manual-result__button" bindtap="onTapSuccessTransaction">查看交易</button>
+    </view>
+  </view>
+
+  <view
+    wx:elif="{{submitState === 'error'}}"
+    class="manual-result manual-result--error"
+  >
+    <text class="manual-result__title">没有保存</text>
+    <text class="manual-result__body">{{submitMessage}}</text>
+  </view>
+
+  <view
+    wx:elif="{{submitState === 'saving'}}"
+    class="manual-result manual-result--saving"
+  >
+    <text class="manual-result__title">正在保存</text>
+    <text class="manual-result__body">{{submitMessage}}</text>
+  </view>
+
+  <button
+    class="manual-submit"
+    disabled="{{submitState === 'saving'}}"
+    bindtap="onTapSubmit"
+  >{{submitState === 'saving' ? '保存中…' : '记下这笔'}}</button>
 </view>
