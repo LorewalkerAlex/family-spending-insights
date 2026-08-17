@@ -1,11 +1,71 @@
-<view class="page-container theme-{{themeId}}">
-  <view class="page-intro">
-    <text class="page-kicker">审核</text>
-    <text class="page-title">审核</text>
+<view class="page-container review-page theme-{{themeId}}">
+  <view class="review-header">
+    <text class="review-header__eyebrow">轻量审核</text>
+    <text class="review-header__title">审核</text>
+    <text class="review-header__subtitle">逐项确认待分类 description；完整 Mapping 管理继续留在 Desktop。</text>
   </view>
-  <view class="surface-card placeholder-card">
-    <text class="placeholder-label">Phase 4</text>
-    <text class="placeholder-title">移动端 Mapping Review 尚未开放</text>
-    <text class="placeholder-body">首页显示的待审核数量来自真实 Backend 数据；当前完整审核仍请在 Desktop 完成，后续会在这里加入 Preview 与 Confirm Apply。</text>
+
+  <view wx:if="{{loadState === 'loading'}}" class="surface-card state-card">
+    <view class="state-indicator"></view>
+    <text class="state-title">正在读取待审核事项</text>
+    <text class="state-body">正在整理 description、交易数量与来源。</text>
   </view>
+
+  <view wx:elif="{{loadState === 'error'}}" class="surface-card state-card">
+    <view class="state-indicator state-indicator--error"></view>
+    <text class="state-title">暂时无法读取审核列表</text>
+    <text class="state-body">{{errorMessage}}</text>
+    <button class="primary-action" bindtap="onTapRefresh">重新加载</button>
+  </view>
+
+  <block wx:else>
+    <view class="review-summary">
+      <view>
+        <text class="review-summary__label">当前队列</text>
+        <text class="review-summary__count">{{reviewCountText}}</text>
+      </view>
+      <view class="review-summary__badge">映射</view>
+    </view>
+
+    <view wx:if="{{isEmpty}}" class="surface-card state-card review-empty">
+      <view class="review-empty__mark">✓</view>
+      <text class="state-title">当前没有待审核事项</text>
+      <text class="state-body">新的未映射支出 description 出现后，会自动进入这里。</text>
+    </view>
+
+    <view wx:else class="review-list">
+      <view
+        wx:for="{{items}}"
+        wx:key="description"
+        class="surface-card review-card"
+        data-description="{{item.description}}"
+        bindtap="onTapReviewItem"
+        hover-class="review-card--pressed"
+        hover-stay-time="80"
+      >
+        <view class="review-card__topline">
+          <text class="review-card__description">{{item.description}}</text>
+          <text class="review-card__chevron">›</text>
+        </view>
+        <view class="review-card__metrics">
+          <view class="review-card__metric">
+            <text class="review-card__metric-label">交易</text>
+            <text class="review-card__metric-value">{{item.transactionCountText}}</text>
+          </view>
+          <view class="review-card__metric">
+            <text class="review-card__metric-label">净额</text>
+            <text class="review-card__metric-value">{{item.totalText}}</text>
+          </view>
+        </view>
+        <view class="review-card__meta">
+          <text>{{item.latestDateText}}</text>
+          <text>·</text>
+          <text>{{item.sourceText}}</text>
+        </view>
+        <view wx:if="{{item.hasExceptions}}" class="review-card__exception">
+          {{item.exceptionText}}
+        </view>
+      </view>
+    </view>
+  </block>
 </view>

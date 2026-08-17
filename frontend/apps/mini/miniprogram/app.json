@@ -5,6 +5,7 @@
     "pages/transaction-detail/index",
     "pages/manual/index",
     "pages/review/index",
+    "pages/review-detail/index",
     "pages/more/index"
   ],
   "window": {

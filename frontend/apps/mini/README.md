@@ -28,7 +28,8 @@ The development Mini Program uses `http://127.0.0.1:8765`. `project.config.json`
 5. Use the native tabs `首页 | 交易 | 记一笔 | 审核 | 更多`.
 6. `交易` provides month selection, income/expense filtering, date grouping, and read-only transaction detail.
 7. `记一笔` records Manual Source facts through the Canonical Manual Input API; it supports expense/income, amount, date, description reuse hints, optional note, and Backend-owned reconciliation results.
-8. `审核` remains the next explicit product phase. `更多` currently provides the persisted interface theme selector.
+8. `审核` provides a lightweight Mapping Review flow: pending groups, representative transactions, Merchant/category selection, Backend Preview, explicit confirmation for a new Merchant, and Confirm Apply.
+9. `更多` currently provides the persisted interface theme selector; Feedback and Scheduled Input remain later phases.
 
 Developer Tools may create `project.private.config.json`; it is intentionally ignored by Git.
 
@@ -45,5 +46,9 @@ Phase 2 was manually verified in WeChat Developer Tools with real household data
 Phase 3 adds Manual Input through `/api/manual-descriptions` and `/api/manual-inputs`. The Mini validates the form for immediate feedback, offers lightweight reuse of known descriptions, and leaves final transaction identity/reconciliation to the Backend result (`created | matched | reused`). A successful mutation increments an in-memory refresh generation so Home and Transactions re-read authoritative Backend state the next time they become visible; no financial data is persisted in this client refresh helper.
 
 Phase 3 UI and end-to-end creation were manually verified in WeChat Developer Tools. The temporary Manual Input used for that smoke was then deleted through the canonical Manual Input lifecycle and both its Manual Source and created Transaction were verified absent. Future mutation regression should use the repository's isolated temporary-household HTTP integration tests instead of asking UI verification to leave test facts in the real household.
+
+Phase 4 adds the lightweight Mapping Review flow. The Review tab shows unmapped description groups and opens a detail page with representative transactions. Merchant/category input is followed by authoritative `/api/mapping-reviews/preview`; Apply reuses the preview token and requires explicit confirmation when the Backend reports a new Merchant. Successful Apply invalidates Home/Transactions/Review in memory so those pages re-read Backend state rather than keeping a second financial cache.
+
+Phase 4 list/detail navigation and Preview were manually verified in WeChat Developer Tools without mutating the real Mapping catalog. Persistent Apply behavior, including stale-preview rejection and new-Merchant confirmation, is verified through automated tests and the isolated temporary-household HTTP integration path rather than by creating disposable real Mapping data.
 
 Old Taro/H5 Mini screens are historical only and should not be restored as the design source.

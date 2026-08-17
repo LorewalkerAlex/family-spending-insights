@@ -93,6 +93,32 @@ export interface MappingReviewWorkspace {
   categories: string[];
 }
 
+export interface MappingReviewPreview {
+  token: string;
+  description: string;
+  merchant: string;
+  category: string;
+  is_new_merchant: boolean;
+  previous_default_category: string | null;
+  description_transaction_count: number;
+  description_affected_transaction_count: number;
+  default_category_affected_transaction_count: number;
+  total_affected_transaction_count: number;
+  preserved_merchant_exception_count: number;
+  preserved_category_exception_count: number;
+}
+
+export interface PreviewMappingReviewCommand {
+  description: string;
+  merchant: string;
+  category: string;
+}
+
+export interface ApplyMappingReviewCommand extends PreviewMappingReviewCommand {
+  preview_token: string;
+  confirm_new_merchant: boolean;
+}
+
 export interface CreateManualInputCommand {
   type: TransactionType;
   date: string;
@@ -113,6 +139,8 @@ export interface FamilySpendingApi {
   transactions(): Promise<Transaction[]>;
   transaction(transactionId: string): Promise<Transaction>;
   mappingReview(): Promise<MappingReviewWorkspace>;
+  previewMappingReview(command: PreviewMappingReviewCommand): Promise<MappingReviewPreview>;
+  applyMappingReview(command: ApplyMappingReviewCommand): Promise<MappingReviewPreview>;
   manualDescriptions(): Promise<string[]>;
   createManualInput(command: CreateManualInputCommand): Promise<ManualInputResult>;
 }
@@ -175,6 +203,15 @@ function requireStringArray(value: unknown, label: string): string[] {
     throw new Error(`${label} 必须是字符串数组`);
   }
   return value.map((item, index) => requireString(item, `${label}[${index}]`));
+}
+
+/** Keep optimistic Mapping Review apply bound to the exact SHA-256 preview token. */
+function requireSha256(value: unknown, label: string): string {
+  const token = requireString(value, label);
+  if (!/^[0-9a-f]{64}$/.test(token)) {
+    throw new Error(`${label} 必须是 SHA-256 token`);
+  }
+  return token;
 }
 
 /** Parse one summary totals object shared by all-data and shown-data sections. */
@@ -297,7 +334,7 @@ function parseTransaction(value: unknown, label: string): Transaction {
   };
 }
 
-/** Parse the Mapping Review workspace used by Home now and the Review page later. */
+/** Parse the Mapping Review workspace shared by Home and the dedicated Review flow. */
 function parseMappingReview(value: unknown): MappingReviewWorkspace {
   if (!isRecord(value) || !Array.isArray(value.items) || !Array.isArray(value.merchants)) {
     throw new Error("mapping_review 格式错误");
@@ -333,6 +370,48 @@ function parseMappingReview(value: unknown): MappingReviewWorkspace {
       };
     }),
     categories: requireStringArray(value.categories, "mapping_review.categories"),
+  };
+}
+
+/** Parse the impact plan returned by Preview and echoed by successful Apply. */
+function parseMappingReviewPreview(value: unknown, label: string): MappingReviewPreview {
+  if (!isRecord(value)) {
+    throw new Error(`${label} 格式错误`);
+  }
+  return {
+    token: requireSha256(value.token, `${label}.token`),
+    description: requireString(value.description, `${label}.description`),
+    merchant: requireString(value.merchant, `${label}.merchant`),
+    category: requireString(value.category, `${label}.category`),
+    is_new_merchant: requireBoolean(value.is_new_merchant, `${label}.is_new_merchant`),
+    previous_default_category: requireNullableString(
+      value.previous_default_category,
+      `${label}.previous_default_category`,
+    ),
+    description_transaction_count: requireNumber(
+      value.description_transaction_count,
+      `${label}.description_transaction_count`,
+    ),
+    description_affected_transaction_count: requireNumber(
+      value.description_affected_transaction_count,
+      `${label}.description_affected_transaction_count`,
+    ),
+    default_category_affected_transaction_count: requireNumber(
+      value.default_category_affected_transaction_count,
+      `${label}.default_category_affected_transaction_count`,
+    ),
+    total_affected_transaction_count: requireNumber(
+      value.total_affected_transaction_count,
+      `${label}.total_affected_transaction_count`,
+    ),
+    preserved_merchant_exception_count: requireNumber(
+      value.preserved_merchant_exception_count,
+      `${label}.preserved_merchant_exception_count`,
+    ),
+    preserved_category_exception_count: requireNumber(
+      value.preserved_category_exception_count,
+      `${label}.preserved_category_exception_count`,
+    ),
   };
 }
 
@@ -454,6 +533,34 @@ export function createFamilySpendingApi(options: ApiClientOptions): FamilySpendi
         throw new Error("Backend mapping review 响应格式错误");
       }
       return parseMappingReview(payload.mapping_review);
+    },
+
+    async previewMappingReview(command) {
+      const payload = await requestJson(
+        requester,
+        baseUrl,
+        "POST",
+        "/api/mapping-reviews/preview",
+        command,
+      );
+      if (!isRecord(payload) || !("preview" in payload)) {
+        throw new Error("Backend mapping review preview 响应格式错误");
+      }
+      return parseMappingReviewPreview(payload.preview, "mapping_review_preview");
+    },
+
+    async applyMappingReview(command) {
+      const payload = await requestJson(
+        requester,
+        baseUrl,
+        "POST",
+        "/api/mapping-reviews/apply",
+        command,
+      );
+      if (!isRecord(payload) || !("mapping_review" in payload)) {
+        throw new Error("Backend mapping review apply 响应格式错误");
+      }
+      return parseMappingReviewPreview(payload.mapping_review, "mapping_review_apply");
     },
 
     async manualDescriptions() {

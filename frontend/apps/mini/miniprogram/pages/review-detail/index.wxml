@@ -1,0 +1,196 @@
+<view class="page-container review-detail-page theme-{{themeId}}">
+  <view wx:if="{{loadState === 'loading'}}" class="surface-card state-card">
+    <view class="state-indicator"></view>
+    <text class="state-title">正在读取审核详情</text>
+    <text class="state-body">正在整理代表交易、商户候选与分类选项。</text>
+  </view>
+
+  <view wx:elif="{{loadState === 'error'}}" class="surface-card state-card">
+    <view class="state-indicator state-indicator--error"></view>
+    <text class="state-title">暂时无法读取这项审核</text>
+    <text class="state-body">{{loadError}}</text>
+    <button class="primary-action" bindtap="onTapRefresh">重新加载</button>
+    <button class="secondary-action" bindtap="onTapBackToReview">返回审核列表</button>
+  </view>
+
+  <block wx:else>
+    <view class="review-detail-hero">
+      <text class="review-detail-hero__label">待确认 description</text>
+      <text class="review-detail-hero__description">{{description}}</text>
+      <view class="review-detail-hero__metrics">
+        <view>
+          <text class="review-detail-hero__metric-label">交易</text>
+          <text class="review-detail-hero__metric-value">{{transactionCountText}}</text>
+        </view>
+        <view>
+          <text class="review-detail-hero__metric-label">净额</text>
+          <text class="review-detail-hero__metric-value">{{totalText}}</text>
+        </view>
+      </view>
+      <text class="review-detail-hero__meta">最近 {{latestDateText}} · {{sourceText}}</text>
+      <text wx:if="{{hasExceptions}}" class="review-detail-hero__exception">{{exceptionText}}</text>
+    </view>
+
+    <view class="section-header">
+      <text class="section-title">代表交易</text>
+      <text class="review-detail-section-note">最近 {{representatives.length}} 笔</text>
+    </view>
+    <view class="surface-card representative-list">
+      <button
+        wx:for="{{representatives}}"
+        wx:key="id"
+        class="representative-row {{index > 0 ? 'representative-row--divided' : ''}}"
+        data-id="{{item.id}}"
+        bindtap="onTapTransaction"
+      >
+        <view>
+          <text class="representative-row__date">{{item.dateText}}</text>
+          <text class="representative-row__source">{{item.sourceText}}</text>
+        </view>
+        <view class="representative-row__right">
+          <text class="representative-row__amount">{{item.amountText}}</text>
+          <text class="representative-row__chevron">›</text>
+        </view>
+      </button>
+      <view wx:if="{{representatives.length === 0}}" class="representative-empty">
+        暂无可展示的代表交易。
+      </view>
+    </view>
+
+    <view wx:if="{{applyState === 'success'}}" class="review-success-card">
+      <view class="review-success-card__mark">✓</view>
+      <text class="review-success-card__title">审核已应用</text>
+      <text class="review-success-card__body">{{applyMessage}}</text>
+      <text class="review-success-card__mapping">{{previewMerchant}} · {{previewCategory}}</text>
+      <button class="primary-action review-success-card__action" bindtap="onTapBackToReview">
+        返回审核列表
+      </button>
+    </view>
+
+    <block wx:else>
+      <view class="section-header">
+        <text class="section-title">Mapping 方案</text>
+        <text class="review-detail-section-note">先 Preview，再 Apply</text>
+      </view>
+
+      <view class="surface-card mapping-form">
+        <view class="mapping-field">
+          <text class="mapping-field__label">商户</text>
+          <input
+            class="mapping-field__input"
+            value="{{merchantInput}}"
+            placeholder="输入商户名，或选择已有商户"
+            placeholder-class="mapping-field__placeholder"
+            bindinput="onMerchantInput"
+          />
+          <view wx:if="{{merchantSuggestions.length > 0}}" class="merchant-suggestions">
+            <text class="merchant-suggestions__label">已有商户候选</text>
+            <button
+              wx:for="{{merchantSuggestions}}"
+              wx:key="name"
+              class="merchant-suggestion"
+              data-name="{{item.name}}"
+              data-category="{{item.default_category}}"
+              bindtap="onSelectMerchant"
+            >
+              <text class="merchant-suggestion__name">{{item.name}}</text>
+              <text class="merchant-suggestion__category">{{item.default_category}}</text>
+            </button>
+          </view>
+        </view>
+
+        <view class="mapping-field mapping-field--divided">
+          <text class="mapping-field__label">分类</text>
+          <picker
+            mode="selector"
+            range="{{categories}}"
+            value="{{categoryIndex}}"
+            bindchange="onCategoryChange"
+          >
+            <view class="mapping-picker">
+              <text class="mapping-picker__value {{category ? '' : 'mapping-picker__value--placeholder'}}">
+                {{category || '请选择分类'}}
+              </text>
+              <text class="mapping-picker__chevron">›</text>
+            </view>
+          </picker>
+        </view>
+      </view>
+
+      <button
+        class="primary-action preview-action"
+        disabled="{{previewState === 'loading' || applyState === 'saving'}}"
+        bindtap="onTapPreview"
+      >
+        {{previewState === 'loading' ? '正在预览…' : '预览影响'}}
+      </button>
+
+      <view wx:if="{{previewState === 'error'}}" class="review-inline-error">
+        <text class="review-inline-error__title">Preview 未完成</text>
+        <text class="review-inline-error__body">{{previewError}}</text>
+      </view>
+
+      <view wx:if="{{previewState === 'ready'}}" class="preview-card">
+        <view class="preview-card__topline">
+          <text class="preview-card__eyebrow">Backend Preview</text>
+          <text class="preview-card__mode">{{merchantModeText}}</text>
+        </view>
+        <text class="preview-card__mapping">{{previewMerchant}} → {{previewCategory}}</text>
+
+        <view wx:if="{{changesExistingMerchantDefault}}" class="preview-warning">
+          已有商户默认分类将从「{{previousCategoryText}}」改为「{{previewCategory}}」。
+        </view>
+
+        <view class="preview-impact-grid">
+          <view class="preview-impact">
+            <text class="preview-impact__label">当前组</text>
+            <text class="preview-impact__value">{{descriptionTransactionCountText}}</text>
+          </view>
+          <view class="preview-impact">
+            <text class="preview-impact__label">本组变化</text>
+            <text class="preview-impact__value">{{descriptionAffectedText}}</text>
+          </view>
+          <view class="preview-impact">
+            <text class="preview-impact__label">跨组影响</text>
+            <text class="preview-impact__value">{{defaultCategoryAffectedText}}</text>
+          </view>
+          <view class="preview-impact preview-impact--strong">
+            <text class="preview-impact__label">最终影响</text>
+            <text class="preview-impact__value">{{totalAffectedText}}</text>
+          </view>
+        </view>
+
+        <view class="preview-exceptions">
+          <text>{{preservedMerchantExceptionText}}</text>
+          <text>{{preservedCategoryExceptionText}}</text>
+        </view>
+
+        <view
+          wx:if="{{isNewMerchant}}"
+          class="new-merchant-confirm {{newMerchantConfirmed ? 'new-merchant-confirm--checked' : ''}}"
+          bindtap="onToggleNewMerchantConfirm"
+        >
+          <view class="new-merchant-confirm__check">{{newMerchantConfirmed ? '✓' : ''}}</view>
+          <view class="new-merchant-confirm__copy">
+            <text class="new-merchant-confirm__title">确认创建新商户</text>
+            <text class="new-merchant-confirm__body">我确认创建「{{previewMerchant}}」，默认分类为「{{previewCategory}}」。</text>
+          </view>
+        </view>
+
+        <view wx:if="{{applyState === 'error'}}" class="review-inline-error review-inline-error--inside">
+          <text class="review-inline-error__title">Apply 未完成</text>
+          <text class="review-inline-error__body">{{applyMessage}}</text>
+        </view>
+
+        <button
+          class="primary-action apply-action"
+          disabled="{{applyState === 'saving' || (isNewMerchant && !newMerchantConfirmed)}}"
+          bindtap="onTapApply"
+        >
+          {{applyState === 'saving' ? '正在应用…' : '确认应用 Mapping'}}
+        </button>
+        <text class="apply-hint">Apply 会更新正式 Mapping；如果 Preview 后数据发生变化，Backend 会拒绝旧 token。</text>
+      </view>
+    </block>
+  </block>
+</view>
