@@ -1,14 +1,43 @@
-<view class="page-container theme-{{themeId}}">
-  <view class="page-intro">
+<view class="page-container theme-{{themeId}} more-page">
+  <view class="page-intro more-header">
     <text class="page-kicker">更多</text>
     <text class="page-title">更多</text>
-    <text class="page-subtitle">界面偏好保存在当前微信客户端，不影响家庭财务数据。</text>
+    <text class="page-subtitle">轻量工具和界面偏好放在这里；财务诊断与批量维护继续留在 Desktop。</text>
+  </view>
+
+  <view class="section-header more-tools__header">
+    <text class="section-title">轻量工具</text>
+    <text class="more-section-hint">Phase 5</text>
+  </view>
+
+  <view class="more-tools">
+    <view class="surface-card more-tool more-tool--schedule" bindtap="onTapScheduled">
+      <view class="more-tool__icon">↻</view>
+      <view class="more-tool__copy">
+        <view class="more-tool__title-row">
+          <text class="more-tool__title">定期记账</text>
+          <text class="more-tool__arrow">›</text>
+        </view>
+        <text class="more-tool__body">管理每月固定收支规则，查看下次日期与最近执行状态。</text>
+      </view>
+    </view>
+
+    <view class="surface-card more-tool more-tool--feedback" bindtap="onTapFeedback">
+      <view class="more-tool__icon">✦</view>
+      <view class="more-tool__copy">
+        <view class="more-tool__title-row">
+          <text class="more-tool__title">产品反馈</text>
+          <text class="more-tool__arrow">›</text>
+        </view>
+        <text class="more-tool__body">记录哪里不顺手、哪里不清楚，也可以查看和重新打开已有反馈。</text>
+      </view>
+    </view>
   </view>
 
   <view class="theme-section">
     <view class="section-header theme-section__header">
       <text class="section-title">界面配色</text>
-      <text class="theme-section__hint">多巴胺色调</text>
+      <text class="theme-section__hint">保存在当前微信客户端</text>
     </view>
 
     <view class="theme-grid">
@@ -33,11 +62,5 @@
         </view>
       </view>
     </view>
-  </view>
-
-  <view class="surface-card placeholder-card more-placeholder">
-    <text class="placeholder-label">Phase 5</text>
-    <text class="placeholder-title">轻量工具会逐步放到这里</text>
-    <text class="placeholder-body">Feedback、Scheduled Input、版本信息和必要设置会按手机使用价值加入；Backend diagnostics 和 operator tools 不进入 Mini。</text>
   </view>
 </view>

@@ -128,9 +128,9 @@ frontend/apps/mini
 
 本地调试时先在独立终端启动默认 `127.0.0.1:8765` Backend，然后在微信开发者工具中导入 `frontend/apps/mini`。开发环境 Mini 直接通过 `wx.request` 读取 Canonical HTTP API；体验版/正式版在域名与部署完成前不会退回本地地址。
 
-当前 Native Mini 已完成正式 Home、交易浏览与交易详情、Manual Input、轻量 Mapping Review，以及持久化多巴胺主题。首页、交易、记一笔和审核都直接使用 Canonical HTTP API；客户端不重建 Reconciliation、Mapping、Enrichment、Refund 或 Scheduling 业务规则。后续页面仍按 `docs/architecture/mini-product-ui-plan.md` 分阶段推进；开发工具说明和当前 Mini 验收状态见 `frontend/apps/mini/README.md`。
+当前 Native Mini 已完成正式 Home、交易浏览与交易详情、Manual Input、轻量 Mapping Review、Feedback、Scheduled Input，以及持久化多巴胺主题。首页、交易、记一笔、审核和更多工具都直接使用 Canonical HTTP API；客户端不重建 Reconciliation、Mapping、Enrichment、Refund 或 Scheduling 业务规则。后续页面仍按 `docs/architecture/mini-product-ui-plan.md` 分阶段推进；开发工具说明和当前 Mini 验收状态见 `frontend/apps/mini/README.md`。
 
-对会写入 household state 的 Backend mutation，仓库自动测试优先使用 `TemporaryDirectory` 隔离 household storage 和临时 HTTP Server，不应为了 UI 验收要求人工制造测试财务数据。真实 Mini 验收主要关注输入、导航、视觉和状态反馈；Mapping Review 的 Preview 可在真实 runtime 无痕验收，Apply 等持久化 mutation 默认由隔离 integration test 验证。确需正式 runtime smoke 时必须包含可验证的自动清理路径。
+对会写入 household state 的 Backend mutation，仓库自动测试优先使用 `TemporaryDirectory` 隔离 household storage 和临时 HTTP Server，不应为了 UI 验收要求人工制造测试财务数据。真实 Mini 验收主要关注输入、导航、视觉和状态反馈；Mapping Review 的 Preview 可在真实 runtime 无痕验收，Feedback 与 Scheduled Input 的持久化 mutation 也默认由隔离 integration test 验证。确需正式 runtime smoke 时必须包含可验证的自动清理路径。
 
 ## 测试与构建
 

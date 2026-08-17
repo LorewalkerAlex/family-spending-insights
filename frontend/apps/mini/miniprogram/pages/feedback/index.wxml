@@ -1,0 +1,74 @@
+<view class="page-container theme-{{themeId}} feedback-page">
+  <view class="page-intro feedback-header">
+    <text class="page-kicker">更多 · Feedback</text>
+    <text class="page-title">产品反馈</text>
+    <text class="page-subtitle">哪里不顺手、哪里不清楚，直接记下来。反馈保存在本地，并自动带上微信小程序页面上下文。</text>
+  </view>
+
+  <view class="surface-card feedback-compose">
+    <text class="feedback-compose__label">反馈内容</text>
+    <textarea
+      class="feedback-compose__input"
+      value="{{content}}"
+      maxlength="2000"
+      auto-height
+      placeholder="例如：这里的说明不够清楚，或者我希望增加……"
+      placeholder-class="feedback-placeholder"
+      bindinput="onContentInput"
+    ></textarea>
+    <view class="feedback-compose__footer">
+      <text class="feedback-compose__hint">只记录产品体验，不用于交易待分类。</text>
+      <button class="primary-action feedback-submit" disabled="{{submitState === 'saving'}}" bindtap="onTapSubmit">
+        {{submitState === 'saving' ? '提交中…' : '发送反馈'}}
+      </button>
+    </view>
+    <view wx:if="{{submitMessage}}" class="feedback-submit-state feedback-submit-state--{{submitState}}">
+      {{submitMessage}}
+    </view>
+  </view>
+
+  <view class="section-header feedback-list__header">
+    <text class="section-title">最近反馈</text>
+    <text class="section-action" bindtap="onTapRefresh">刷新</text>
+  </view>
+
+  <view wx:if="{{loadState === 'loading' && items.length === 0}}" class="surface-card state-card">
+    <view class="state-indicator"></view>
+    <text class="state-title">正在读取反馈</text>
+    <text class="state-body">从 Canonical Backend 读取本地产品反馈。</text>
+  </view>
+
+  <view wx:elif="{{loadState === 'error' && items.length === 0}}" class="surface-card state-card">
+    <view class="state-indicator state-indicator--error"></view>
+    <text class="state-title">暂时无法读取反馈</text>
+    <text class="state-body">{{errorMessage}}</text>
+    <button class="primary-action" bindtap="onTapRefresh">重新加载</button>
+  </view>
+
+  <view wx:elif="{{loadState === 'ready' && items.length === 0}}" class="surface-card state-card">
+    <view class="state-indicator"></view>
+    <text class="state-title">还没有产品反馈</text>
+    <text class="state-body">上方发送后会出现在这里。</text>
+  </view>
+
+  <view wx:else class="feedback-list">
+    <view wx:if="{{errorMessage}}" class="feedback-inline-error">{{errorMessage}}</view>
+    <view wx:for="{{items}}" wx:key="id" class="surface-card feedback-row">
+      <view class="feedback-row__meta">
+        <text class="feedback-status feedback-status--{{item.status}}">{{item.statusLabel}}</text>
+        <text class="feedback-row__time">{{item.createdAtText}}</text>
+      </view>
+      <text class="feedback-row__content">{{item.content}}</text>
+      <text class="feedback-row__context">{{item.contextText}}</text>
+      <button
+        class="secondary-action feedback-row__action"
+        disabled="{{pendingId === item.id}}"
+        data-id="{{item.id}}"
+        data-status="{{item.status}}"
+        bindtap="onToggleStatus"
+      >
+        {{pendingId === item.id ? '保存中…' : item.actionLabel}}
+      </button>
+    </view>
+  </view>
+</view>

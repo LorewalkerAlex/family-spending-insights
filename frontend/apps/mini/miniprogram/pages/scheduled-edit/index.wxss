@@ -1,0 +1,249 @@
+.scheduled-edit-page {
+  padding-bottom: calc(72rpx + env(safe-area-inset-bottom));
+}
+
+.scheduled-edit-header {
+  margin-bottom: 26rpx;
+}
+
+.scheduled-amount-card__label,
+.scheduled-amount-card__hint,
+.scheduled-field__label,
+.scheduled-field__hint,
+.scheduled-save-state,
+.scheduled-danger__body,
+.scheduled-delete-confirm__title,
+.scheduled-delete-confirm__message {
+  display: block;
+}
+
+.type-switch,
+.enabled-switch {
+  display: flex;
+  gap: 10rpx;
+  padding: 8rpx;
+  border: 1rpx solid var(--color-border);
+  border-radius: 999rpx;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+}
+
+.type-switch {
+  margin-bottom: 20rpx;
+}
+
+.type-switch__item,
+.enabled-switch__item {
+  flex: 1;
+  min-height: 70rpx;
+  margin: 0;
+  padding: 0 20rpx;
+  border-radius: 999rpx;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 25rpx;
+  font-weight: 600;
+  line-height: 70rpx;
+}
+
+.type-switch__item--active,
+.enabled-switch__item--active {
+  background: var(--color-accent);
+  color: #ffffff;
+}
+
+.scheduled-amount-card {
+  box-sizing: border-box;
+  margin-bottom: 20rpx;
+  padding: 28rpx;
+  border-radius: var(--radius-large);
+  background: var(--hero-background);
+  color: var(--hero-foreground);
+  box-shadow: var(--shadow-hero);
+}
+
+.scheduled-amount-card__label {
+  color: var(--hero-muted);
+  font-size: 22rpx;
+  font-weight: 600;
+}
+
+.scheduled-amount-card__row {
+  display: flex;
+  align-items: baseline;
+  margin-top: 8rpx;
+}
+
+.scheduled-amount-card__currency {
+  margin-right: 8rpx;
+  font-size: 44rpx;
+  font-weight: 700;
+}
+
+.scheduled-amount-card__input {
+  flex: 1;
+  height: 82rpx;
+  color: var(--hero-foreground);
+  font-size: 60rpx;
+  font-weight: 700;
+  line-height: 82rpx;
+}
+
+.scheduled-amount-card__placeholder {
+  color: var(--hero-muted);
+}
+
+.scheduled-amount-card__hint {
+  margin-top: 6rpx;
+  color: var(--hero-muted);
+  font-size: 21rpx;
+  line-height: 1.45;
+}
+
+.scheduled-form {
+  overflow: hidden;
+}
+
+.scheduled-field {
+  padding: 28rpx;
+}
+
+.scheduled-field--divided {
+  border-top: 1rpx solid var(--color-border);
+}
+
+.scheduled-field__label {
+  margin-bottom: 12rpx;
+  color: var(--color-text-muted);
+  font-size: 23rpx;
+  font-weight: 600;
+}
+
+.scheduled-field__hint {
+  margin-top: 10rpx;
+  color: var(--color-text-muted);
+  font-size: 21rpx;
+  line-height: 1.45;
+}
+
+.scheduled-input {
+  height: 64rpx;
+  color: var(--color-text);
+  font-size: 29rpx;
+  line-height: 64rpx;
+}
+
+.scheduled-note {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 88rpx;
+  color: var(--color-text);
+  font-size: 27rpx;
+  line-height: 1.55;
+}
+
+.scheduled-placeholder {
+  color: var(--color-text-subtle);
+}
+
+.scheduled-picker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 58rpx;
+}
+
+.scheduled-picker__value {
+  font-size: 29rpx;
+  font-weight: 600;
+}
+
+.scheduled-picker__arrow {
+  color: var(--color-text-subtle);
+  font-size: 40rpx;
+  line-height: 1;
+}
+
+.scheduled-save-state {
+  margin-top: 18rpx;
+  padding: 18rpx 20rpx;
+  border-radius: var(--radius-small);
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+  font-size: 22rpx;
+  line-height: 1.5;
+}
+
+.scheduled-save-state--error {
+  background: var(--color-surface-subtle);
+  color: var(--color-negative);
+}
+
+.scheduled-save {
+  margin-top: 22rpx;
+  width: 100%;
+}
+
+.scheduled-danger {
+  margin-top: 42rpx;
+}
+
+.scheduled-danger__header {
+  margin-top: 0;
+}
+
+.scheduled-danger__card {
+  padding: 26rpx;
+}
+
+.scheduled-danger__body {
+  color: var(--color-text-muted);
+  font-size: 22rpx;
+  line-height: 1.55;
+}
+
+.scheduled-delete {
+  margin-top: 20rpx;
+  color: var(--color-negative);
+}
+
+.scheduled-delete-confirm {
+  margin-top: 22rpx;
+  padding-top: 20rpx;
+  border-top: 1rpx solid var(--color-border);
+}
+
+.scheduled-delete-confirm__title {
+  font-size: 26rpx;
+  font-weight: 700;
+}
+
+.scheduled-delete-confirm__actions {
+  display: flex;
+  gap: 14rpx;
+  margin-top: 18rpx;
+}
+
+.scheduled-delete-confirm__actions .secondary-action,
+.scheduled-delete-confirm__danger {
+  flex: 1;
+}
+
+.scheduled-delete-confirm__danger {
+  min-height: 88rpx;
+  margin: 0;
+  padding: 0 26rpx;
+  border-radius: 999rpx;
+  background: var(--color-negative);
+  color: #ffffff;
+  font-size: 25rpx;
+  font-weight: 700;
+  line-height: 88rpx;
+}
+
+.scheduled-delete-confirm__message {
+  margin-top: 14rpx;
+  color: var(--color-negative);
+  font-size: 21rpx;
+  line-height: 1.45;
+}

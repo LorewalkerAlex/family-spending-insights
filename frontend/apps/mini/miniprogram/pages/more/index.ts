@@ -45,4 +45,12 @@ Page({
     this.setData({ themeId: value });
     applyMiniThemeChrome(value);
   },
+
+  onTapScheduled() {
+    wx.navigateTo({ url: "/pages/scheduled/index" });
+  },
+
+  onTapFeedback() {
+    wx.navigateTo({ url: "/pages/feedback/index" });
+  },
 });

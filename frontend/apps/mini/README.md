@@ -29,7 +29,7 @@ The development Mini Program uses `http://127.0.0.1:8765`. `project.config.json`
 6. `交易` provides month selection, income/expense filtering, date grouping, and read-only transaction detail.
 7. `记一笔` records Manual Source facts through the Canonical Manual Input API; it supports expense/income, amount, date, description reuse hints, optional note, and Backend-owned reconciliation results.
 8. `审核` provides a lightweight Mapping Review flow: pending groups, representative transactions, Merchant/category selection, Backend Preview, explicit confirmation for a new Merchant, and Confirm Apply.
-9. `更多` currently provides the persisted interface theme selector; Feedback and Scheduled Input remain later phases.
+9. `更多` provides the persisted interface theme selector plus lightweight `定期记账` and `产品反馈` tools. Scheduled Input manages monthly rules over the existing Manual Source path; Feedback captures local product feedback with `runtime=weapp` context.
 
 Developer Tools may create `project.private.config.json`; it is intentionally ignored by Git.
 
@@ -50,5 +50,9 @@ Phase 3 UI and end-to-end creation were manually verified in WeChat Developer To
 Phase 4 adds the lightweight Mapping Review flow. The Review tab shows unmapped description groups and opens a detail page with representative transactions. Merchant/category input is followed by authoritative `/api/mapping-reviews/preview`; Apply reuses the preview token and requires explicit confirmation when the Backend reports a new Merchant. Successful Apply invalidates Home/Transactions/Review in memory so those pages re-read Backend state rather than keeping a second financial cache.
 
 Phase 4 list/detail navigation and Preview were manually verified in WeChat Developer Tools without mutating the real Mapping catalog. Persistent Apply behavior, including stale-preview rejection and new-Merchant confirmation, is verified through automated tests and the isolated temporary-household HTTP integration path rather than by creating disposable real Mapping data.
+
+Phase 5 turns `更多` into the lightweight tool hub. Feedback supports local capture plus open/resolved lifecycle management through the Canonical Feedback API. Scheduled Input supports list/create/update/enable-pause/delete/run-due over the existing monthly rule contract; rule mutations remain Backend-owned and generated occurrences continue through the ordinary Manual Source and reconciliation path. Successful schedule mutations invalidate finance pages in memory instead of persisting a client-side financial cache.
+
+Phase 5 More, Feedback, Scheduled Input list, and Scheduled Rule edit UI were manually verified in WeChat Developer Tools against the real Backend without submitting Feedback or mutating Scheduled Rules. Feedback create/status and Scheduled Input create/update/delete/run-due are covered by API contract tests and the isolated temporary-household HTTP integration suite rather than by disposable real household mutations.
 
 Old Taro/H5 Mini screens are historical only and should not be restored as the design source.

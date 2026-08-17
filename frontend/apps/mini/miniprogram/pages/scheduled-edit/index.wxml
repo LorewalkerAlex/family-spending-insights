@@ -1,0 +1,101 @@
+<view class="page-container theme-{{themeId}} scheduled-edit-page">
+  <view wx:if="{{loadState === 'loading'}}" class="surface-card state-card">
+    <view class="state-indicator"></view>
+    <text class="state-title">正在读取规则</text>
+    <text class="state-body">从 Canonical Backend 读取当前规则配置。</text>
+  </view>
+
+  <view wx:elif="{{loadState === 'error'}}" class="surface-card state-card">
+    <view class="state-indicator state-indicator--error"></view>
+    <text class="state-title">暂时无法读取规则</text>
+    <text class="state-body">{{loadError}}</text>
+    <button class="primary-action" bindtap="onTapRetry">重新加载</button>
+    <button class="secondary-action" bindtap="onTapBack">返回列表</button>
+  </view>
+
+  <block wx:else>
+    <view class="page-intro scheduled-edit-header">
+      <text class="page-kicker">{{mode === 'create' ? '新建规则' : '编辑规则'}}</text>
+      <text class="page-title">{{mode === 'create' ? '定期记一笔' : description}}</text>
+      <text class="page-subtitle">规则按月生成普通 Manual Source；V1 仅支持每月 1–28 日。保存时 Backend 会自动处理已经到期的 occurrence。</text>
+    </view>
+
+    <view class="type-switch">
+      <button class="type-switch__item {{type === 'expense' ? 'type-switch__item--active' : ''}}" data-type="expense" bindtap="onTypeTap">支出</button>
+      <button class="type-switch__item {{type === 'income' ? 'type-switch__item--active' : ''}}" data-type="income" bindtap="onTypeTap">收入</button>
+    </view>
+
+    <view class="scheduled-amount-card">
+      <text class="scheduled-amount-card__label">每月金额</text>
+      <view class="scheduled-amount-card__row">
+        <text class="scheduled-amount-card__currency">¥</text>
+        <input
+          class="scheduled-amount-card__input"
+          type="digit"
+          value="{{amount}}"
+          placeholder="0.00"
+          placeholder-class="scheduled-amount-card__placeholder"
+          bindinput="onAmountInput"
+        />
+      </view>
+      <text class="scheduled-amount-card__hint">收入必须大于 0；金额的最终校验仍由 Backend 完成。</text>
+    </view>
+
+    <view class="surface-card scheduled-form">
+      <view class="scheduled-field">
+        <text class="scheduled-field__label">规则描述</text>
+        <input class="scheduled-input" value="{{description}}" placeholder="例如：固定房租" placeholder-class="scheduled-placeholder" bindinput="onDescriptionInput" />
+        <text class="scheduled-field__hint">生成的 Manual Source 会保留这个原始 description。</text>
+      </view>
+
+      <view class="scheduled-field scheduled-field--divided">
+        <text class="scheduled-field__label">下次日期</text>
+        <picker mode="date" value="{{nextDate}}" bindchange="onDateChange">
+          <view class="scheduled-picker">
+            <text class="scheduled-picker__value">{{nextDate}}</text>
+            <text class="scheduled-picker__arrow">›</text>
+          </view>
+        </picker>
+        <text class="scheduled-field__hint">每月固定沿用这个日号，仅支持 1–28 日。</text>
+      </view>
+
+      <view class="scheduled-field scheduled-field--divided">
+        <text class="scheduled-field__label">备注</text>
+        <textarea class="scheduled-note" value="{{note}}" auto-height maxlength="500" placeholder="可选；生成新交易时作为 note 写入" placeholder-class="scheduled-placeholder" bindinput="onNoteInput"></textarea>
+      </view>
+
+      <view class="scheduled-field scheduled-field--divided">
+        <text class="scheduled-field__label">规则状态</text>
+        <view class="enabled-switch">
+          <button class="enabled-switch__item {{enabled ? 'enabled-switch__item--active' : ''}}" data-enabled="{{true}}" bindtap="onEnabledTap">启用</button>
+          <button class="enabled-switch__item {{!enabled ? 'enabled-switch__item--active' : ''}}" data-enabled="{{false}}" bindtap="onEnabledTap">暂停</button>
+        </view>
+        <text class="scheduled-field__hint">暂停后保留规则，但不会生成新的 occurrence。</text>
+      </view>
+    </view>
+
+    <view wx:if="{{saveMessage}}" class="scheduled-save-state scheduled-save-state--{{saveState}}">{{saveMessage}}</view>
+
+    <button class="primary-action scheduled-save" disabled="{{saveState === 'saving' || deleteState === 'saving'}}" bindtap="onTapSave">
+      {{saveState === 'saving' ? '保存中…' : mode === 'create' ? '创建规则' : '保存规则'}}
+    </button>
+
+    <view wx:if="{{mode === 'edit'}}" class="scheduled-danger">
+      <view class="section-header scheduled-danger__header">
+        <text class="section-title">删除未来规则</text>
+      </view>
+      <view class="surface-card scheduled-danger__card">
+        <text class="scheduled-danger__body">删除只会移除这条 Scheduled Rule 与执行游标；已经生成的 Manual Source / Transaction 不会被删除。</text>
+        <button wx:if="{{!deleteConfirm}}" class="secondary-action scheduled-delete" bindtap="onTapDelete">删除规则</button>
+        <view wx:else class="scheduled-delete-confirm">
+          <text class="scheduled-delete-confirm__title">确认删除这条未来规则？</text>
+          <view class="scheduled-delete-confirm__actions">
+            <button class="secondary-action" bindtap="onCancelDelete">取消</button>
+            <button class="scheduled-delete-confirm__danger" disabled="{{deleteState === 'saving'}}" bindtap="onConfirmDelete">{{deleteState === 'saving' ? '删除中…' : '确认删除'}}</button>
+          </view>
+          <text wx:if="{{deleteMessage}}" class="scheduled-delete-confirm__message">{{deleteMessage}}</text>
+        </view>
+      </view>
+    </view>
+  </block>
+</view>

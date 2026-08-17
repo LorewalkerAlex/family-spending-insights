@@ -21,6 +21,10 @@ interface MiniProgramNavigateToOptions {
   url: string;
 }
 
+interface MiniProgramNavigateBackOptions {
+  delta?: number;
+}
+
 interface MiniProgramNavigationBarColorOptions {
   frontColor: "#000000" | "#ffffff";
   backgroundColor: string;
@@ -43,6 +47,7 @@ declare const wx: {
   stopPullDownRefresh(): void;
   switchTab(options: MiniProgramSwitchTabOptions): void;
   navigateTo(options: MiniProgramNavigateToOptions): void;
+  navigateBack(options?: MiniProgramNavigateBackOptions): void;
 };
 
 declare function App(options: Record<string, unknown>): void;

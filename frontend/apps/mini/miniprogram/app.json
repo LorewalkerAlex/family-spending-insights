@@ -6,6 +6,9 @@
     "pages/manual/index",
     "pages/review/index",
     "pages/review-detail/index",
+    "pages/feedback/index",
+    "pages/scheduled/index",
+    "pages/scheduled-edit/index",
     "pages/more/index"
   ],
   "window": {

@@ -1,0 +1,85 @@
+<view class="page-container theme-{{themeId}} scheduled-page">
+  <view class="page-intro scheduled-header">
+    <text class="page-kicker">更多 · Automation</text>
+    <text class="page-title">定期记账</text>
+    <text class="page-subtitle">每月固定规则最终仍生成普通 Manual Source，并进入同一套对账与分类链路。</text>
+  </view>
+
+  <view class="scheduled-hero">
+    <view class="scheduled-hero__metrics">
+      <view class="scheduled-hero__metric">
+        <text class="scheduled-hero__label">规则</text>
+        <text class="scheduled-hero__value">{{totalCount}}</text>
+      </view>
+      <view class="scheduled-hero__metric">
+        <text class="scheduled-hero__label">启用</text>
+        <text class="scheduled-hero__value">{{enabledCount}}</text>
+      </view>
+      <view class="scheduled-hero__metric">
+        <text class="scheduled-hero__label">暂停</text>
+        <text class="scheduled-hero__value">{{pausedCount}}</text>
+      </view>
+    </view>
+    <view class="scheduled-hero__actions">
+      <button class="scheduled-hero__secondary" bindtap="onRunDue" disabled="{{runState === 'running'}}">
+        {{runState === 'running' ? '执行中…' : '执行到期项'}}
+      </button>
+      <button class="scheduled-hero__primary" bindtap="onTapCreate">新建规则</button>
+    </view>
+  </view>
+
+  <view wx:if="{{runMessage}}" class="scheduled-run-state scheduled-run-state--{{runState}}">
+    {{runMessage}}
+  </view>
+
+  <view class="section-header scheduled-list__header">
+    <text class="section-title">规则列表</text>
+    <text class="section-action" bindtap="onTapRefresh">刷新</text>
+  </view>
+
+  <view wx:if="{{loadState === 'loading' && items.length === 0}}" class="surface-card state-card">
+    <view class="state-indicator"></view>
+    <text class="state-title">正在读取定期规则</text>
+    <text class="state-body">规则和最近执行状态来自 Canonical Backend。</text>
+  </view>
+
+  <view wx:elif="{{loadState === 'error' && items.length === 0}}" class="surface-card state-card">
+    <view class="state-indicator state-indicator--error"></view>
+    <text class="state-title">暂时无法读取规则</text>
+    <text class="state-body">{{errorMessage}}</text>
+    <button class="primary-action" bindtap="onTapRefresh">重新加载</button>
+  </view>
+
+  <view wx:elif="{{loadState === 'ready' && items.length === 0}}" class="surface-card state-card">
+    <view class="state-indicator"></view>
+    <text class="state-title">还没有定期规则</text>
+    <text class="state-body">新建后可用于房租、贷款、固定收入等可预测的每月记录；V1 仅支持每月 1–28 日。</text>
+    <button class="primary-action" bindtap="onTapCreate">新建第一条规则</button>
+  </view>
+
+  <view wx:else class="scheduled-list">
+    <view wx:if="{{errorMessage}}" class="scheduled-inline-error">{{errorMessage}}</view>
+    <view
+      wx:for="{{items}}"
+      wx:key="id"
+      class="surface-card scheduled-row"
+      data-id="{{item.id}}"
+      bindtap="onTapRule"
+    >
+      <view class="scheduled-row__top">
+        <view class="scheduled-row__copy">
+          <view class="scheduled-row__title-line">
+            <text class="scheduled-row__title">{{item.description}}</text>
+            <text class="scheduled-status {{item.enabled ? 'scheduled-status--enabled' : ''}}">{{item.enabledLabel}}</text>
+          </view>
+          <text class="scheduled-row__meta">{{item.typeLabel}} · 下次 {{item.nextDateText}}</text>
+        </view>
+        <view class="scheduled-row__value">
+          <text class="scheduled-row__amount">{{item.amountText}}</text>
+          <text class="scheduled-row__arrow">›</text>
+        </view>
+      </view>
+      <text class="scheduled-row__last">最近执行：{{item.lastRunText}}</text>
+    </view>
+  </view>
+</view>
