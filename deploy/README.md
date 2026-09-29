@@ -56,6 +56,18 @@ this directory bidirectionally after cutover; the server becomes the only writab
 
 ## 3. Build and start
 
+### Alibaba Cloud image acceleration
+
+Mainland ECS instances may download Docker Hub layers very slowly. Before the first build, open
+Alibaba Cloud Container Registry -> Image Tools -> Image Accelerator, copy the accelerator address
+assigned to the current account, and merge it into `/etc/docker/daemon.json` as a
+`registry-mirrors` entry. Do not blindly overwrite existing daemon settings. Restart Docker after
+the change and confirm that `docker info` lists the accelerator.
+
+The API Dockerfile deliberately avoids GHCR and uses the Alibaba Cloud PyPI and Debian mirrors for
+build-time packages. The Web build uses the npm mirror. Docker Hub acceleration is still needed for
+the Python, Node, and Nginx base images.
+
 ```bash
 docker compose up -d --build
 docker compose ps
