@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-ARG UV_VERSION=0.12.19
+ARG UV_VERSION=0.12.17
 ARG PYPI_INDEX_URL=https://mirrors.aliyun.com/pypi/simple
 
 FROM python:3.14-slim-trixie AS api
@@ -10,11 +10,12 @@ ARG PYPI_INDEX_URL
 
 RUN sed -i 's|http://deb.debian.org|https://mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
     && apt-get update \
-    && apt-get install -y --no-install-recommends libgomp1 tzdata \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libgomp1 tzdata \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 family-spending \
-    && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin family-spending \
-    && python -m pip install --no-cache-dir --index-url "${PYPI_INDEX_URL}" "uv==${UV_VERSION}"
+    && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin family-spending
+
+RUN python -m pip install --no-cache-dir --index-url "${PYPI_INDEX_URL}" "uv==${UV_VERSION}"
 
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONPATH=/app/src \
