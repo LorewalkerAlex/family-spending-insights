@@ -57,13 +57,17 @@ this directory bidirectionally after cutover; the server becomes the only writab
 ## 3. Build and start
 
 ```bash
-docker compose build --pull
-docker compose up -d
+docker compose up -d --build
 docker compose ps
 docker compose logs --tail=100 api web
 curl --fail http://127.0.0.1:8080/healthz
 curl --fail http://127.0.0.1:8080/api/health
 ```
+
+`docker compose up -d --build` is the normal deployment command: it builds missing/changed images,
+creates both services, publishes the configured Web port, and leaves the stack supervised in the
+background. `docker compose run --rm api ...` is reserved for optional one-off operator commands
+such as `diagnose state`; it is not the long-running deployment entrypoint.
 
 The API startup validates the storage manifest, rebuilds runtime state, and catches up all Scheduled
 Input occurrences through the server's current date. The in-process scheduler then checks every 300
@@ -94,8 +98,7 @@ proxy's HTTPS port needs public ingress.
 
 ```bash
 git pull --ff-only
-docker compose build --pull
-docker compose up -d
+docker compose up -d --build
 docker compose ps
 ```
 

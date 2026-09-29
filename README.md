@@ -128,8 +128,7 @@ mount，不会进入镜像。
 
 ```bash
 cp .env.example .env
-docker compose build --pull
-docker compose up -d
+docker compose up -d --build
 docker compose ps
 ```
 
