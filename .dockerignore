@@ -1,0 +1,16 @@
+.git
+.gitignore
+.venv
+.runtime
+.uv-cache
+.env
+.env.*
+!.env.example
+data
+node_modules
+**/node_modules
+**/dist
+**/__pycache__
+**/*.pyc
+tmp
+

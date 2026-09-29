@@ -1,0 +1,62 @@
+name: family-spending
+
+services:
+  api:
+    build:
+      context: .
+      target: api
+    image: family-spending-api:local
+    restart: unless-stopped
+    init: true
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      TZ: "${TZ:-Asia/Shanghai}"
+      EMAIL_ADDR: "${EMAIL_ADDR:-}"
+      EMAIL_AUTH_CODE: "${EMAIL_AUTH_CODE:-}"
+    volumes:
+      - type: bind
+        source: ./data
+        target: /var/lib/family-spending
+    expose:
+      - "8765"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8765/api/health', timeout=3).read()
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+
+  web:
+    build:
+      context: .
+      target: web
+    image: family-spending-web:local
+    restart: unless-stopped
+    init: true
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${FAMILY_SPENDING_BIND_ADDRESS:-127.0.0.1}:${FAMILY_SPENDING_HTTP_PORT:-8080}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+

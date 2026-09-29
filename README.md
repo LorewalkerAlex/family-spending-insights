@@ -97,6 +97,10 @@ uv run --frozen python -m family_spending serve
 
 默认监听 `127.0.0.1:8765`；`GET /api/health` 用于健康检查。
 
+服务启动时会补齐截至当天的 Scheduled Input；运行期间由同进程 scheduler 按
+`runtime.scheduler_tick_interval_seconds`（默认 300 秒）持续检查。不要再用独立 cron
+进程并发执行 `jobs run-due` 写入同一个 `data/`。
+
 `sync` 只对尚未建立 durable identity 的新 SourceRecord 做 reconciliation；已有 SourceLink 不因 rebuild 或算法升级被重新猜测。CMB raw EML 是来源事实，legacy `transactions.csv` 不再是 Canonical truth。
 
 ## Desktop 本地开发 Runtime
@@ -115,6 +119,22 @@ npm run dev:stop
 ```
 
 微信小程序不再由这个 managed runtime 启动；它直接使用微信开发者工具。
+
+## Docker 部署
+
+生产部署使用根目录的 `Dockerfile` 与 `compose.yaml`：单实例 Python API 持有唯一写权限，
+Nginx 提供 Desktop Web 静态文件并把 `/api` 转发到内部 API。真实 `data/` 使用宿主机 bind
+mount，不会进入镜像。
+
+```bash
+cp .env.example .env
+docker compose build --pull
+docker compose up -d
+docker compose ps
+```
+
+默认只发布到服务器的 `127.0.0.1:8080`，应由宿主机 Nginx/Caddy 提供 HTTPS 与访问控制。
+首次数据传输、权限、反向代理、备份和更新步骤见 [`deploy/README.md`](deploy/README.md)。
 
 ## 微信原生小程序
 

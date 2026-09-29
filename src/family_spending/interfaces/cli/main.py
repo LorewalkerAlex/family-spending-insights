@@ -9,6 +9,7 @@ from typing import Sequence
 from family_spending.config import AppConfig, load_app_config
 from family_spending.interfaces.http.server import create_http_server
 from family_spending.runtime.composition import RuntimeComponents, compose_runtime
+from family_spending.runtime.supervisor import SchedulerSupervisor, SchedulerTrigger
 
 DEFAULT_CONFIG_PATH = Path("family-spending.toml")
 
@@ -70,13 +71,22 @@ def _serve(config: AppConfig, components: RuntimeComponents, host: str | None, p
     if not 0 <= bind_port <= 65535:
         raise ValueError("server port must be between 0 and 65535")
     server = create_http_server(components.application, bind_host, bind_port)
+    scheduler = SchedulerSupervisor(
+        SchedulerTrigger(
+            components.application.run_due_scheduled_inputs,
+            runtime=components.runtime,
+        ),
+        interval_seconds=config.runtime.scheduler_tick_interval_seconds,
+    )
     actual_host, actual_port = server.server_address[:2]
     print(f"Family Spending API: http://{actual_host}:{actual_port}")
     try:
+        scheduler.start()
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        scheduler.stop()
         server.server_close()
 
 

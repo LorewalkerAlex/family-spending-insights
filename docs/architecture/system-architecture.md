@@ -646,6 +646,7 @@ port = 8765
 
 [runtime]
 email_poll_interval_seconds = 900
+scheduler_tick_interval_seconds = 300
 
 [sources.cmb_email]
 enabled = true

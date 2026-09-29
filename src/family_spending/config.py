@@ -25,6 +25,7 @@ class ServerConfig:
 @dataclass(frozen=True)
 class RuntimeConfig:
     email_poll_interval_seconds: int = 900
+    scheduler_tick_interval_seconds: int = 300
 
 
 @dataclass(frozen=True)
@@ -115,10 +116,17 @@ def load_app_config(path: Path | str) -> AppConfig:
             runtime_table,
             "email_poll_interval_seconds",
             900,
-        )
+        ),
+        scheduler_tick_interval_seconds=_integer(
+            runtime_table,
+            "scheduler_tick_interval_seconds",
+            300,
+        ),
     )
     if runtime.email_poll_interval_seconds <= 0:
         raise ConfigurationError("runtime.email_poll_interval_seconds must be positive")
+    if runtime.scheduler_tick_interval_seconds <= 0:
+        raise ConfigurationError("runtime.scheduler_tick_interval_seconds must be positive")
 
     sources_table = _table(raw.get("sources"), "sources")
     cmb_table = _table(sources_table.get("cmb_email"), "sources.cmb_email")

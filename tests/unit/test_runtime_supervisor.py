@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import unittest
 from datetime import date
+from threading import Event
 from types import MappingProxyType
 
 from family_spending.application.ports.source import SourceAcquisitionResult
 from family_spending.domain.mapping import MappingCatalog
 from family_spending.runtime.state import HouseholdSnapshot, QueryIndexes, RuntimeCandidate, RuntimeStore
-from family_spending.runtime.supervisor import SchedulerTrigger, SourceSupervisor
+from family_spending.runtime.supervisor import (
+    SchedulerSupervisor,
+    SchedulerTrigger,
+    SourceSupervisor,
+)
 
 
 def _runtime() -> RuntimeStore:
@@ -178,6 +183,28 @@ class RuntimeSupervisorTests(unittest.TestCase):
         )
         self.assertTrue(success.run_once())
         self.assertIsNone(runtime.current_state().operational.last_scheduler_error)
+
+    def test_scheduler_supervisor_ticks_until_stopped(self) -> None:
+        runtime = _runtime()
+        ticked = Event()
+        trigger = SchedulerTrigger(
+            lambda today: ticked.set(),
+            runtime=runtime,
+            today=lambda: date(2026, 8, 16),
+        )
+        supervisor = SchedulerSupervisor(trigger, interval_seconds=0.01)
+        supervisor.start()
+        try:
+            self.assertTrue(ticked.wait(timeout=1.0))
+        finally:
+            supervisor.stop()
+        self.assertIsNotNone(runtime.current_state().operational.last_scheduler_tick_at)
+
+    def test_scheduler_supervisor_rejects_non_positive_interval(self) -> None:
+        runtime = _runtime()
+        trigger = SchedulerTrigger(lambda today: None, runtime=runtime)
+        with self.assertRaisesRegex(ValueError, "must be positive"):
+            SchedulerSupervisor(trigger, interval_seconds=0)
 
 
 if __name__ == "__main__":

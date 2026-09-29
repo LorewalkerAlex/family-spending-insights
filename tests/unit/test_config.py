@@ -21,19 +21,21 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.storage.data_root, (root / "sandbox" / "household").resolve())
         self.assertEqual(config.server.port, 8765)
         self.assertEqual(config.runtime.email_poll_interval_seconds, 900)
+        self.assertEqual(config.runtime.scheduler_tick_interval_seconds, 300)
 
     def test_config_loads_explicit_runtime_and_source_settings(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             config_path = root / "family-spending.toml"
             config_path.write_text(
-                """[storage]\ndata_root = './data'\n\n[server]\nhost = '0.0.0.0'\nport = 9000\n\n[runtime]\nemail_poll_interval_seconds = 60\n\n[sources.cmb_email]\nenabled = false\nhost = 'imap.example.com'\nport = 1993\nmailbox = 'Bills'\nsubject_keyword = 'Statement'\n""",
+                """[storage]\ndata_root = './data'\n\n[server]\nhost = '0.0.0.0'\nport = 9000\n\n[runtime]\nemail_poll_interval_seconds = 60\nscheduler_tick_interval_seconds = 15\n\n[sources.cmb_email]\nenabled = false\nhost = 'imap.example.com'\nport = 1993\nmailbox = 'Bills'\nsubject_keyword = 'Statement'\n""",
                 encoding="utf-8",
             )
             config = load_app_config(config_path)
 
         self.assertEqual(config.server.host, "0.0.0.0")
         self.assertEqual(config.server.port, 9000)
+        self.assertEqual(config.runtime.scheduler_tick_interval_seconds, 15)
         self.assertFalse(config.sources.cmb_email.enabled)
         self.assertEqual(config.sources.cmb_email.mailbox, "Bills")
 
@@ -50,6 +52,16 @@ class ConfigTests(unittest.TestCase):
             path = Path(temp_dir) / "family-spending.toml"
             path.write_text("[server]\nport = 8765\n", encoding="utf-8")
             with self.assertRaisesRegex(ConfigurationError, "storage.data_root"):
+                load_app_config(path)
+
+    def test_scheduler_tick_interval_must_be_positive(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "family-spending.toml"
+            path.write_text(
+                "[storage]\ndata_root = './data'\n[runtime]\nscheduler_tick_interval_seconds = 0\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ConfigurationError, "scheduler_tick_interval_seconds"):
                 load_app_config(path)
 
     def test_email_credentials_stay_out_of_toml_contract(self) -> None:

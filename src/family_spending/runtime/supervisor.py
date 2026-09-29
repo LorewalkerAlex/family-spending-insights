@@ -123,3 +123,48 @@ class SchedulerTrigger:
             return False
         self._runtime.record_scheduler_tick()
         return True
+
+
+class SchedulerSupervisor:
+    """Run the idempotent scheduled-input trigger throughout a long-lived service."""
+
+    def __init__(
+        self,
+        trigger: SchedulerTrigger,
+        *,
+        interval_seconds: float,
+    ) -> None:
+        if interval_seconds <= 0:
+            raise ValueError("SchedulerSupervisor interval_seconds must be positive")
+        self._trigger = trigger
+        self._interval_seconds = interval_seconds
+        self._stop = Event()
+        self._thread: Thread | None = None
+        self._lifecycle_lock = Lock()
+
+    def _run(self) -> None:
+        # Application.initialize() performs the startup catch-up. Waiting before
+        # the first background tick avoids immediately repeating the same scan.
+        while not self._stop.wait(self._interval_seconds):
+            self._trigger.run_once()
+
+    def start(self) -> None:
+        with self._lifecycle_lock:
+            if self._thread is not None and self._thread.is_alive():
+                raise RuntimeError("SchedulerSupervisor is already running")
+            self._stop.clear()
+            self._thread = Thread(
+                target=self._run,
+                name="family-spending-scheduler-supervisor",
+                daemon=True,
+            )
+            self._thread.start()
+
+    def stop(self) -> None:
+        with self._lifecycle_lock:
+            thread = self._thread
+            self._stop.set()
+        if thread is not None:
+            thread.join(timeout=max(self._interval_seconds * 2, 1.0))
+        with self._lifecycle_lock:
+            self._thread = None

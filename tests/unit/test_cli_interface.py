@@ -24,6 +24,20 @@ class _FakeServer:
         self.closed = True
 
 
+class _FakeScheduler:
+    def __init__(self, trigger, *, interval_seconds: float) -> None:
+        self.trigger = trigger
+        self.interval_seconds = interval_seconds
+        self.started = False
+        self.stopped = False
+
+    def start(self) -> None:
+        self.started = True
+
+    def stop(self) -> None:
+        self.stopped = True
+
+
 class CliInterfaceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -69,13 +83,27 @@ class CliInterfaceTests(unittest.TestCase):
 
     def test_serve_uses_configured_application_and_http_transport(self) -> None:
         server = _FakeServer()
+        schedulers: list[_FakeScheduler] = []
+
+        def scheduler_factory(trigger, *, interval_seconds: float) -> _FakeScheduler:
+            scheduler = _FakeScheduler(trigger, interval_seconds=interval_seconds)
+            schedulers.append(scheduler)
+            return scheduler
+
         with patch(
             "family_spending.interfaces.cli.main.create_http_server",
             return_value=server,
-        ) as create:
+        ) as create, patch(
+            "family_spending.interfaces.cli.main.SchedulerSupervisor",
+            side_effect=scheduler_factory,
+        ):
             output = self._run("serve", "--port", "9876")
         self.assertTrue(server.served)
         self.assertTrue(server.closed)
+        self.assertEqual(len(schedulers), 1)
+        self.assertTrue(schedulers[0].started)
+        self.assertTrue(schedulers[0].stopped)
+        self.assertEqual(schedulers[0].interval_seconds, 300)
         self.assertEqual(create.call_args.args[1:], ("127.0.0.1", 9876))
         self.assertIn("Family Spending API: http://127.0.0.1:9876", output)
 
